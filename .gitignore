@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.playwright-mcp/
+
+# generated runs stay out of git; only the dedupe history is tracked
+output/*
+!output/history.jsonl
+
+# old experiments (contain hardcoded keys)
+legacy/
+.mcp.json

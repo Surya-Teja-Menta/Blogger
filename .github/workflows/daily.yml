@@ -1,0 +1,93 @@
+name: Daily blog
+
+# GitHub cron is UTC. India (IST, UTC+5:30): 09:00 IST = 03:30 UTC, 10:00 IST = 04:30 UTC.
+on:
+  schedule:
+    - cron: "30 3 * * *"   # 09:00 IST - Geopolitics
+    - cron: "30 4 * * *"   # 10:00 IST - Technology
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Topic to write about"
+        default: "geopolitics"
+      mode:
+        description: "fast | standard | deep"
+        default: "standard"
+
+permissions:
+  contents: write          # commits output/history.jsonl back so stories are never repeated
+
+concurrency:
+  group: daily-blog        # the two daily runs never overlap and never race on history.jsonl
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Pick topic
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "topic=${{ inputs.topic }}" >> "$GITHUB_OUTPUT"
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 4 * * *" ]; then
+            echo "topic=technology" >> "$GITHUB_OUTPUT"
+            echo "mode=standard" >> "$GITHUB_OUTPUT"
+          else
+            echo "topic=geopolitics" >> "$GITHUB_OUTPUT"
+            echo "mode=standard" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the blog
+        env:
+          LLM_PROVIDERS: groq,nvidia          # no local Ollama on the runner
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          NVIDIA_MODELS: ${{ vars.NVIDIA_MODELS }}
+          MAX_TOKENS: ${{ vars.MAX_TOKENS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_PUBLIC_URL: ${{ secrets.S3_PUBLIC_URL }}
+        run: python main.py "${{ steps.pick.outputs.topic }}" --mode "${{ steps.pick.outputs.mode }}"
+
+      - name: Keep the files (backup in case object storage is not configured)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ steps.pick.outputs.topic }}-${{ github.run_id }}
+          path: |
+            output/*/
+            !output/history.jsonl
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Commit story history
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/history.jsonl
+          git diff --cached --quiet || (git commit -m "history: ${{ steps.pick.outputs.topic }} $(date -u +%F)" && git pull --rebase && git push)
