@@ -3,7 +3,7 @@
   2. rank them by how hot they are (audience appeal and likely reaction) and choose the best
   3. research the chosen story several ways (article, other outlets, RSS pool, encyclopedia, archives, web search)
   4. write a documentary report, then derive the blog and the article from it
-  5. email all three over SMTP"""
+  5. store online, list the report on Gumroad, and email all three over SMTP"""
 import json
 import os
 import re
@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from .config import MODES, Settings
+from .gumroad import list_product
 from .history import History
 from .llm import LLMClient, LLMError
 from .mailer import send_email
@@ -82,9 +83,12 @@ def sources_md(dossier) -> str:
     return "\n".join(rows)
 
 
-def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None) -> str:
+def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None, product: dict = None) -> str:
     kf = "\n".join(f"  {i}. {f['claim']}" for i, f in enumerate(dossier.key_facts(5), 1))
     stored = ("\nSTORED ONLINE:\n" + "\n".join(f"  {n}: {u}" for n, u in links.items()) + "\n") if links else ""
+    if product:
+        stored += (f"\nGUMROAD ({'live' if product['published'] else 'DRAFT - review and publish it in your dashboard'}):"
+                   f"\n  {product['url']}\n")
     return (f"Your {meta['mode']}-mode report on \"{meta['topic']}\" is ready.\n\n"
             f"STORY CHOSEN: {article.title}\n  {article.source} - {article.real_url or article.url}\n"
             f"  Audience appeal: {article.audience:g}/10 ({article.why or 'n/a'}); "
@@ -223,13 +227,21 @@ class BlogPipeline:
         deliverables = ("documentary_report.pdf", "documentary_report.html", "documentary_report.md",
                         "article.md", "blog.md")
         links = upload_run(self.s, out, list(deliverables) + ["research.json"], self.log)
+        sellable = "documentary_report.pdf" if pdf else "documentary_report.html"
+        product = list_product(
+            self.s, title,
+            f"{meta['description']}\n\n**Key findings**\n\n{key_findings_md(dossier)}\n\n"
+            f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
+            f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
+            os.path.join(out, sellable), self.log)
         sent = False
         if email:
             sent = send_email(self.s, f"[Blog Writer] {title[:120]}",
-                              email_body(metadata, article, dossier, out, links),
+                              email_body(metadata, article, dossier, out, links, product),
                               [os.path.join(out, n) for n in deliverables], self.log)
         metadata["email_sent"] = sent
         metadata["stored"] = links
+        metadata["gumroad"] = product
         with open(os.path.join(out, "metadata.json"), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 

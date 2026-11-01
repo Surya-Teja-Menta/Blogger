@@ -71,6 +71,9 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           S3_REGION: ${{ secrets.S3_REGION }}
           S3_PUBLIC_URL: ${{ secrets.S3_PUBLIC_URL }}
+          GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}
+          GUMROAD_PRICE_CENTS: ${{ vars.GUMROAD_PRICE_CENTS }}   # default 499
+          GUMROAD_PUBLISH: ${{ vars.GUMROAD_PUBLISH }}           # "true" = go live; empty = draft for review
         run: python main.py "${{ steps.pick.outputs.topic }}" --mode "${{ steps.pick.outputs.mode }}"
 
       - name: Keep the files (backup in case object storage is not configured)

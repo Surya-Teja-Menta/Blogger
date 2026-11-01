@@ -5,6 +5,6 @@ lxml
 python-dotenv>=1.0
 ddgs
 markdown
-boto3          # upload to S3-compatible object storage (Cloudflare R2 / Backblaze B2)
+boto3         # upload to S3-compatible object storage (Cloudflare R2 / Backblaze B2)
 # optional: PDF output (needs GTK/Pango; HTML report is always written)
 # weasyprint

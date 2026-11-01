@@ -505,3 +505,68 @@ def test_upload_run_to_s3_returns_links_and_never_raises(tmp_path):
         bad = replace(s, s3_bucket="no-such-bucket")        # failure is logged, not raised
         assert upload_run(bad, str(tmp_path), ["blog.md"], log=lambda m: None) == {}
     assert upload_run(Settings(), str(tmp_path), ["blog.md"], log=lambda m: None) == {}   # not configured
+
+
+class _Resp:
+    def __init__(self, payload, status=200, headers=None):
+        self._p, self.status_code, self.headers, self.text = payload, status, headers or {}, str(payload)
+
+    def json(self):
+        return self._p
+
+    def raise_for_status(self):
+        assert self.status_code < 400
+
+
+def _fake_gumroad(monkeypatch, calls, fail_attach=False):
+    import requests
+
+    def post(url, **kw):
+        calls.append(("POST", url))
+        if url.endswith("/files/presign"):
+            return _Resp({"success": True, "upload_id": "u", "key": "k", "file_url": "https://s3/f.pdf",
+                          "parts": [{"part_number": 1, "presigned_url": "https://s3/part1"}]})
+        if url.endswith("/files/complete"):
+            return _Resp({"success": True, "file_url": "https://s3/done.pdf"})
+        return _Resp({"success": True, "product": {"id": "ab=", "short_url": "https://x.gumroad.com/l/ab"}})
+
+    def put(url, **kw):
+        calls.append(("PUT", url))
+        if url == "https://s3/part1":
+            return _Resp({}, headers={"ETag": '"e1"'})
+        if fail_attach and url.endswith("/products/ab%3D"):
+            return _Resp({"success": False, "message": "bad file"}, 422)
+        return _Resp({"success": True})
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(requests, "put", put)
+    monkeypatch.setattr(requests, "delete", lambda url, **kw: calls.append(("DELETE", url)) or _Resp({"success": True}))
+
+
+def test_gumroad_creates_draft_attaches_file_and_publishes_only_when_asked(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from blogwriter.config import Settings
+    from blogwriter.gumroad import list_product
+    f = tmp_path / "r.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    s = Settings(gumroad_token="tok")
+    calls = []
+    _fake_gumroad(monkeypatch, calls)
+    out = list_product(s, "Title", "**hi**", str(f), log=lambda m: None)
+    assert out == {"url": "https://x.gumroad.com/l/ab", "id": "ab=", "published": False}
+    assert [m for m, u in calls if u.endswith("/disable")] and not [u for m, u in calls if u.endswith("/enable")]
+    calls.clear()
+    out = list_product(replace(s, gumroad_publish=True), "Title", "x", str(f), log=lambda m: None)
+    assert out["published"] and calls[-1][1].endswith("/products/ab%3D/enable")
+    assert list_product(Settings(), "T", "x", str(f), log=lambda m: None) == {}      # no token: skipped
+
+
+def test_gumroad_failure_is_logged_and_the_half_made_product_deleted(tmp_path, monkeypatch):
+    from blogwriter.config import Settings
+    from blogwriter.gumroad import list_product
+    f = tmp_path / "r.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    calls, logs = [], []
+    _fake_gumroad(monkeypatch, calls, fail_attach=True)
+    assert list_product(Settings(gumroad_token="tok"), "T", "x", str(f), log=logs.append) == {}
+    assert ("DELETE", "https://api.gumroad.com/v2/products/ab%3D") in calls and "FAILED" in logs[-1]

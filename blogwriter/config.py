@@ -68,6 +68,10 @@ class Settings:
     s3_secret_key: str = ""
     s3_region: str = "auto"
     s3_public_url: str = ""      # public base URL of the bucket (e.g. https://pub-xxxx.r2.dev); else signed links
+    # each report is listed as a Gumroad product (a draft unless gumroad_publish is on)
+    gumroad_token: str = ""
+    gumroad_price_cents: int = 499
+    gumroad_publish: bool = False
 
     @property
     def email_configured(self) -> bool:
@@ -106,4 +110,7 @@ class Settings:
             s3_secret_key=e("S3_SECRET_ACCESS_KEY", ""),
             s3_region=e("S3_REGION", "auto") or "auto",
             s3_public_url=e("S3_PUBLIC_URL", "").rstrip("/"),
+            gumroad_token=e("GUMROAD_ACCESS_TOKEN", ""),
+            gumroad_price_cents=int(e("GUMROAD_PRICE_CENTS", "499") or 499),
+            gumroad_publish=e("GUMROAD_PUBLISH", "").strip().lower() in ("1", "true", "yes"),
         )
