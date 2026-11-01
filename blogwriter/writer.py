@@ -111,7 +111,8 @@ def trim_to_words(text: str, limit: int) -> str:
 
 
 # ---- prompts ----------------------------------------------------------------
-SYSTEM = ("You are an award-winning investigative journalist. You write vivid, human, tightly-reported prose. "
+SYSTEM = ("You are an award-winning investigative journalist. You write direct, intense, tightly-reported prose: "
+          "concrete detail, short sentences that land, no filler and no clichés. "
           "HARD RULES: use ONLY the VERIFIED FACTS and article text in the research notes; never invent people, quotes, statistics, "
           "scenes or dialogue; never add a year or date the notes do not state; never describe what 'the article' or "
           "'the outlet' says unless ARTICLE TEXT is actually provided in the notes; if a detail is not in the notes, "
@@ -189,13 +190,42 @@ class Writer:
         ("The Story", ["Story"], "What happened, told in full: every fact the reporting establishes.", 1),
         ("How It Unfolded", ["Timeline"], "The sequence of events, in order, with dates.", 3),
         ("The People and Powers Involved", ["Stakeholders"], "Who the actors are and what each wants.", 3),
+        ("Why It Happened", ["Causes"], "The causes, motives and triggers behind the events.", 3),
+        ("How It Works", ["Mechanism"], "The method, process or machinery behind the events.", 3),
         ("Roots: Background and Precedent", ["Historical", "Comparisons"], "How the situation came about.", 3),
         ("The Political Stakes", ["Political"], "Political and diplomatic consequences.", 3),
         ("The Economic Stakes", ["Economic"], "Economic and market consequences.", 3),
         ("The Human and Regional Impact", ["Social", "Geographic"], "Who is affected and where.", 3),
+        ("Security and Legal Implications", ["Security", "Legal"], "Security, military, legal and regulatory consequences.", 3),
+        ("Reactions at Home and Abroad", ["Reactions"], "How governments, markets and the public responded.", 3),
+        ("The Immediate Effects", ["Short-term effects"], "What changed in the first days and weeks.", 3),
+        ("The Long-Term Effects", ["Long-term effects"], "Lasting and structural consequences.", 3),
+        ("Winners, Losers and Risks", ["Winners and losers", "Risks"], "Who gains, who loses, and what could go wrong.", 3),
         ("What the Experts Say", ["Expert views"], "Named analysts and officials, and what they argue.", 3),
         ("What Happens Next", ["Future outlook"], "Likely developments and open questions.", 3),
     ]
+
+    # who / what / when / where / why / how, each answered from its own research angle
+    FIVE_W = [("What happened", "Story"), ("Who is involved", "Stakeholders"), ("When it happened", "Timeline"),
+              ("Where it matters", "Geographic"), ("Why it happened", "Causes"), ("How it happened", "Mechanism")]
+
+    def at_a_glance(self, dossier: Dossier) -> Optional[dict]:
+        """The opening chapter: the whole story in the six classic questions. None if the research cannot
+        answer at least three of them."""
+        groups = [(label, angle, dossier.facts_text(angle, 1300)) for label, angle in self.FIVE_W]
+        groups = [g for g in groups if g[2]]
+        if len(groups) < 3:
+            return None
+        notes = (f"STORY: {dossier.article['title']}\nPUBLISHED: {dossier.article['published'][:10]}\n"
+                 f"ARTICLE TEXT: {dossier.core()[:1200]}\n\nVERIFIED FACTS, grouped by the question they answer:\n" +
+                 "\n\n".join(f"{label.upper()}:\n{text}" for label, _, text in groups))
+        labels = ", ".join(f"'### {label}'" for label, _, _ in groups)
+        return {"title": "The Story at a Glance: Who, What, When, Where, Why and How",
+                "focus": "The whole story in six questions.", "angles": [a for _, a, _ in groups],
+                "facts": sum(dossier.count(a) for _, a, _ in groups), "notes": notes,
+                "structure": f"Structure: one '### ' subheading per question, in this order: {labels}. Under each, "
+                             "answer that question directly in one to three tight paragraphs using only the facts "
+                             "listed under it. Skip any question whose facts are missing - do not guess."}
 
     def plan_documentary(self, dossier: Dossier, mode: Mode) -> List[dict]:
         """Chapters for the documentary: the fixed arc, minus sections the research could not support."""
@@ -233,7 +263,7 @@ class Writer:
         later = "; ".join(c["title"] for c in plan[idx + 1:]) or "none"
         # as long as the verified material for THIS chapter supports, up to the mode's ceiling
         target = max(150, min(mode.chapter_words, 40 * ch.get("facts", 5)))
-        notes = dossier.notes_for(ch["angles"])
+        notes = ch.get("notes") or dossier.notes_for(ch["angles"])
         prompt = (f"{notes}\n\nWrite chapter {idx + 1} of a documentary report: \"{ch['title']}\".\n"
                   f"Role: {ch.get('focus', '')}\n"
                   f"Other chapters (do not repeat their material): before - {prior}; after - {later}\n\n"
@@ -251,30 +281,79 @@ class Writer:
                   "direct quote from a named person, you may set it once on its own line as '> \"quote\" - Name', "
                   "copied word for word. No closing summary paragraph ('In sum', 'In conclusion', 'Ultimately'); end "
                   "on a concrete fact or an open question. Where the facts are thin, say what is not yet known "
-                  f"instead of inventing detail. Every paragraph must tie back to \"{title}\".")
+                  f"instead of inventing detail. Every paragraph must tie back to \"{title}\"."
+                  + (f"\n{ch['structure']}" if ch.get("structure") else ""))
         draft = self._generate(prompt, title, target)
         return self.ground(draft, notes, title, dossier.allowed_text(), strict=True)
 
+    def executive_summary(self, dossier: Dossier, chapters: List[str]) -> str:
+        """One page at the front that tells the whole story, written from the finished chapters."""
+        title = dossier.article["title"]
+        notes = (f"STORY: {title}\n\nTHE CHAPTERS (your only source):\n" +
+                 "\n\n".join(c[:1100] for c in chapters)[:9000] +
+                 f"\n\nMOST RELIABLE VERIFIED FACTS:\n{dossier.facts_text(None, 2500)}")
+        prompt = (f"{notes}\n\nWrite the EXECUTIVE SUMMARY of this documentary report: about 280 words, three or four "
+                  "paragraphs, no headings. Paragraph one: what happened, to whom, when and where. Paragraph two: why "
+                  "and how. Paragraph three: the effects and impacts, now and later. Last paragraph: what to watch "
+                  "next. Lead with the most important verified fact. Plain, direct, intense; no hype. Use only facts "
+                  "from the chapters; say each fact once.")
+        try:
+            draft = self._generate(prompt, title, 280, lo=0.5, hi=1.5)
+        except LLMError:
+            self.log("[writer] executive summary unavailable")
+            return ""
+        return self.ground(draft, notes, title, dossier.allowed_text())
+
+    def conclusion(self, dossier: Dossier, plan: List[dict], chapters: List[str], mode: Mode) -> str:
+        """Closing chapter: what each chapter established, then what to watch."""
+        title = dossier.article["title"]
+        recap = "\n\n".join(f"CHAPTER {i + 1} - {c['title']}:\n{t[:900]}" for i, (c, t) in enumerate(zip(plan, chapters)))
+        notes = f"STORY: {title}\n\n{recap[:10000]}"
+        names = "; ".join(c["title"] for c in plan)
+        prompt = (f"{notes}\n\nWrite the closing chapter of the documentary report, titled '## Summary and Conclusion'. "
+                  f"First, a bulleted recap: one bullet per chapter ({names}) - the chapter title in bold, then its "
+                  "single most important established finding in one sentence. Then a closing section of about 150 "
+                  "words: what the evidence adds up to, what remains unknown, and what to watch next. Use only what "
+                  "the chapters state; add no new facts. No hype.")
+        try:
+            draft = self._generate(prompt, title, min(mode.chapter_words, 120 + 45 * len(plan)), lo=0.5, hi=1.6)
+        except LLMError:
+            self.log("[writer] closing chapter unavailable")
+            return ""
+        out = self.ground(draft, notes, title, dossier.allowed_text())
+        return out if out.lstrip().startswith("## ") else f"## Summary and Conclusion\n\n{out}"
+
     @staticmethod
-    def _source(dossier: Dossier, report: str, max_chars: int = 9000) -> str:
+    def _source(dossier: Dossier, report: str, max_chars: int = 15000) -> str:
         """What the blog/article are written from: the finished documentary report (step 4), topped up with
-        the best-confirmed verified facts. Falls back to the facts alone if there is no report."""
+        the best-confirmed verified facts. Falls back to the facts alone if there is no report.
+        The report is long, so every chapter gets an equal share of the room: cutting off the end would lose
+        the effects, impacts and outlook, which the blog and article must cover."""
         if not report:
             return dossier.brief(max_chars)
         head = f"STORY: {dossier.article['title']}\nPUBLISHED: {dossier.article['published'][:10]}\n\n"
-        facts = dossier.facts_text(None, 2500)
-        room = max_chars - len(head) - len(facts) - 120
+        facts = dossier.facts_text(None, 3000)
+        room = max(2000, max_chars - len(head) - len(facts) - 160)
+        parts = [p for p in re.split(r"\n(?=## )", report) if p.strip()]
+        share = max(300, room // max(len(parts), 1))
+        body = "\n\n".join(p[:share].rsplit(" ", 1)[0] if len(p) > share else p for p in parts)
         return (f"{head}DOCUMENTARY REPORT (your source: condense and re-shape it for a new audience; add nothing "
-                f"it does not contain):\n{report[:max(room, 2000)]}\n\nMOST RELIABLE VERIFIED FACTS:\n{facts}")
+                f"it does not contain):\n{body}\n\nMOST RELIABLE VERIFIED FACTS:\n{facts}")
 
     def blog(self, dossier: Dossier, mode: Mode, report: str = "") -> str:
         title = dossier.article["title"]
         source = self._source(dossier, report)
         prompt = (f"{source}\n\nWrite a {mode.blog_words}-word blog post about \"{title}\".\n"
-                  "Open with a hook drawn from a real fact above; speak directly to the reader; one or two rhetorical "
-                  "questions; a touch of dry wit; short paragraphs; a sharp closing line. No bullet points, no "
-                  "headings other than a single '# headline' on the first line. Say each fact once - never repeat a "
-                  "claim. Stay strictly on this story.")
+                  "Voice: straight, intense, no throat-clearing. Open with the single most striking verified fact in "
+                  "the first sentence. Short sentences that land, then one longer sentence to carry the detail. Speak "
+                  "directly to the reader. Every paragraph must carry concrete detail from the facts above - a name, "
+                  "figure, date or place - and move the story forward. No filler adjectives, no clichés ('in today's "
+                  "world', 'game-changer', 'buckle up'), no padding questions.\n"
+                  "Cover, in this order: within the first 150 words, who did what, when and where; then why it "
+                  "happened and how; then who is hit and who gains; then the effects now and later; end with what to "
+                  "watch next and one sharp closing line. Where a point has no verified fact behind it, leave it out.\n"
+                  "Format: '# headline' on the first line, then 3-5 '## ' subheadings that name the point of each "
+                  "part. No bullet points. Say each fact once - never repeat a claim. Stay strictly on this story.")
         draft = self._generate(prompt, title, mode.blog_words)
         return self.ground(draft, source, title, dossier.allowed_text())
 
@@ -285,13 +364,16 @@ class Writer:
         prompt = (f"{source}\n\nWrite a {mode.article_words}-word news feature article about \"{title}\".\n"
                   "Build every paragraph from specific VERIFIED FACTS above (use as many as fit; no filler, no "
                   "generalities the facts do not support).\n"
+                  "Voice: direct and intense. Short, hard sentences; concrete detail in every paragraph (names, "
+                  "figures, dates, places); no filler, no hype, no clichés.\n"
                   "Structure: '# headline' on the first line; one italic standfirst sentence summarising the story; "
-                  "3-5 sections each with a '## subheading' (inverted pyramid - the most important verified facts "
-                  "first, then context and analysis); a final section '## What we still don't know' listing open "
-                  "questions the facts above leave unanswered. Attribute quotes, opinions, estimates and disputed "
-                  "claims to the named person, government or organisation (never a website address); state "
-                  "established facts plainly, and never repeat a fact. Journalistic, precise, no hype, no "
-                  "speculation beyond clearly-labelled open questions.")
+                  "a lede paragraph that answers who, what, when and where; then '## ' sections in this order, "
+                  "skipping any the facts cannot support: '## Why it happened', '## How it unfolded', '## Who is "
+                  "affected', '## The effects now and later' (separate the immediate from the long-term), '## What "
+                  "comes next'; and a final '## What we still don't know' listing open questions the facts leave "
+                  "unanswered. Attribute quotes, opinions, estimates and disputed claims to the named person, "
+                  "government or organisation (never a website address); state established facts plainly, and never "
+                  "repeat a fact. No speculation beyond clearly-labelled open questions.")
         draft = self._generate(prompt, title, mode.article_words, lo=0.65, hi=1.4)
         return self.ground(draft, source, title, dossier.allowed_text())
 

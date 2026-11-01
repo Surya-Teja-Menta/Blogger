@@ -5,6 +5,7 @@ numeral and drop cap, and the method + sources as small-type end matter."""
 import glob
 import html as _html
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -49,6 +50,9 @@ a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--rule);
 
 /* front matter */
 .front { break-after: page; page-break-after: always; }
+.front section.ack, .front section.summary { break-after: page; page-break-after: always; }
+.front section.ack p, .front section.summary p { text-align: justify; margin: 0 0 3.6mm; }
+.front section.summary p:first-of-type { font-size: 12pt; line-height: 1.6; }
 .label { font: 700 8pt Inter, Arial, sans-serif; letter-spacing: .28em; text-transform: uppercase; color: var(--gold);
          margin: 0 0 3mm; }
 .front h2 { font: 700 20pt/1.2 "Playfair Display", Georgia, serif; margin: 0 0 6mm; }
@@ -91,6 +95,11 @@ th { font-family: Inter, Arial, sans-serif; font-size: 8pt; text-transform: uppe
 .endmatter section + section { margin-top: 10mm; }
 .endmatter ol { padding-left: 7mm; } .endmatter li { margin-bottom: 1.2mm; word-break: break-word; }
 .endmatter li::marker { color: var(--gold); font-weight: 700; }
+.endmatter section.newpage { break-before: page; page-break-before: always; }
+.endmatter section.newpage:first-child { break-before: auto; page-break-before: auto; }
+#index ul { list-style: none; padding: 0; columns: 2; column-gap: 10mm; }
+#index li { margin: 0 0 1mm; break-inside: avoid; }
+#evidence-register ol { font-size: 7.8pt; line-height: 1.45; }
 .colophon { margin-top: 12mm; padding-top: 4mm; border-top: 1px solid var(--rule); color: var(--muted);
             font-size: 7.8pt; letter-spacing: .06em; }
 
@@ -103,8 +112,8 @@ th { font-family: Inter, Arial, sans-serif; font-size: 8pt; text-transform: uppe
 """
 
 ORDINALS = ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"]
-FRONT = {"key findings": "findings", "contents": "toc"}
-END = {"how this report was researched", "sources"}
+FRONT = {"acknowledgements": "ack", "executive summary": "summary", "key findings": "findings", "contents": "toc"}
+END = {"index", "evidence register", "how this report was researched", "sources"}
 
 
 def _sections(soup):
@@ -152,7 +161,8 @@ def to_html(md_text: str, title: str, stats: dict = None) -> str:
         if key in FRONT:
             front.append(f"<section class='{FRONT[key]}'><div class='label'>{_html.escape(name)}</div>{body}</section>")
         elif key in END:
-            end.append(f"<section><h2>{_html.escape(name)}</h2>{body}</section>")
+            cls = " class='newpage'" if key in ("index", "evidence register") else ""
+            end.append(f"<section{cls} id='{key.replace(' ', '-')}'><h2>{_html.escape(name)}</h2>{body}</section>")
         else:
             n += 1
             word = ORDINALS[n - 1] if n <= len(ORDINALS) else str(n)
@@ -170,6 +180,15 @@ def to_html(md_text: str, title: str, stats: dict = None) -> str:
             f"<meta name='viewport' content='width=device-width, initial-scale=1'><title>{_html.escape(title)}</title>"
             f"<link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link rel='stylesheet' href='{FONTS}'>"
             f"<style>{css}</style></head><body>{''.join(out)}</body></html>")
+
+
+def pdf_pages(path: str) -> int:
+    """Number of pages in a PDF, or 0 when it cannot be counted (e.g. page objects inside compressed streams)."""
+    try:
+        with open(path, "rb") as f:
+            return len(re.findall(rb"/Type\s*/Page(?![s\w])", f.read()))
+    except OSError:
+        return 0
 
 
 def _browser() -> str:

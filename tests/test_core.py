@@ -570,3 +570,66 @@ def test_gumroad_failure_is_logged_and_the_half_made_product_deleted(tmp_path, m
     _fake_gumroad(monkeypatch, calls, fail_attach=True)
     assert list_product(Settings(gumroad_token="tok"), "T", "x", str(f), log=logs.append) == {}
     assert ("DELETE", "https://api.gumroad.com/v2/products/ab%3D") in calls and "FAILED" in logs[-1]
+
+
+def test_five_w_one_h_chapter_is_built_from_labelled_groups_and_needs_three_answers():
+    d = _dossier()
+    d.facts = [{"claim": f"{a} fact {i}.", "quote": "q" * 30, "source": 1, "angle": a, "corroboration": 0}
+               for a in ["Story", "Timeline", "Causes", "Mechanism"] for i in range(2)]
+    ch = _writer().at_a_glance(d)
+    assert ch["title"].startswith("The Story at a Glance")
+    assert set(ch["angles"]) == {"Story", "Timeline", "Causes", "Mechanism"} and ch["facts"] == 8
+    for label in ("WHAT HAPPENED:", "WHEN IT HAPPENED:", "WHY IT HAPPENED:", "HOW IT HAPPENED:"):
+        assert label in ch["notes"]
+    assert "WHO IS INVOLVED" not in ch["notes"] and "### Who is involved" not in ch["structure"]
+    d.facts = d.facts[:4]                              # only Story + Timeline answered: not enough for the chapter
+    assert _writer().at_a_glance(d) is None
+
+
+def test_blog_source_gives_every_chapter_a_share_so_the_ending_is_not_cut():
+    from blogwriter.writer import Writer
+    d = _dossier()
+    report = "\n\n".join(f"## Chapter {i}\n\n" + ("word " * 600) + f"END{i}" for i in range(10))
+    src = Writer._source(d, report, max_chars=6000)
+    assert len(src) < 7000 and all(f"Chapter {i}" in src for i in range(10))     # none of them dropped
+
+
+def test_index_lists_recurring_names_with_chapter_numbers():
+    from blogwriter.pipeline import index_md
+    chapters = ["## One\n\nTalks held in Oman, said Foreign Minister Abbas Araghchi. Officials in Tehran agreed.",
+                "## Two\n\nThe Strait of Hormuz stayed open, while Tehran waited. Mentioned by Abbas Araghchi again.",
+                "## Three\n\nA one-off name like Zanzibar appears once, but the Strait of Hormuz returns."]
+    idx = index_md(chapters)
+    assert "**Tehran** — chapters 1, 2" in idx
+    assert "**Abbas Araghchi** — chapters 1, 2" in idx
+    assert "**Strait of Hormuz** — chapters 2, 3" in idx
+    assert "Zanzibar" not in idx and "**The" not in idx
+
+
+def test_evidence_register_and_acknowledgements_are_built_from_verified_facts():
+    from blogwriter.pipeline import acknowledgements_md, evidence_md
+    from blogwriter.news import Article
+    d = _dossier()
+    ev = evidence_md(d)
+    assert ev.count("\n") == 3 and "bbc.com" in ev and "http://iea.org/b" in ev and "“" in ev
+    ack = acknowledgements_md(Article("T", "d", "http://x", NOW, "Reuters", "rss"), d)
+    assert "Reuters" in ack and "bbc.com" in ack and "iea.org" in ack and "no original reporting" in ack.lower()
+
+
+def test_report_html_has_acknowledgements_summary_index_and_evidence_pages():
+    from blogwriter.render import to_html
+    md = ("# Big\n\n*A documentary report* · x\n\n## Acknowledgements\n\nThanks.\n\n## Executive Summary\n\nSum.\n\n"
+          "## Key findings\n\n1. F\n\n## Contents\n\n1. One\n\n---\n\n## One\n\nBody.\n\n---\n\n"
+          "## Index\n\n- **Iran** — chapter 1\n\n## Evidence register\n\n1. e\n\n## Sources\n\n1. s\n")
+    html = to_html(md, "Big")
+    assert "class='ack'" in html and "class='summary'" in html
+    assert html.count("class='chapter'") == 1                      # front and end matter are not chapters
+    assert "id='index'" in html and "id='evidence-register'" in html and html.count("class='newpage'") == 2
+
+
+def test_pdf_page_counter(tmp_path):
+    from blogwriter.render import pdf_pages
+    p = tmp_path / "x.pdf"
+    p.write_bytes(b"%PDF-1.4\n1 0 obj<</Type /Pages /Kids [2 0 R]>>\n2 0 obj<</Type /Page /Parent 1 0 R>>\n"
+                  b"3 0 obj<</Type/Page/Parent 1 0 R>>")
+    assert pdf_pages(str(p)) == 2 and pdf_pages(str(tmp_path / "missing.pdf")) == 0

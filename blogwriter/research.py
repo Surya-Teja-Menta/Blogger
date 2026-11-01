@@ -19,17 +19,28 @@ from .llm import LLMClient, LLMError
 from .news import Article, similar
 from .web import Source, fetch_text, web_search, wikipedia_leads
 
+# Ordered so a smaller mode (which takes the first N) still gets the 4W1H core: what/when (Timeline), who
+# (Stakeholders), why (Causes), how (Mechanism); then impacts, effects and reactions; where is Geographic.
 PERSPECTIVES = [
-    ("Timeline", "what exactly happened, in order, with dates and numbers"),
+    ("Timeline", "what exactly happened and when, in order, with dates and numbers"),
+    ("Stakeholders", "who is involved: the main actors, their interests and positions"),
+    ("Causes", "why it happened: the causes, motives, triggers and drivers behind it, as the sources state them"),
+    ("Mechanism", "how it happened or how it works: the method, process, technology or steps involved"),
     ("Political", "political and diplomatic impact and implications"),
-    ("Economic", "economic and market consequences"),
-    ("Stakeholders", "the main actors, their interests and positions"),
-    ("Historical", "historical background and precedents"),
-    ("Social", "social and human impact"),
+    ("Economic", "economic and market consequences, with figures"),
+    ("Social", "social and human impact: who is affected and how"),
     ("Expert views", "what named experts, analysts or officials say"),
     ("Future outlook", "likely next developments and scenarios"),
-    ("Geographic", "regional and geographic significance"),
+    ("Geographic", "where: regional and geographic significance"),
+    ("Short-term effects", "immediate effects and consequences in the first days and weeks"),
+    ("Long-term effects", "long-term and structural consequences, expected or already visible"),
+    ("Reactions", "reactions from governments, organisations, markets and the public, at home and abroad"),
+    ("Security", "security, military or safety implications"),
     ("Comparisons", "comparable cases and benchmarks"),
+    ("Winners and losers", "who benefits and who loses, and by how much"),
+    ("Legal", "legal, regulatory and treaty implications"),
+    ("Risks", "risks, threats and worst-case scenarios that analysts warn about"),
+    ("Historical", "historical background and precedents"),
 ]
 MONTHS = {"january", "february", "march", "april", "june", "july", "august", "september", "october",
           "november", "december", "today", "analysis", "news", "latest", "report", "update"}
@@ -226,7 +237,7 @@ class Researcher:
                   f"story itself names that year - we want current coverage.\nAngles:\n{lines}\n\n"
                   'Return JSON: {"<angle name>": ["query", ...], ...}')
         try:
-            data = self.llm.complete_json(prompt, max_tokens=1200)
+            data = self.llm.complete_json(prompt, max_tokens=min(3500, 250 + 110 * len(angles) * per_angle))
             out = {}
             for n, _ in angles:
                 qs = [q for q in data.get(n, []) if isinstance(q, str) and q.strip()]

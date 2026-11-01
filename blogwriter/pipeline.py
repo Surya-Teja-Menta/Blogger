@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
@@ -20,7 +21,7 @@ from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .news import NewsCollector
 from .rank import audience_rank
-from .render import to_html, to_pdf
+from .render import pdf_pages, to_html, to_pdf
 from .research import Researcher, domain
 from .storage import upload_run
 from .writer import Writer, words
@@ -83,9 +84,65 @@ def sources_md(dossier) -> str:
     return "\n".join(rows)
 
 
+def acknowledgements_md(article, dossier) -> str:
+    """Thanks to the publishers whose reporting the verified facts came from (mechanical: no model, no invention)."""
+    used = Counter(domain(dossier.sources[f["source"] - 1]["url"]) for f in dossier.facts)
+    outlets = [d for d, _ in used.most_common(12)]
+    thanks = (f"Its facts were verified against the published pages of {len(used)} sources, with particular thanks to "
+              f"{', '.join(outlets[:-1])} and {outlets[-1]}." if len(outlets) > 1 else
+              f"Its facts were verified against the published pages of {outlets[0]}." if outlets else "")
+    return (f"This report stands on the work of reporters, editors and researchers who published before it. The story "
+            f"it follows was first reported by **{article.source}**. {thanks}\n\n"
+            "There is no original reporting here. Every statement traces to a passage quoted from a cited source, and "
+            "the full list of passages is printed in the evidence register at the end. Any fault in how those facts "
+            "are arranged belongs to this report, not to the outlets that gathered them.")
+
+
+_INDEX_SKIP = {"The", "This", "That", "These", "Those", "There", "Here", "When", "Where", "While", "After", "Before",
+               "Since", "Because", "However", "Meanwhile", "Although", "Despite", "According", "What", "Who", "Why",
+               "How", "Which", "His", "Her", "Their", "Its", "Our", "And", "But", "For", "With", "From", "Some", "Many",
+               "Several", "Both", "Each", "Another", "Such", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+               "Saturday", "Sunday", "January", "February", "March", "April", "June", "July", "August", "September",
+               "October", "November", "December"}
+_PROPER = re.compile(r"(?<=[a-z,;:)] )((?:[A-Z][\w.'’-]+)(?: (?:of |the |and |de |al-)?[A-Z][\w.'’-]+){0,3})")
+
+
+def index_md(chapters: list) -> str:
+    """Alphabetical index of the people, places and organisations named in the report, with the chapters that
+    mention them. Chapter numbers match the Contents (PDF page numbers are not available when printing from HTML)."""
+    prose = [" ".join(ln for ln in c.splitlines() if not ln.lstrip().startswith(("#", ">", "|"))) for c in chapters]
+    names = Counter()
+    for text in prose:
+        for m in _PROPER.findall(text):
+            parts = m.split(" ")
+            while parts and parts[0] in _INDEX_SKIP:
+                parts = parts[1:]
+            term = " ".join(parts).strip(".,;:'’")
+            if len(term) >= 4:
+                names[term] += 1
+    rows = []
+    for term in sorted((t for t, n in names.items() if n >= 2), key=str.lower):
+        where = [str(i) for i, text in enumerate(prose, 1) if term in text]
+        if where:
+            rows.append(f"- **{term}** — chapter{'s' if len(where) > 1 else ''} {', '.join(where)}")
+    return "\n".join(rows[:120]) or "_No names recurred often enough to index._"
+
+
+def evidence_md(dossier) -> str:
+    """Every verified fact with the passage that proves it and where it came from."""
+    rows = []
+    ordered = sorted(dossier.facts, key=lambda f: (f["angle"], -f.get("corroboration", 0)))
+    for i, f in enumerate(ordered, 1):
+        src = dossier.sources[f["source"] - 1]
+        rows.append(f"{i}. **{f['claim']}** “{f['quote']}” — [{domain(src['url'])}]({src['url']}) · "
+                    f"{f['angle'].lower()}")
+    return "\n".join(rows)
+
+
 def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None, product: dict = None) -> str:
     kf = "\n".join(f"  {i}. {f['claim']}" for i, f in enumerate(dossier.key_facts(5), 1))
     stored = ("\nSTORED ONLINE:\n" + "\n".join(f"  {n}: {u}" for n, u in links.items()) + "\n") if links else ""
+    pages = f", {meta['pdf_pages']} pages" if meta.get("pdf_pages") else ""
     if product:
         stored += (f"\nGUMROAD ({'live' if product['published'] else 'DRAFT - review and publish it in your dashboard'}):"
                    f"\n  {product['url']}\n")
@@ -96,7 +153,7 @@ def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None
             f"KEY FINDINGS\n{kf}\n\n"
             f"RESEARCH: {meta['verified_facts']} verified facts ({meta['corroborated_facts']} confirmed by a second "
             f"source) from {meta['sources']} sources.\n\n"
-            f"ATTACHED: documentary report ({meta['report_words']} words), article ({meta['article_words']} words), "
+            f"ATTACHED: documentary report ({meta['report_words']} words{pages}), article ({meta['article_words']} words), "
             f"blog ({meta['blog_words']} words).\nAlso saved in: {report_dir}\n{stored}")
 
 
@@ -164,6 +221,9 @@ class BlogPipeline:
         # ---- 4. documentary report first, then the blog and article derived from it -------------------
         self.log("\n=== 4/5 Writing the documentary report, then the article and blog from it ===")
         plan = self.writer.plan_documentary(dossier, m)
+        glance = self.writer.at_a_glance(dossier)             # who/what/when/where/why/how, opens the report
+        if glance:
+            plan.insert(0, glance)
         for i, c in enumerate(plan, 1):
             self.log(f"  {i}. {c['title']}  ({c['facts']} facts)")
         skipped = [role for role, angles, _, _ in self.writer.SECTIONS if dossier.count(angles) == 0]
@@ -176,13 +236,24 @@ class BlogPipeline:
         if not chapters:
             raise PipelineError("the fact-check left no usable documentary chapter; nothing was saved")
 
+        self.log("[writer] executive summary and closing chapter")
+        summary = self.writer.executive_summary(dossier, chapters)
+        closing = self.writer.conclusion(dossier, plan, chapters, m)
+        if closing:
+            plan.append({"title": "Summary and Conclusion"})
+            chapters.append(closing)
+
         title = article.title
         toc = "\n".join(f"{i}. {c['title']}" for i, c in enumerate(plan, 1))
         report = (f"# {title}\n\n*A documentary report* · **Research date:** {datetime.now():%B %d, %Y} · "
                   f"**Original story:** [{article.source}]({article.real_url or article.url})\n\n"
+                  f"## Acknowledgements\n\n{acknowledgements_md(article, dossier)}\n\n" +
+                  (f"## Executive Summary\n\n{summary}\n\n" if summary else "") +
                   f"## Key findings\n\n{key_findings_md(dossier)}\n\n## Contents\n\n{toc}\n\n---\n\n" +
                   "\n\n".join(chapters) +
-                  f"\n\n---\n\n## How this report was researched\n\n{quality_md(dossier, mode, skipped)}\n\n"
+                  f"\n\n---\n\n## Index\n\n{index_md(chapters)}\n\n"
+                  f"## Evidence register\n\n{evidence_md(dossier)}\n\n"
+                  f"## How this report was researched\n\n{quality_md(dossier, mode, skipped)}\n\n"
                   f"## Sources\n\n{sources_md(dossier)}\n")
         body_of_report = "\n\n".join(chapters)            # the chapters only: what the blog/article adapt
 
@@ -207,6 +278,10 @@ class BlogPipeline:
         with open(os.path.join(out, "documentary_report.html"), "w", encoding="utf-8") as f:
             f.write(html)
         pdf = make_pdf and to_pdf(html, os.path.join(out, "documentary_report.pdf"))
+        pages = pdf_pages(os.path.join(out, "documentary_report.pdf")) if pdf else 0
+        if pdf:
+            self.log(f"[render] PDF has {pages or 'an unknown number of'} pages" +
+                     (" - under the 20-page target: the story did not yield enough verified material" if 0 < pages < 20 else ""))
         with open(os.path.join(out, "research.json"), "w", encoding="utf-8") as f:
             json.dump(dossier.to_dict(), f, indent=2, ensure_ascii=False)
         with open(os.path.join(out, "candidates.json"), "w", encoding="utf-8") as f:
@@ -215,7 +290,7 @@ class BlogPipeline:
         metadata = {"topic": topic, "title": title, "mode": mode, "date": stamp, "article": article.to_dict(),
                     "candidates": len(ranked), "audience_score": article.audience, "audience_why": article.why,
                     "chapters": [c["title"] for c in plan], "blog_meta": meta,
-                    "report_words": words(report), "article_words": words(article_md), "blog_words": words(blog),
+                    "pdf_pages": pages, "report_words": words(report), "article_words": words(article_md), "blog_words": words(blog),
                     "verified_facts": len(dossier.facts), "rejected_facts": dossier.rejected,
                     "corroborated_facts": sum(1 for f in dossier.facts if f["corroboration"]),
                     "angles_with_data": len(dossier.usable_angles()), "angles_total": len(dossier.angles),

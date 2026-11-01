@@ -32,8 +32,8 @@ class Mode:
 # chapters = the most documentary sections to write (the report follows a fixed story arc, empty ones are skipped)
 MODES = {
     "fast": Mode("fast", 4, 1, 5, 350, 300, 700, 2, 3, 6, 0, 0, False),
-    "standard": Mode("standard", 8, 2, 9, 600, 500, 1000, 3, 5, 8, 1, 4),
-    "deep": Mode("deep", 10, 3, 9, 800, 500, 1400, 4, 6, 10, 2, 5),
+    "standard": Mode("standard", 16, 2, 14, 700, 800, 1400, 3, 5, 8, 1, 5),
+    "deep": Mode("deep", 19, 3, 16, 900, 1000, 1800, 4, 6, 10, 2, 6),
 }
 
 
