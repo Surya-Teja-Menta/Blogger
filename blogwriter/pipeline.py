@@ -103,7 +103,11 @@ _INDEX_SKIP = {"The", "This", "That", "These", "Those", "There", "Here", "When",
                "How", "Which", "His", "Her", "Their", "Its", "Our", "And", "But", "For", "With", "From", "Some", "Many",
                "Several", "Both", "Each", "Another", "Such", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                "Saturday", "Sunday", "January", "February", "March", "April", "June", "July", "August", "September",
-               "October", "November", "December"}
+               "October", "November", "December",
+               # titles that precede a name ("Foreign Minister Abbas Araghchi" and "Abbas Araghchi" are one entry)
+               "Foreign", "Defense", "Defence", "Finance", "Minister", "President", "Prime", "Secretary", "General",
+               "Senator", "Chancellor", "King", "Queen", "Prince", "Supreme", "Leader", "Chairman", "Chair", "CEO",
+               "Dr", "Mr", "Mrs", "Ms", "Gen", "Sen", "Rep", "Gov", "Judge", "Justice"}
 _PROPER = re.compile(r"(?<=[a-z,;:)] )((?:[A-Z][\w.'’-]+)(?: (?:of |the |and |de |al-)?[A-Z][\w.'’-]+){0,3})")
 
 
