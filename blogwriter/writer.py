@@ -110,9 +110,61 @@ def trim_to_words(text: str, limit: int) -> str:
     return out.strip()
 
 
+# ---- plain, human style --------------------------------------------------------
+# Words and phrases that make text read as machine-written; a draft that leans on them is sent back.
+STOCK_PHRASES = ["delve", "tapestry", "testament to", "navigate the", "navigating the", "multifaceted", "intricate",
+                 "pivotal", "crucial role", "underscore", "underscores", "underscoring", "realm", "landscape of",
+                 "ever-evolving", "fast-paced", "in today's world", "game-changer", "game changer", "stark reminder",
+                 "it is worth noting", "it's worth noting", "it is important to note", "plays a key role",
+                 "a significant milestone", "seamless", "leverage", "bolster", "foster", "robust", "paradigm",
+                 "in conclusion", "in summary", "moreover", "furthermore", "additionally", "notably", "nuanced",
+                 "shed light", "sheds light", "unwavering", "resonate", "embark", "harness", "myriad", "plethora",
+                 "a new era", "at the heart of", "only time will tell", "remains to be seen", "serves as a reminder"]
+
+PLAIN_STYLE = (
+    "STYLE - write like an experienced human reporter explaining the story to a smart friend:\n"
+    "- Simple, everyday words. Pick the short common word: 'use' not 'utilise', 'help' not 'facilitate', "
+    "'start' not 'commence', 'show' not 'underscore'. If a technical term is needed, explain it in a few plain words.\n"
+    "- Mostly short sentences, one idea each, with an occasional longer one so it does not sound choppy. "
+    "Readable by a 15-year-old.\n"
+    "- Say things directly: 'Oil prices rose 8%', not 'Oil prices experienced a significant upward movement'. "
+    "Active voice. Concrete names, numbers, places and dates instead of abstractions.\n"
+    "- Never use these stock phrases or anything like them: " + ", ".join(f"'{p}'" for p in STOCK_PHRASES[:30]) +
+    ". Do not start sentences with 'Moreover', 'Furthermore', 'Additionally' or 'Notably'.\n"
+    "- No em dashes; use a full stop or a comma. No 'not only... but also', no 'it's not X, it's Y', no lists of "
+    "three adjectives, no rhetorical questions you answer yourself, no grand closing line about the future.\n"
+    "- Vary how paragraphs start. Not every paragraph needs a transition word.")
+
+
+def stock_phrases(text: str) -> List[str]:
+    """The machine-sounding stock phrases a text uses (whole words, case-insensitive)."""
+    low = text.lower()
+    return [p for p in STOCK_PHRASES if re.search(r"(?<![a-z])" + re.escape(p) + r"(?![a-z])", low)]
+
+
+PLAIN_SWAPS = [(r"\butili[sz]e\b", "use"), (r"\butili[sz]es\b", "uses"), (r"\butili[sz]ed\b", "used"),
+               (r"\butili[sz]ing\b", "using"), (r"\bcommence\b", "start"), (r"\bcommences\b", "starts"),
+               (r"\bcommenced\b", "started"), (r"\bfacilitate\b", "help"), (r"\bfacilitates\b", "helps"),
+               (r"\bfacilitated\b", "helped"), (r"(?<=\w) ?— ?(?=\w)", ", ")]
+OPENER = re.compile(r"(^|\n|[.!?] )(?:Moreover|Furthermore|Additionally|Notably), (\w)")
+
+
+def plain_words(text: str) -> str:
+    """Mechanical last pass: swap a few stiff words for plain ones and drop filler sentence openers.
+    Headings and quoted lines are left alone."""
+    out = []
+    for para in text.split("\n\n"):
+        if not para.lstrip().startswith(("#", ">", "|")):
+            for pat, rep in PLAIN_SWAPS:
+                para = re.sub(pat, rep, para)
+            para = OPENER.sub(lambda m: m.group(1) + m.group(2).upper(), para)
+        out.append(para)
+    return "\n\n".join(out)
+
+
 # ---- prompts ----------------------------------------------------------------
-SYSTEM = ("You are an award-winning investigative journalist. You write direct, intense, tightly-reported prose: "
-          "concrete detail, short sentences that land, no filler and no clichés. "
+SYSTEM = ("You are an experienced news reporter who writes clear, plain English that real people enjoy reading. "
+          "Accuracy comes first, then clarity.\n" + PLAIN_STYLE + "\n"
           "HARD RULES: use ONLY the VERIFIED FACTS and article text in the research notes; never invent people, quotes, statistics, "
           "scenes or dialogue; never add a year or date the notes do not state; never describe what 'the article' or "
           "'the outlet' says unless ARTICLE TEXT is actually provided in the notes; if a detail is not in the notes, "
@@ -136,6 +188,9 @@ class Writer:
             text = clean_output(raw)
             issues = validate(text, int(target * lo) if check_length else 20,
                               int(target * hi) if check_length else 10 ** 6, title)
+            stock = stock_phrases(text)
+            if len(stock) >= 3:
+                issues.append("sounds machine-written: replace these stock phrases with plain words - " + ", ".join(stock))
             if not issues:
                 return text
             self.log(f"[writer] retry: {'; '.join(issues)}")
@@ -150,7 +205,7 @@ class Writer:
         cleaned = strip_unsupported_numbers(strip_unverified_quotes(checked, allowed or notes), allowed or notes)
         if words(cleaned) < words(checked):
             self.log(f"[writer] number check removed {words(checked) - words(cleaned)} words with unverified figures")
-        return cleaned if (words(cleaned) >= 60 or strict) else checked
+        return plain_words(cleaned if (words(cleaned) >= 60 or strict) else checked)
 
     def _ground_llm(self, text: str, notes: str, title: str, strict: bool = False) -> str:
         """LLM fact-check pass: delete or rewrite every claim the research notes do not support.
@@ -248,8 +303,8 @@ class Writer:
         try:
             roles = "\n".join(f"{i + 1}. {c['title']} - {c['focus']}" for i, c in enumerate(plan))
             titles = self.llm.complete_json(
-                f"{dossier.brief(1500)}\n\nGive each documentary chapter below a specific, compelling title that names "
-                f"the real people, places or events of THIS story (max 12 words), keeping its role. A title may only "
+                f"{dossier.brief(1500)}\n\nGive each documentary chapter below a specific title in plain everyday words "
+                f"that names the real people, places or events of THIS story (max 12 words), keeping its role. A title may only "
                 f"claim what the chapter's role supports: no drama words (clash, battle, crisis, collapse) unless the "
                 f"story itself uses them.\n{roles}\n\n"
                 f"Return a JSON array of exactly {len(plan)} title strings.", max_tokens=500)
@@ -273,10 +328,11 @@ class Writer:
                   f"Requirements: about {target} words; start with the line '## {ch['title']}'. Cover EVERY fact "
                   "listed under VERIFIED FACTS - this chapter must leave nothing out - weaving them into a "
                   "coherent narrative (chronological where dates exist, grouping related facts).\n"
-                  "Voice: the narration of a serious long-form documentary. Open on the single most striking verified "
-                  "detail, not a summary - no invented atmosphere (light, weather, mood, 'tremors', 'tableaux') and "
-                  "no interpretation of motives or meaning the notes do not state; let each paragraph move the story forward and hand off to the next with a "
-                  "clear transition; vary sentence length; active voice; plain, concrete words.\n"
+                  "Voice: a calm documentary narrator talking to an ordinary viewer, in simple everyday words. Open "
+                  "on the single most striking verified detail, not a summary - no invented atmosphere (light, "
+                  "weather, mood, 'tremors', 'tableaux') and no interpretation of motives or meaning the notes do not "
+                  "state. Tell it the way a person would tell it: one point at a time, each paragraph moving the "
+                  "story on; vary sentence length; active voice.\n"
                   "State each fact ONCE - never restate a fact already told in this chapter, even reworded. Do not "
                   "attribute every sentence: state established facts plainly, and attribute only quotes, opinions, "
                   "estimates and disputed claims - to the named person, government or organisation, never to a "
@@ -298,7 +354,7 @@ class Writer:
         prompt = (f"{notes}\n\nWrite the EXECUTIVE SUMMARY of this documentary report: about 280 words, three or four "
                   "paragraphs, no headings. Paragraph one: what happened, to whom, when and where. Paragraph two: why "
                   "and how. Paragraph three: the effects and impacts, now and later. Last paragraph: what to watch "
-                  "next - only decisions, events or forecasts the chapters name, never your own advice. Lead with the most important verified fact. Plain, direct, intense; no hype. Use only facts "
+                  "next - only decisions, events or forecasts the chapters name, never your own advice. Lead with the most important verified fact. Simple everyday words, short sentences; no hype. Use only facts "
                   "from the chapters; say each fact once.")
         try:
             draft = self._generate(prompt, title, 280, lo=0.5, hi=1.5)
@@ -350,9 +406,10 @@ class Writer:
         title = dossier.article["title"]
         source = self._source(dossier, report)
         prompt = (f"{source}\n\nWrite a {mode.blog_words}-word blog post about \"{title}\".\n"
-                  "Voice: straight, intense, no throat-clearing. Open with the single most striking verified fact in "
-                  "the first sentence. Short sentences that land, then one longer sentence to carry the detail. Speak "
-                  "directly to the reader. Every paragraph must carry concrete detail from the facts above - a name, "
+                  "Voice: a friendly, well-informed person writing their own blog - relaxed and conversational, "
+                  "contractions are fine (it's, didn't, they're), simple words, no showing off. Open with the single "
+                  "most striking verified fact in the first sentence. Mostly short sentences. Speak directly to the "
+                  "reader. Every paragraph must carry concrete detail from the facts above - a name, "
                   "figure, date or place - and move the story forward. No filler adjectives, no clichés ('in today's "
                   "world', 'game-changer', 'buckle up'), no padding questions.\n"
                   "Cover, in this order: within the first 150 words, who did what, when and where; then why it "
@@ -371,8 +428,9 @@ class Writer:
         prompt = (f"{source}\n\nWrite a {mode.article_words}-word news feature article about \"{title}\".\n"
                   "Build every paragraph from specific VERIFIED FACTS above (use as many as fit; no filler, no "
                   "generalities the facts do not support).\n"
-                  "Voice: direct and intense. Short, hard sentences; concrete detail in every paragraph (names, "
-                  "figures, dates, places); no filler, no hype, no clichés.\n"
+                  "Voice: clear and calm, like a good newspaper story written for everyone - simple words, short "
+                  "sentences, concrete detail in every paragraph (names, figures, dates, places); no filler, no hype, "
+                  "no clichés.\n"
                   "Structure: '# headline' on the first line; one italic standfirst sentence summarising the story; "
                   "a lede paragraph that answers who, what, when and where; then '## ' sections in this order, "
                   "skipping any the facts cannot support: '## Why it happened', '## How it unfolded', '## Who is "

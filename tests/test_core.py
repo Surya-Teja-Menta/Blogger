@@ -798,3 +798,38 @@ def test_closing_chapter_title_is_not_repeated_in_its_body():
     w = Writer(Echo(), log=lambda m: None)
     out = w.conclusion(_dossier(), [{"title": "One"}], ["## One\n\nText about T."], __import__("blogwriter.config", fromlist=["MODES"]).MODES["fast"])
     assert out.count("Summary and Conclusion") == 1 and out.startswith("## Summary and Conclusion\n\n- **One**")
+
+
+def test_zip_run_bundles_existing_files_only(tmp_path):
+    import zipfile
+    from blogwriter.storage import zip_run
+    (tmp_path / "documentary_report.pdf").write_bytes(b"%PDF-1.4 x")
+    (tmp_path / "blog.md").write_text("# b", encoding="utf-8")
+    name = zip_run(str(tmp_path), ["documentary_report.pdf", "blog.md", "article.md"])
+    assert name == tmp_path.name + ".zip"
+    with zipfile.ZipFile(tmp_path / name) as z:
+        assert sorted(z.namelist()) == ["blog.md", "documentary_report.pdf"]
+        assert z.read("documentary_report.pdf") == b"%PDF-1.4 x"
+
+
+def test_gumroad_price_defaults_to_3_90(monkeypatch):
+    from blogwriter.config import Settings
+    monkeypatch.delenv("GUMROAD_PRICE_CENTS", raising=False)
+    assert Settings().gumroad_price_cents == 390 and Settings.from_env().gumroad_price_cents == 390
+
+
+def test_stock_phrases_detected_as_whole_words_only():
+    from blogwriter.writer import stock_phrases
+    assert set(stock_phrases("Moreover, this pivotal deal will delve into the landscape of trade.")) >= \
+        {"moreover", "pivotal", "delve", "landscape of"}
+    assert stock_phrases("The harnessed horse ran. Fostering is fine? Notablyx.") == []   # no partial-word hits
+
+
+def test_plain_words_simplifies_prose_but_not_headings_or_quotes():
+    from blogwriter.writer import plain_words
+    text = ("## Moreover, a heading — kept\n\nThey utilised the port. Moreover, talks commenced on Monday — "
+            "late.\n\n> \"We will utilise every tool\" - Minister")
+    out = plain_words(text)
+    assert out.startswith("## Moreover, a heading — kept")
+    assert "They used the port. Talks started on Monday, late." in out
+    assert "utilise every tool" in out          # a quotation is never altered

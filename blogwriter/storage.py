@@ -1,6 +1,7 @@
 """Upload a finished run to S3-compatible object storage (Cloudflare R2, Backblaze B2, MinIO, AWS S3)."""
 import mimetypes
 import os
+import zipfile
 from typing import Callable, Dict, List
 
 from .config import Settings
@@ -14,6 +15,16 @@ def _client(settings: Settings):
     return boto3.client("s3", endpoint_url=settings.s3_endpoint, region_name=settings.s3_region,
                         aws_access_key_id=settings.s3_access_key, aws_secret_access_key=settings.s3_secret_key,
                         config=Config(signature_version="s3v4", retries={"max_attempts": 3}))
+
+
+def zip_run(run_dir: str, files: List[str]) -> str:
+    """Bundle `files` (names inside run_dir) into <run folder>.zip inside run_dir; returns the zip's name."""
+    name = os.path.basename(os.path.normpath(run_dir)) + ".zip"
+    with zipfile.ZipFile(os.path.join(run_dir, name), "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for f in files:
+            if os.path.exists(os.path.join(run_dir, f)):
+                z.write(os.path.join(run_dir, f), arcname=f)
+    return name
 
 
 def upload_run(settings: Settings, run_dir: str, files: List[str],
@@ -34,8 +45,8 @@ def upload_run(settings: Settings, run_dir: str, files: List[str],
             if not os.path.exists(path):
                 continue
             key = f"{prefix}/{name}"
-            mime = "text/markdown; charset=utf-8" if name.endswith(".md") else (
-                mimetypes.guess_type(name)[0] or "application/octet-stream")
+            mime = ("text/markdown; charset=utf-8" if name.endswith(".md") else "application/zip"
+                    if name.endswith(".zip") else mimetypes.guess_type(name)[0] or "application/octet-stream")
             if mime in ("text/html", "application/json"):
                 mime += "; charset=utf-8"
             s3.upload_file(path, settings.s3_bucket, key, ExtraArgs={"ContentType": mime})

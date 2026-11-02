@@ -24,7 +24,7 @@ from .publish import post_all
 from .rank import audience_rank
 from .render import pdf_pages, to_html, to_pdf
 from .research import Researcher, domain
-from .storage import upload_run
+from .storage import upload_run, zip_run
 from .writer import Writer, words
 
 
@@ -310,7 +310,10 @@ class BlogPipeline:
         self.log("\n=== 5/5 Storing and emailing the results ===")
         deliverables = ("documentary_report.pdf", "documentary_report.html", "documentary_report.md",
                         "article.md", "blog.md")
-        links = upload_run(self.s, out, list(deliverables) + ["research.json"], self.log)
+        # one zip of the report, article and blog, uploaded next to the individual files
+        bundle = zip_run(out, ["documentary_report.pdf" if pdf else "documentary_report.html", "article.md", "blog.md"])
+        # research.json stays local: it holds the full text of the news articles read, which must not be republished
+        links = upload_run(self.s, out, [bundle] + list(deliverables), self.log)
         sellable = "documentary_report.pdf" if pdf else "documentary_report.html"
         product = list_product(
             self.s, title,

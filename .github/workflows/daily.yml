@@ -72,7 +72,7 @@ jobs:
           S3_REGION: ${{ secrets.S3_REGION }}
           S3_PUBLIC_URL: ${{ secrets.S3_PUBLIC_URL }}
           GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}
-          GUMROAD_PRICE_CENTS: ${{ vars.GUMROAD_PRICE_CENTS }}   # default 499
+          GUMROAD_PRICE_CENTS: ${{ vars.GUMROAD_PRICE_CENTS || '390' }}   # US$3.90 unless the repo variable overrides it
           GUMROAD_PUBLISH: ${{ vars.GUMROAD_PUBLISH }}           # "true" = go live; empty = draft for review
           PUBLISH_LIVE: ${{ vars.PUBLISH_LIVE }}                   # "false" = save drafts instead of posting
           DEVTO_API_KEY: ${{ secrets.DEVTO_API_KEY }}
