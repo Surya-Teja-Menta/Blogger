@@ -633,3 +633,53 @@ def test_pdf_page_counter(tmp_path):
     p.write_bytes(b"%PDF-1.4\n1 0 obj<</Type /Pages /Kids [2 0 R]>>\n2 0 obj<</Type /Page /Parent 1 0 R>>\n"
                   b"3 0 obj<</Type/Page/Parent 1 0 R>>")
     assert pdf_pages(str(p)) == 2 and pdf_pages(str(tmp_path / "missing.pdf")) == 0
+
+
+def test_retry_after_reads_the_providers_own_wait():
+    import pytest
+    from blogwriter.llm import retry_after
+    assert retry_after("Rate limit reached. Please try again in 7.8s.") == pytest.approx(8.8)
+    assert retry_after("try again in 1m3.2s") == pytest.approx(64.2)
+    assert retry_after("try again in 250ms") == pytest.approx(1.25)
+    assert retry_after("try again in 2h4m0s") == 3600                    # capped; a daily quota is not waited out
+    assert retry_after("no hint in this message") == 60
+
+
+def _clocked_llm(monkeypatch, endpoints):
+    import blogwriter.llm as L
+    from blogwriter.config import Settings
+    clock, slept = [1000.0], []
+    monkeypatch.setattr(L.time, "time", lambda: clock[0])
+    monkeypatch.setattr(L.time, "sleep", lambda s: (slept.append(s), clock.__setitem__(0, clock[0] + s)))
+    c = L.LLMClient(Settings(), log=lambda m: None)
+    monkeypatch.setattr(c, "_endpoints", lambda: endpoints)
+    return c, slept
+
+
+def test_llm_waits_out_a_short_rate_limit_instead_of_losing_the_run(monkeypatch):
+    import blogwriter.llm as L
+    calls = []
+
+    def limited_once(system, prompt, max_tokens, temperature):
+        calls.append(1)
+        if len(calls) == 1:
+            raise L._Hard("HTTP 429 rate limited", cooldown=20)
+        return "the answer"
+    c, slept = _clocked_llm(monkeypatch, [("groq#1", limited_once)])
+    assert c.complete("hi") == "the answer" and len(calls) == 2
+    assert len(slept) == 1 and 20 <= slept[0] <= 22
+
+
+def test_llm_does_not_wait_for_a_long_outage(monkeypatch):
+    import blogwriter.llm as L
+    from blogwriter.llm import LLMError
+
+    def daily_quota(system, prompt, max_tokens, temperature):
+        raise L._Hard("HTTP 429 daily quota", cooldown=3600)
+    c, slept = _clocked_llm(monkeypatch, [("groq#1", daily_quota)])
+    try:
+        c.complete("hi")
+        assert False, "should have failed"
+    except LLMError:
+        pass
+    assert slept == []

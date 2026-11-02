@@ -28,6 +28,22 @@ class _Hard(Exception):
         self.cooldown = cooldown
 
 
+MAX_WAIT = 120      # longest pause (seconds) worth waiting out when every endpoint is rate-limited
+MAX_WAITS = 8       # how many such pauses one request may take
+RETRY_IN = re.compile(r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)(m?s))?", re.I)
+
+
+def retry_after(body: str) -> float:
+    """Seconds until a rate limit lifts, read from the provider's own message ('try again in 1m3.2s'). A daily
+    quota returns a long wait, which is then not waited out. Unknown format: assume a per-minute limit."""
+    m = RETRY_IN.search(body or "")
+    if not m or not any(m.groups()[:3]):
+        return 60.0
+    h, mins, secs, unit = m.groups()
+    s = float(secs or 0) / (1000 if unit and unit.lower() == "ms" else 1)
+    return min(3600.0, int(h or 0) * 3600 + int(mins or 0) * 60 + s + 1)
+
+
 def strip_think(text: str) -> str:
     text = THINK_RE.sub("", text or "")
     return re.sub(r"^.*?</think>", "", text, flags=re.DOTALL).strip()  # unmatched closing tag
@@ -63,33 +79,41 @@ class LLMClient:
                  temperature: float = 0.7) -> str:
         max_tokens = max_tokens or self.s.max_tokens
         errors = []
-        for name, call in self._endpoints():
-            if self._cooldown.get(name, 0) > time.time():
-                continue
-            for attempt in range(3):
-                try:
-                    # a truncated reply is retried with a bigger budget (reasoning models burn tokens silently)
-                    text = strip_think(call(system, prompt, max_tokens * (attempt + 1), temperature))
-                    if not text:
-                        raise RuntimeError("empty response")
-                    self.last_endpoint = name
-                    return text
-                except _Hard as exc:
-                    errors.append(f"{name}: {exc}")
-                    self.log(f"[llm] {name} disabled for this session: {exc}")
-                    names = [n for n, _ in self._endpoints() if n.split("#")[0] == name.split("#")[0]] \
-                        if exc.provider_wide else [name]
-                    for n in names:
-                        self._cooldown[n] = time.time() + exc.cooldown
-                    break
-                except Exception as exc:  # transient: back off, retry, then move on
-                    msg = f"{name}: {type(exc).__name__}: {str(exc)[:160]}"
-                    self.log(f"[llm] {msg} (attempt {attempt + 1}/3)")
-                    if attempt == 2:
-                        errors.append(msg)
-                        self._cooldown[name] = time.time() + 300   # skip a flaky provider for a while
-                    else:
-                        time.sleep(2 ** (attempt + 1))
+        for waits in range(MAX_WAITS + 1):
+            for name, call in self._endpoints():
+                if self._cooldown.get(name, 0) > time.time():
+                    continue
+                for attempt in range(3):
+                    try:
+                        # a truncated reply is retried with a bigger budget (reasoning models burn tokens silently)
+                        text = strip_think(call(system, prompt, max_tokens * (attempt + 1), temperature))
+                        if not text:
+                            raise RuntimeError("empty response")
+                        self.last_endpoint = name
+                        return text
+                    except _Hard as exc:
+                        errors.append(f"{name}: {exc}")
+                        self.log(f"[llm] {name} paused for {exc.cooldown:.0f}s: {exc}")
+                        names = [n for n, _ in self._endpoints() if n.split("#")[0] == name.split("#")[0]] \
+                            if exc.provider_wide else [name]
+                        for n in names:
+                            self._cooldown[n] = time.time() + exc.cooldown
+                        break
+                    except Exception as exc:  # transient: back off, retry, then move on
+                        msg = f"{name}: {type(exc).__name__}: {str(exc)[:160]}"
+                        self.log(f"[llm] {msg} (attempt {attempt + 1}/3)")
+                        if attempt == 2:
+                            errors.append(msg)
+                            self._cooldown[name] = time.time() + 300   # skip a flaky provider for a while
+                        else:
+                            time.sleep(2 ** (attempt + 1))
+            # Every endpoint failed or is parked. Per-minute rate limits clear within seconds, so wait for the
+            # soonest one instead of losing the whole run; longer outages (bad key, daily quota) still fail.
+            ready_in = min((t - time.time() for t in self._cooldown.values() if t > time.time()), default=None)
+            if ready_in is None or ready_in > MAX_WAIT or waits == MAX_WAITS:
+                break
+            self.log(f"[llm] every endpoint is rate-limited; waiting {ready_in + 1:.0f}s")
+            time.sleep(ready_in + 1)
         raise LLMError("all LLM endpoints failed -> " + " | ".join(errors[-6:]))
 
     def complete_json(self, prompt: str, system: str = "", max_tokens: Optional[int] = None,
@@ -140,8 +164,8 @@ class LLMClient:
                 raise _Hard(f"timed out after {timeout}s", cooldown=300)
             if r.status_code == 404:       # model removed / not served: same for every key
                 raise _Hard(f"HTTP 404 model '{model}' unavailable: {r.text[:100]}", provider_wide=True)
-            if r.status_code == 429:        # rate limited: park this key briefly and try the next one
-                raise _Hard(f"HTTP 429 rate limited: {r.text[:90]}", cooldown=90)
+            if r.status_code == 429:        # rate limited: park this key until the limit resets, try the next one
+                raise _Hard(f"HTTP 429 rate limited: {r.text[:90]}", cooldown=retry_after(r.text))
             if r.status_code in (401, 402, 403) or "free-models-per-day" in r.text:
                 raise _Hard(f"HTTP {r.status_code}")
             if r.status_code != 200:
