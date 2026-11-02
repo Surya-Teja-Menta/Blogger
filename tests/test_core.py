@@ -683,3 +683,97 @@ def test_llm_does_not_wait_for_a_long_outage(monkeypatch):
     except LLMError:
         pass
     assert slept == []
+
+
+def _publish_settings(**kw):
+    from blogwriter.config import Settings
+    base = dict(devto_api_key="dk", hashnode_token="ht", hashnode_publication_id="pub1",
+                wordpress_url="https://wp.example", wordpress_user="u", wordpress_app_password="p w",
+                ghost_url="https://ghost.example", ghost_admin_key="abc123:" + "ab" * 16,
+                telegram_bot_token="tg", telegram_chat_id="@chan")
+    base.update(kw)
+    return Settings(**base)
+
+
+def _fake_posting(monkeypatch, sent, fail=()):
+    import requests
+
+    def post(url, **kw):
+        sent.append((url, kw))
+        for bad in fail:
+            if bad in url:
+                return _Resp({"message": "boom"}, 500)
+        if "dev.to" in url:
+            return _Resp({"url": "https://dev.to/me/post", "id": 1})
+        if "hashnode" in url:
+            node = "publishPost" if "publishPost" in kw["json"]["query"] else "createDraft"
+            return _Resp({"data": {node: {"post": {"url": "https://me.hashnode.dev/p"}, "draft": {"id": "d"}}}})
+        if "wp-json" in url:
+            return _Resp({"link": "https://wp.example/p"})
+        if "ghost" in url:
+            return _Resp({"posts": [{"url": "https://ghost.example/p"}]})
+        return _Resp({"ok": True})                                   # telegram
+    monkeypatch.setattr(requests, "post", post)
+
+
+BLOG = "# Blog headline\n\nBody of the blog."
+ARTICLE = "# Article headline\n\n*Standfirst.*\n\n## Section\n\nText."
+META = {"title": "Blog headline", "description": "A short description.", "tags": ["Iran War", "oil", "G20", "x y", "five", "six"]}
+
+
+def test_posts_blog_to_devto_and_hashnode_article_to_wordpress_and_ghost_then_announces(monkeypatch):
+    import json as _json
+    from blogwriter.publish import post_all
+    sent, logs = [], []
+    _fake_posting(monkeypatch, sent)
+    done = post_all(_publish_settings(), BLOG, ARTICLE, META, log=logs.append)
+    assert done == {"Dev.to": "https://dev.to/me/post", "Hashnode": "https://me.hashnode.dev/p",
+                    "WordPress": "https://wp.example/p", "Ghost": "https://ghost.example/p"}
+    by = {u.split("/")[2]: kw for u, kw in sent}
+    dev = by["dev.to"]["json"]["article"]
+    assert dev["title"] == "Blog headline" and dev["body_markdown"] == "Body of the blog." and dev["published"] is True
+    assert dev["tags"] == ["iranwar", "oil", "g20", "xy"] and by["dev.to"]["headers"]["api-key"] == "dk"
+    assert by["gql.hashnode.com"]["json"]["variables"]["i"]["publicationId"] == "pub1"
+    assert by["gql.hashnode.com"]["json"]["variables"]["i"]["tags"][0] == {"slug": "iran-war", "name": "iran-war"}
+    wp = by["wp.example"]["json"]
+    assert wp["title"] == "Article headline" and wp["status"] == "publish" and "<h2>Section</h2>" in wp["content"]
+    assert by["wp.example"]["headers"]["Authorization"].startswith("Basic ")
+    assert by["ghost.example"]["json"]["posts"][0]["status"] == "published"
+    tg = by["api.telegram.org"]["json"]
+    assert tg["chat_id"] == "@chan" and "Blog headline" in tg["text"] and "https://dev.to/me/post" in tg["text"]
+
+
+def test_drafts_when_not_live_and_telegram_stays_silent(monkeypatch):
+    from blogwriter.publish import post_all
+    sent = []
+    _fake_posting(monkeypatch, sent)
+    done = post_all(_publish_settings(publish_live=False), BLOG, ARTICLE, META, log=lambda m: None)
+    assert len(done) == 4 and not [u for u, _ in sent if "telegram" in u]
+    by = {u.split("/")[2]: kw for u, kw in sent}
+    assert by["dev.to"]["json"]["article"]["published"] is False
+    assert "createDraft" in by["gql.hashnode.com"]["json"]["query"]
+    assert by["wp.example"]["json"]["status"] == "draft" and by["ghost.example"]["json"]["posts"][0]["status"] == "draft"
+
+
+def test_one_platform_failing_does_not_stop_the_others_and_unconfigured_ones_are_skipped(monkeypatch):
+    from blogwriter.config import Settings
+    from blogwriter.publish import post_all
+    sent, logs = [], []
+    _fake_posting(monkeypatch, sent, fail=("dev.to",))
+    done = post_all(_publish_settings(), BLOG, ARTICLE, META, log=logs.append)
+    assert "Dev.to" not in done and {"Hashnode", "WordPress", "Ghost"} <= set(done)
+    assert any("Dev.to FAILED" in m for m in logs)
+    sent.clear()
+    assert post_all(Settings(), BLOG, ARTICLE, META, log=logs.append) == {} and sent == []
+
+
+def test_ghost_admin_token_is_a_valid_hs256_jwt():
+    import base64, hashlib, hmac, json as _json
+    from blogwriter.publish import _ghost_token
+    secret = "ab" * 16
+    head, payload, sig = _ghost_token(f"kid1:{secret}").split(".")
+    pad = lambda s: s + "=" * (-len(s) % 4)
+    assert _json.loads(base64.urlsafe_b64decode(pad(head))) == {"alg": "HS256", "typ": "JWT", "kid": "kid1"}
+    assert _json.loads(base64.urlsafe_b64decode(pad(payload)))["aud"] == "/admin/"
+    want = hmac.new(bytes.fromhex(secret), f"{head}.{payload}".encode(), hashlib.sha256).digest()
+    assert base64.urlsafe_b64decode(pad(sig)) == want

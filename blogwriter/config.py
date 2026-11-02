@@ -72,6 +72,18 @@ class Settings:
     gumroad_token: str = ""
     gumroad_price_cents: int = 499
     gumroad_publish: bool = False
+    # blog / article posting: each platform is used only when its credentials are set
+    publish_live: bool = True            # False: save drafts instead of publishing (Telegram is then skipped)
+    devto_api_key: str = ""
+    hashnode_token: str = ""
+    hashnode_publication_id: str = ""
+    wordpress_url: str = ""              # https://yoursite.com (needs an Application Password)
+    wordpress_user: str = ""
+    wordpress_app_password: str = ""
+    ghost_url: str = ""
+    ghost_admin_key: str = ""            # "id:secret" from Ghost Admin -> Integrations
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
 
     @property
     def email_configured(self) -> bool:
@@ -113,4 +125,15 @@ class Settings:
             gumroad_token=e("GUMROAD_ACCESS_TOKEN", ""),
             gumroad_price_cents=int(e("GUMROAD_PRICE_CENTS", "499") or 499),
             gumroad_publish=e("GUMROAD_PUBLISH", "").strip().lower() in ("1", "true", "yes"),
+            publish_live=e("PUBLISH_LIVE", "true").strip().lower() not in ("0", "false", "no"),
+            devto_api_key=e("DEVTO_API_KEY", ""),
+            hashnode_token=e("HASHNODE_TOKEN", ""),
+            hashnode_publication_id=e("HASHNODE_PUBLICATION_ID", ""),
+            wordpress_url=e("WORDPRESS_URL", "").rstrip("/"),
+            wordpress_user=e("WORDPRESS_USER", ""),
+            wordpress_app_password=e("WORDPRESS_APP_PASSWORD", ""),
+            ghost_url=e("GHOST_URL", "").rstrip("/"),
+            ghost_admin_key=e("GHOST_ADMIN_KEY", ""),
+            telegram_bot_token=e("TELEGRAM_BOT_TOKEN", ""),
+            telegram_chat_id=e("TELEGRAM_CHAT_ID", ""),
         )

@@ -20,6 +20,7 @@ from .history import History
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .news import NewsCollector
+from .publish import post_all
 from .rank import audience_rank
 from .render import pdf_pages, to_html, to_pdf
 from .research import Researcher, domain
@@ -143,9 +144,12 @@ def evidence_md(dossier) -> str:
     return "\n".join(rows)
 
 
-def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None, product: dict = None) -> str:
+def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None, product: dict = None,
+               posts: dict = None) -> str:
     kf = "\n".join(f"  {i}. {f['claim']}" for i, f in enumerate(dossier.key_facts(5), 1))
     stored = ("\nSTORED ONLINE:\n" + "\n".join(f"  {n}: {u}" for n, u in links.items()) + "\n") if links else ""
+    if posts:
+        stored += "\nPOSTED:\n" + "\n".join(f"  {p}: {u}" for p, u in posts.items()) + "\n"
     pages = f", {meta['pdf_pages']} pages" if meta.get("pdf_pages") else ""
     if product:
         stored += (f"\nGUMROAD ({'live' if product['published'] else 'DRAFT - review and publish it in your dashboard'}):"
@@ -313,14 +317,16 @@ class BlogPipeline:
             f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
             f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
             os.path.join(out, sellable), self.log)
+        posts = post_all(self.s, files["blog.md"], files["article.md"], meta, self.log)
         sent = False
         if email:
             sent = send_email(self.s, f"[Blog Writer] {title[:120]}",
-                              email_body(metadata, article, dossier, out, links, product),
+                              email_body(metadata, article, dossier, out, links, product, posts),
                               [os.path.join(out, n) for n in deliverables], self.log)
         metadata["email_sent"] = sent
         metadata["stored"] = links
         metadata["gumroad"] = product
+        metadata["posts"] = posts
         with open(os.path.join(out, "metadata.json"), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
