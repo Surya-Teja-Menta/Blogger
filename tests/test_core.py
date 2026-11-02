@@ -892,3 +892,26 @@ def test_brief_lines_get_callout_class_in_html():
     md = "# T\n\n## One\n\n**In brief:** The main point.\n\nBody text.\n"
     html = to_html(md, "T")
     assert "<p class=\"brief\"><strong>In brief:</strong>" in html
+
+
+def test_groq_keys_are_rotated_per_request_but_provider_order_is_kept():
+    from blogwriter import llm as L
+    from blogwriter.config import Settings
+    c = L.LLMClient(Settings(), log=lambda m: None)
+    eps = [("groq#1", 1), ("groq#2", 2), ("groq#3", 3), ("nvidia:m#1", 4), ("ollama", 5)]
+    firsts = []
+    for turn in range(1, 5):
+        c._turn = turn
+        order = [n for n, _ in c._rotated(eps)]
+        assert order[3:] == ["nvidia:m#1", "ollama"] and sorted(order[:3]) == ["groq#1", "groq#2", "groq#3"]
+        firsts.append(order[0])
+    assert firsts == ["groq#2", "groq#3", "groq#1", "groq#2"]
+
+
+def test_limit_detail_names_the_limit_without_the_org_id():
+    from blogwriter.llm import limit_detail
+    body = ('{"error":{"message":"Rate limit reached for model `openai/gpt-oss-20b` in organization `org_01abc` '
+            'service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7100, Requested 1900. '
+            'Please try again in 7.5s."}}')
+    out = limit_detail(body)
+    assert out == "TPM: used 7100 + requested 1900 of 8000" and "org_" not in out

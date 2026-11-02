@@ -44,6 +44,19 @@ def retry_after(body: str) -> float:
     return min(3600.0, int(h or 0) * 3600 + int(mins or 0) * 60 + s + 1)
 
 
+LIMIT_RE = re.compile(r"on (tokens|requests) per (minute|day) \((\w+)\): Limit (\d+), Used (\d+), Requested (\d+)", re.I)
+
+
+def limit_detail(body: str) -> str:
+    """The useful part of a 429: which limit was hit and by how much ('TPM: used 7100 + requested 1900 of 8000').
+    The organisation id is left out of logs on purpose."""
+    m = LIMIT_RE.search(body or "")
+    if not m:
+        return (body or "")[:120]
+    _, _, kind, limit, used, req = m.groups()
+    return f"{kind}: used {used} + requested {req} of {limit}"
+
+
 def strip_think(text: str) -> str:
     text = THINK_RE.sub("", text or "")
     return re.sub(r"^.*?</think>", "", text, flags=re.DOTALL).strip()  # unmatched closing tag
@@ -71,6 +84,7 @@ class LLMClient:
         self.s = settings
         self.log = log
         self._cooldown = {}          # endpoint name -> time when usable again
+        self._turn = 0               # rotates which Groq key is tried first, spreading the per-minute load
         self._ollama_model: Optional[str] = None
         self.last_endpoint = ""
 
@@ -79,8 +93,9 @@ class LLMClient:
                  temperature: float = 0.7) -> str:
         max_tokens = max_tokens or self.s.max_tokens
         errors = []
+        self._turn += 1
         for waits in range(MAX_WAITS + 1):
-            for name, call in self._endpoints():
+            for name, call in self._rotated(self._endpoints()):
                 if self._cooldown.get(name, 0) > time.time():
                     continue
                 for attempt in range(3):
@@ -129,6 +144,19 @@ class LLMClient:
         raise LLMError(f"model did not return valid JSON: {last}")
 
     # ---- provider plumbing ------------------------------------------------
+    def _rotated(self, endpoints: List[Tuple[str, Callable]]) -> List[Tuple[str, Callable]]:
+        """Each request starts at the next Groq key (each key has its own per-minute token budget), so the
+        load is spread across all keys instead of always exhausting key #1 first. Provider order is kept."""
+        idx = [i for i, (n, _) in enumerate(endpoints) if n.startswith("groq#")]
+        if len(idx) < 2:
+            return endpoints
+        k = self._turn % len(idx)
+        groq = [endpoints[i] for i in idx]
+        out = list(endpoints)
+        for i, ep in zip(idx, groq[k:] + groq[:k]):
+            out[i] = ep
+        return out
+
     def _endpoints(self) -> List[Tuple[str, Callable]]:
         out = []
         for provider in self.s.providers:
@@ -165,7 +193,7 @@ class LLMClient:
             if r.status_code == 404:       # model removed / not served: same for every key
                 raise _Hard(f"HTTP 404 model '{model}' unavailable: {r.text[:100]}", provider_wide=True)
             if r.status_code == 429:        # rate limited: park this key until the limit resets, try the next one
-                raise _Hard(f"HTTP 429 rate limited: {r.text[:90]}", cooldown=retry_after(r.text))
+                raise _Hard(f"HTTP 429 rate limited: {limit_detail(r.text)}", cooldown=retry_after(r.text))
             if r.status_code in (401, 402, 403) or "free-models-per-day" in r.text:
                 raise _Hard(f"HTTP {r.status_code}")
             if r.status_code != 200:
