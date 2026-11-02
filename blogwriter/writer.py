@@ -68,12 +68,17 @@ def _nums(text: str) -> set:
 
 def strip_unsupported_numbers(text: str, allowed_text: str) -> str:
     """Mechanical guard against invented figures and dates: delete every sentence that contains a number
-    (or year) found nowhere in the verified material. Headings and tables are left alone."""
+    (or year) found nowhere in the verified material. Headings are left alone; in a table, a body row with an
+    untraceable number is dropped (the header and separator rows stay)."""
     allowed = _nums(allowed_text)
     out = []
     for para in text.split("\n\n"):
-        if para.lstrip().startswith(("#", "|")):
+        if para.lstrip().startswith("#"):
             out.append(para)
+            continue
+        if para.lstrip().startswith("|"):
+            rows = para.strip().splitlines()
+            out.append("\n".join(rows[:2] + [r for r in rows[2:] if _nums(r) <= allowed]))
             continue
         kept = [s for s in SENTENCE_END.split(para) if _nums(s) <= allowed]
         if kept:
@@ -325,7 +330,9 @@ class Writer:
         prompt = (f"{notes}\n\nWrite chapter {idx + 1} of a documentary report: \"{ch['title']}\".\n"
                   f"Role: {ch.get('focus', '')}\n"
                   f"Other chapters (do not repeat their material): before - {prior}; after - {later}\n\n"
-                  f"Requirements: about {target} words; start with the line '## {ch['title']}'. Cover EVERY fact "
+                  f"Requirements: about {target} words; start with the line '## {ch['title']}', then on its own line "
+                  "'**In brief:** ' followed by ONE plain sentence giving the chapter's main takeaway (a fact, not a "
+                  "teaser), then the chapter itself. Cover EVERY fact "
                   "listed under VERIFIED FACTS - this chapter must leave nothing out - weaving them into a "
                   "coherent narrative (chronological where dates exist, grouping related facts).\n"
                   "Voice: a calm documentary narrator talking to an ordinary viewer, in simple everyday words. Open "
@@ -351,8 +358,9 @@ class Writer:
         notes = (f"STORY: {title}\n\nTHE CHAPTERS (your only source):\n" +
                  "\n\n".join(c[:1100] for c in chapters)[:9000] +
                  f"\n\nMOST RELIABLE VERIFIED FACTS:\n{dossier.facts_text(None, 2500)}")
-        prompt = (f"{notes}\n\nWrite the EXECUTIVE SUMMARY of this documentary report: about 280 words, three or four "
-                  "paragraphs, no headings. Paragraph one: what happened, to whom, when and where. Paragraph two: why "
+        prompt = (f"{notes}\n\nWrite the EXECUTIVE SUMMARY of this documentary report: about 280 words, no headings. "
+                  "Start with '**Bottom line:** ' and ONE sentence a busy reader could stop after: the single most "
+                  "important verified point. Then three or four short paragraphs. Paragraph one: what happened, to whom, when and where. Paragraph two: why "
                   "and how. Paragraph three: the effects and impacts, now and later. Last paragraph: what to watch "
                   "next - only decisions, events or forecasts the chapters name, never your own advice. Lead with the most important verified fact. Simple everyday words, short sentences; no hype. Use only facts "
                   "from the chapters; say each fact once.")
@@ -362,6 +370,35 @@ class Writer:
             self.log("[writer] executive summary unavailable")
             return ""
         return self.ground(draft, notes, title, dossier.allowed_text())
+
+    def impact_table(self, dossier: Dossier) -> str:
+        """'Who is affected' table for the front of the report: each affected group, how, and when - built only
+        from verified facts, fact-checked like the prose. Empty when the facts name fewer than three groups."""
+        title = dossier.article["title"]
+        notes = f"STORY: {title}\n\nVERIFIED FACTS:\n{dossier.facts_text(None, 7000)}"
+        prompt = (f"{notes}\n\nMake a table of who is affected by this story, using ONLY the verified facts above.\n"
+                  "Exactly this header:\n| Who | How they are affected | When |\n|---|---|---|\n"
+                  "Then 4 to 8 rows, one per country, group, industry or organisation the facts name as affected. "
+                  "'How' is one short plain sentence taken from the facts. 'When' is one of: Now, Coming months, "
+                  "Longer term, Not yet known - pick 'Not yet known' unless a fact states the timing. No numbers "
+                  "unless that exact number appears in the facts. Output only the table.")
+        try:
+            raw = clean_output(self.llm.complete(prompt, system=SYSTEM, max_tokens=900, temperature=0.2))
+        except LLMError:
+            self.log("[writer] impact table unavailable")
+            return ""
+        def rows_of(text: str) -> List[str]:
+            rows = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("|") and ln.strip().endswith("|")]
+            return [r for r in rows if r.count("|") == 4 and not set(r) <= set("|-: ")
+                    and not r.lower().startswith("| who |")]
+        body = rows_of(raw)
+        if len(body) < 3:
+            return ""
+        header = ["| Who | How they are affected | When |", "|---|---|---|"]
+        # the same fact-check as the prose: unsupported rows are removed, then untraceable numbers
+        checked = rows_of(self._ground_llm("\n".join(header + body), notes, title, strict=True))
+        table = strip_unsupported_numbers("\n".join(header + checked), dossier.allowed_text())
+        return table if table.count("\n") >= 4 else ""      # header + separator + at least three rows
 
     def conclusion(self, dossier: Dossier, plan: List[dict], chapters: List[str], mode: Mode) -> str:
         """Closing chapter: what each chapter established, then what to watch."""

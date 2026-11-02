@@ -80,6 +80,17 @@ a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--rule);
 .chapter .bar + p::first-letter { float: left; font: 900 46pt/0.82 "Playfair Display", Georgia, serif;
               color: var(--gold); padding: 1.6mm 2.4mm 0 0; }
 .chapter .bar + p::first-line { font-variant: small-caps; letter-spacing: .03em; }
+/* "In brief" / "Bottom line" callouts: the chapter's one-sentence takeaway; the drop cap moves to the next paragraph */
+p.brief { font: italic 400 11.5pt/1.55 "Source Serif 4", Georgia, serif; text-align: left !important;
+          border-left: 3px solid var(--gold); padding: 1mm 0 1mm 5mm; margin: 0 0 6mm !important; color: #3a352d; }
+p.brief strong { font: 700 7.8pt Inter, Arial, sans-serif; letter-spacing: .2em; text-transform: uppercase;
+                 color: var(--gold); font-style: normal; margin-right: 2mm; }
+.chapter .bar + p.brief::first-letter { float: none; font: inherit; color: inherit; padding: 0; }
+.chapter .bar + p.brief::first-line { font-variant: normal; letter-spacing: 0; }
+.chapter .bar + p.brief + p::first-letter { float: left; font: 900 46pt/0.82 "Playfair Display", Georgia, serif;
+              color: var(--gold); padding: 1.6mm 2.4mm 0 0; }
+.impact table { font-size: 9pt; } .impact td:first-child { font-weight: 600; width: 26%; }
+.impact td:last-child { width: 16%; color: var(--muted); }
 blockquote { margin: 7mm 0; padding: 4mm 0 4mm 7mm; border-left: 3px solid var(--gold);
              font: italic 500 14pt/1.45 "Playfair Display", Georgia, serif; color: #3a352d; break-inside: avoid; }
 blockquote p { text-align: left !important; margin: 0; }
@@ -112,7 +123,8 @@ th { font-family: Inter, Arial, sans-serif; font-size: 8pt; text-transform: uppe
 """
 
 ORDINALS = ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve"]
-FRONT = {"acknowledgements": "ack", "executive summary": "summary", "key findings": "findings", "contents": "toc"}
+FRONT = {"acknowledgements": "ack", "executive summary": "summary", "key findings": "findings",
+         "who is affected": "impact", "contents": "toc"}
 END = {"index", "evidence register", "how this report was researched", "sources"}
 
 
@@ -143,6 +155,11 @@ def to_html(md_text: str, title: str, stats: dict = None) -> str:
             subline = nxt.decode_contents().strip().lstrip("·").strip()
             nxt.decompose()
         h1.decompose()
+    for p in soup.find_all("p"):                        # **In brief:** / **Bottom line:** takeaway lines
+        first = p.find(True)
+        if first is not None and first.name == "strong" and not (p.contents[0].strip() if isinstance(
+                p.contents[0], str) else "") and re.match(r"(in brief|bottom line)\b", first.get_text().strip(), re.I):
+            p["class"] = p.get("class", []) + ["brief"]
 
     stat_html = "".join(f"<div><b>{_html.escape(str(v))}</b>{_html.escape(k)}</div>" for k, v in (stats or {}).items())
     out = [f"<section class='cover'><div class='kicker'>A Documentary Report</div><h1>{_html.escape(title)}</h1>"

@@ -833,3 +833,62 @@ def test_plain_words_simplifies_prose_but_not_headings_or_quotes():
     assert out.startswith("## Moreover, a heading — kept")
     assert "They used the port. Talks started on Monday, late." in out
     assert "utilise every tool" in out          # a quotation is never altered
+
+
+def test_key_findings_carry_counted_confidence_labels():
+    from blogwriter.pipeline import confidence, key_findings_md
+    assert [confidence({"corroboration": c}) for c in (0, 1, 2, 5)] == ["Low", "Moderate", "High", "High"]
+    md = key_findings_md(_dossier())
+    assert "**High confidence.** Fact one." in md and "(3 independent sources)" in md
+    assert "**Low confidence.**" in md and "(1 independent source)" in md and "Confidence is counted" in md
+
+
+def test_blog_cta_links_product_after_opening_and_at_the_end():
+    from blogwriter.pipeline import add_cta, blog_cta
+    teaser, closing = blog_cta({"url": "https://x.gumroad.com/l/abc", "published": True}, 390, 9, 41, 18)
+    assert "US$3.90" in closing and "18-page" in closing and "9 chapters" in closing and "41 verified facts" in closing
+    out = add_cta("# Headline\n\nFirst paragraph.\n\n## Section\n\nMore.", teaser, closing)
+    paras = out.strip().split("\n\n")
+    assert paras[0] == "# Headline" and paras[1] == "First paragraph." and paras[2] == teaser
+    assert out.rstrip().endswith("(https://x.gumroad.com/l/abc)**") and out.count("x.gumroad.com") == 2
+
+
+def test_number_check_drops_table_rows_with_untraceable_numbers():
+    from blogwriter.writer import strip_unsupported_numbers
+    table = ("| Who | How they are affected | When |\n|---|---|---|\n| Farmers | Lost 40% of exports | Now |\n"
+             "| Shippers | Paid 999 more per box | Now |\n| Banks | Face new rules | Longer term |")
+    out = strip_unsupported_numbers(table, "Farmers lost 40% of their exports.")
+    assert "Farmers" in out and "Banks" in out and "999" not in out and out.startswith("| Who |")
+
+
+def test_impact_table_keeps_only_fact_checked_rows():
+    from blogwriter.writer import Writer
+
+    class Tabler:
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, prompt, *a, **k):
+            self.calls += 1
+            rows = ("| Who | How they are affected | When |\n|---|---|---|\n| Farmers | Lost exports | Now |\n"
+                    "| Shippers | Pay more | Now |\n| Banks | New rules | Longer term |\n| Ports | Paid 777 | Now |\n"
+                    "| Airlines | Rerouted flights | Now |")
+            return rows if self.calls == 1 else rows.replace("| Banks | New rules | Longer term |\n", "")
+    w = Writer(Tabler(), log=lambda m: None)
+    out = w.impact_table(_dossier())
+    assert out.splitlines()[0] == "| Who | How they are affected | When |"
+    assert "Farmers" in out and "Airlines" in out
+    assert "Banks" not in out and "777" not in out             # removed by the fact-check and by the number check
+    assert out.count("\n") == 4                                # header, separator, three rows
+
+    class TooFew(Tabler):
+        def complete(self, prompt, *a, **k):
+            return "| Who | How they are affected | When |\n|---|---|---|\n| Farmers | Lost exports | Now |"
+    assert Writer(TooFew(), log=lambda m: None).impact_table(_dossier()) == ""
+
+
+def test_brief_lines_get_callout_class_in_html():
+    from blogwriter.render import to_html
+    md = "# T\n\n## One\n\n**In brief:** The main point.\n\nBody text.\n"
+    html = to_html(md, "T")
+    assert "<p class=\"brief\"><strong>In brief:</strong>" in html

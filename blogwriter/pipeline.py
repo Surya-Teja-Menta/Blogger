@@ -45,13 +45,43 @@ def scaled_mode(mode, dossier):
                    blog_words=max(150, min(mode.blog_words, evidence_words // 2)))
 
 
+def confidence(fact: dict) -> str:
+    """Evidence strength, counted not guessed: how many independent websites report the fact."""
+    n = fact.get("corroboration", 0) + 1
+    return "High" if n >= 3 else "Moderate" if n == 2 else "Low"
+
+
 def key_findings_md(dossier) -> str:
     rows = []
     for i, f in enumerate(dossier.key_facts(8), 1):
         src = dossier.sources[f["source"] - 1]
-        tag = f" *(confirmed by {f['corroboration'] + 1} independent sources)*" if f["corroboration"] else ""
-        rows.append(f"{i}. {f['claim']} — [{domain(src['url'])}]({src['url']}){tag}")
-    return "\n".join(rows) or "_No facts could be independently verified for this story._"
+        n = f.get("corroboration", 0) + 1
+        rows.append(f"{i}. **{confidence(f)} confidence.** {f['claim']} — [{domain(src['url'])}]({src['url']}) "
+                    f"*({n} independent source{'s' if n > 1 else ''})*")
+    if not rows:
+        return "_No facts could be independently verified for this story._"
+    return ("\n".join(rows) + "\n\n*Confidence is counted, not guessed: High = reported by three or more independent "
+            "sources, Moderate = two, Low = one source only.*")
+
+
+def blog_cta(product: dict, price_cents: int, chapters: int, facts: int, pages: int) -> tuple:
+    """(line after the opening paragraph, closing section) pointing blog readers to the full report on Gumroad.
+    Built from the real numbers of this run, so it never promises more than the report contains."""
+    price = f"US${price_cents / 100:.2f}"
+    size = f"{pages}-page " if pages else ""
+    teaser = f"*This post is the short version. The full {size}documentary report is [here]({product['url']}).*"
+    closing = (f"## Want the full story?\n\nThis post covers the main points. The full documentary report goes much "
+               f"deeper: a {size}PDF with {chapters} chapters and {facts} verified facts, each one linked to the source "
+               f"it came from, plus a who-is-affected table and a confidence rating on every key finding.\n\n"
+               f"**[Get the full report on Gumroad for {price}]({product['url']})**")
+    return teaser, closing
+
+
+def add_cta(blog: str, teaser: str, closing: str) -> str:
+    """Put the teaser after the first prose paragraph (below the headline) and the closing section at the end."""
+    paras = blog.strip().split("\n\n")
+    at = next((i + 1 for i, p in enumerate(paras) if not p.lstrip().startswith(("#", ">", "*", "|", "-"))), len(paras))
+    return "\n\n".join(paras[:at] + [teaser] + paras[at:] + ["---", closing]) + "\n"
 
 
 def quality_md(dossier, mode: str, skipped=()) -> str:
@@ -245,8 +275,9 @@ class BlogPipeline:
         if not chapters:
             raise PipelineError("the fact-check left no usable documentary chapter; nothing was saved")
 
-        self.log("[writer] executive summary and closing chapter")
+        self.log("[writer] executive summary, who-is-affected table and closing chapter")
         summary = self.writer.executive_summary(dossier, chapters)
+        impact = self.writer.impact_table(dossier)
         closing = self.writer.conclusion(dossier, plan, chapters, m)
         if closing:
             plan.append({"title": "Summary and Conclusion"})
@@ -258,7 +289,9 @@ class BlogPipeline:
                   f"**Original story:** [{article.source}]({article.real_url or article.url})\n\n"
                   f"## Acknowledgements\n\n{acknowledgements_md(article, dossier)}\n\n" +
                   (f"## Executive Summary\n\n{summary}\n\n" if summary else "") +
-                  f"## Key findings\n\n{key_findings_md(dossier)}\n\n## Contents\n\n{toc}\n\n---\n\n" +
+                  f"## Key findings\n\n{key_findings_md(dossier)}\n\n" +
+                  (f"## Who is affected\n\n{impact}\n\n" if impact else "") +
+                  f"## Contents\n\n{toc}\n\n---\n\n" +
                   "\n\n".join(chapters) +
                   f"\n\n---\n\n## Index\n\n{index_md(chapters)}\n\n"
                   f"## Evidence register\n\n{evidence_md(dossier)}\n\n"
@@ -310,10 +343,7 @@ class BlogPipeline:
         self.log("\n=== 5/5 Storing and emailing the results ===")
         deliverables = ("documentary_report.pdf", "documentary_report.html", "documentary_report.md",
                         "article.md", "blog.md")
-        # one zip of the report, article and blog, uploaded next to the individual files
-        bundle = zip_run(out, ["documentary_report.pdf" if pdf else "documentary_report.html", "article.md", "blog.md"])
-        # research.json stays local: it holds the full text of the news articles read, which must not be republished
-        links = upload_run(self.s, out, [bundle] + list(deliverables), self.log)
+        # the product comes first, so the blog can link to it before it is stored, posted and emailed
         sellable = "documentary_report.pdf" if pdf else "documentary_report.html"
         product = list_product(
             self.s, title,
@@ -321,6 +351,19 @@ class BlogPipeline:
             f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
             f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
             os.path.join(out, sellable), self.log)
+        if product and product.get("published"):
+            teaser, closing = blog_cta(product, self.s.gumroad_price_cents, len(chapters), len(dossier.facts), pages)
+            files["blog.md"] = add_cta(files["blog.md"], teaser, closing)
+            with open(os.path.join(out, "blog.md"), "w", encoding="utf-8") as f:
+                f.write(files["blog.md"])
+            self.log(f"[gumroad] blog now links to the report: {product['url']}")
+        elif product:
+            self.log("[gumroad] product is a draft, so the blog carries no link (a draft link shows readers a 404); "
+                     "set GUMROAD_PUBLISH=true to sell and link automatically")
+        # one zip of the report, article and blog, uploaded next to the individual files
+        bundle = zip_run(out, ["documentary_report.pdf" if pdf else "documentary_report.html", "article.md", "blog.md"])
+        # research.json stays local: it holds the full text of the news articles read, which must not be republished
+        links = upload_run(self.s, out, [bundle] + list(deliverables), self.log)
         posts = post_all(self.s, files["blog.md"], files["article.md"], meta, self.log)
         sent = False
         if email:
