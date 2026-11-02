@@ -116,7 +116,8 @@ SYSTEM = ("You are an award-winning investigative journalist. You write direct, 
           "HARD RULES: use ONLY the VERIFIED FACTS and article text in the research notes; never invent people, quotes, statistics, "
           "scenes or dialogue; never add a year or date the notes do not state; never describe what 'the article' or "
           "'the outlet' says unless ARTICLE TEXT is actually provided in the notes; if a detail is not in the notes, "
-          "leave it out. Output ONLY the requested piece - no "
+          "leave it out. Make no predictions or recommendations of your own: say what will or may happen only when "
+          "the notes attribute that forecast to a named source, and otherwise say it is not yet known. Output ONLY the requested piece - no "
           "preamble, no notes, no word counts, no questions to the reader, no bracketed source numbers.")
 
 
@@ -248,7 +249,9 @@ class Writer:
             roles = "\n".join(f"{i + 1}. {c['title']} - {c['focus']}" for i, c in enumerate(plan))
             titles = self.llm.complete_json(
                 f"{dossier.brief(1500)}\n\nGive each documentary chapter below a specific, compelling title that names "
-                f"the real people, places or events of THIS story (max 12 words), keeping its role.\n{roles}\n\n"
+                f"the real people, places or events of THIS story (max 12 words), keeping its role. A title may only "
+                f"claim what the chapter's role supports: no drama words (clash, battle, crisis, collapse) unless the "
+                f"story itself uses them.\n{roles}\n\n"
                 f"Return a JSON array of exactly {len(plan)} title strings.", max_tokens=500)
             if isinstance(titles, list) and len(titles) == len(plan) and all(isinstance(t, str) and t.strip() for t in titles):
                 for c, t in zip(plan, titles):
@@ -295,7 +298,7 @@ class Writer:
         prompt = (f"{notes}\n\nWrite the EXECUTIVE SUMMARY of this documentary report: about 280 words, three or four "
                   "paragraphs, no headings. Paragraph one: what happened, to whom, when and where. Paragraph two: why "
                   "and how. Paragraph three: the effects and impacts, now and later. Last paragraph: what to watch "
-                  "next. Lead with the most important verified fact. Plain, direct, intense; no hype. Use only facts "
+                  "next - only decisions, events or forecasts the chapters name, never your own advice. Lead with the most important verified fact. Plain, direct, intense; no hype. Use only facts "
                   "from the chapters; say each fact once.")
         try:
             draft = self._generate(prompt, title, 280, lo=0.5, hi=1.5)
@@ -321,7 +324,10 @@ class Writer:
             self.log("[writer] closing chapter unavailable")
             return ""
         out = self.ground(draft, notes, title, dossier.allowed_text())
-        return out if out.lstrip().startswith("## ") else f"## Summary and Conclusion\n\n{out}"
+        lines = [ln for ln in out.strip().splitlines()]
+        while lines and (not lines[0].strip() or re.fullmatch(r"[#*\s]*summary and conclusion[*:\s]*", lines[0], re.I)):
+            lines.pop(0)                     # the model repeats the title as a heading and/or a bold line
+        return "## Summary and Conclusion\n\n" + "\n".join(lines).strip()
 
     @staticmethod
     def _source(dossier: Dossier, report: str, max_chars: int = 15000) -> str:
@@ -352,8 +358,9 @@ class Writer:
                   "Cover, in this order: within the first 150 words, who did what, when and where; then why it "
                   "happened and how; then who is hit and who gains; then the effects now and later; end with what to "
                   "watch next and one sharp closing line. Where a point has no verified fact behind it, leave it out.\n"
-                  "Format: '# headline' on the first line, then 3-5 '## ' subheadings that name the point of each "
-                  "part. No bullet points. Say each fact once - never repeat a claim. Stay strictly on this story.")
+                  "Format: '# headline' on the first line, then 3-5 '## ' subheadings. Each subheading is a specific "
+                  "statement about THIS story that carries a fact (for example 'Soybean exports to China fell by "
+                  "four-fifths'), never a generic label such as 'Why it happened' or 'Who, what, when'. No bullet points. Say each fact once - never repeat a claim. Stay strictly on this story.")
         draft = self._generate(prompt, title, mode.blog_words)
         return self.ground(draft, source, title, dossier.allowed_text())
 
@@ -370,7 +377,8 @@ class Writer:
                   "a lede paragraph that answers who, what, when and where; then '## ' sections in this order, "
                   "skipping any the facts cannot support: '## Why it happened', '## How it unfolded', '## Who is "
                   "affected', '## The effects now and later' (separate the immediate from the long-term), '## What "
-                  "comes next'; and a final '## What we still don't know' listing open questions the facts leave "
+                  "comes next' (only scheduled events or forecasts a named source makes - if there are none, skip "
+                  "it); and a final '## What we still don't know' listing open questions the facts leave "
                   "unanswered. Attribute quotes, opinions, estimates and disputed claims to the named person, "
                   "government or organisation (never a website address); state established facts plainly, and never "
                   "repeat a fact. No speculation beyond clearly-labelled open questions.")

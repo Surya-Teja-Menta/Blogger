@@ -777,3 +777,24 @@ def test_ghost_admin_token_is_a_valid_hs256_jwt():
     assert _json.loads(base64.urlsafe_b64decode(pad(payload)))["aud"] == "/admin/"
     want = hmac.new(bytes.fromhex(secret), f"{head}.{payload}".encode(), hashlib.sha256).digest()
     assert base64.urlsafe_b64decode(pad(sig)) == want
+
+
+def test_index_drops_names_that_appear_in_most_chapters_and_merges_possessives():
+    from blogwriter.pipeline import index_md
+    chapters = [f"## C{i}\n\nTalks held in {n}, said analysts. Officials in Tehran agreed. The {n}'s view."
+                for i, n in enumerate(["Oman"] * 2 + ["Cairo"] * 4, 1)]
+    chapters[0] += " Then the Nile Delta flooded, and the Nile Delta stayed wet."
+    idx = index_md(chapters)
+    assert "**Tehran**" not in idx                    # in all 6 chapters: too general to index
+    assert "**Oman** — chapters 1, 2" in idx and "**Nile Delta**" in idx and "Oman’s" not in idx
+
+
+def test_closing_chapter_title_is_not_repeated_in_its_body():
+    from blogwriter.writer import Writer
+
+    class Echo:
+        def complete(self, *a, **k):
+            return "## Summary and Conclusion\n\n**Summary and Conclusion**\n\n- **One** - a finding about T."
+    w = Writer(Echo(), log=lambda m: None)
+    out = w.conclusion(_dossier(), [{"title": "One"}], ["## One\n\nText about T."], __import__("blogwriter.config", fromlist=["MODES"]).MODES["fast"])
+    assert out.count("Summary and Conclusion") == 1 and out.startswith("## Summary and Conclusion\n\n- **One**")

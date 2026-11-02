@@ -122,13 +122,14 @@ def index_md(chapters: list) -> str:
             parts = m.split(" ")
             while parts and parts[0] in _INDEX_SKIP:
                 parts = parts[1:]
-            term = " ".join(parts).strip(".,;:'’")
+            term = re.sub(r"['’]s$", "", " ".join(parts).strip(".,;:'’"))      # "China’s" is "China"
             if len(term) >= 4:
                 names[term] += 1
     rows = []
     for term in sorted((t for t, n in names.items() if n >= 2), key=str.lower):
         where = [str(i) for i, text in enumerate(prose, 1) if term in text]
-        if where:
+        # a name in most chapters ("American", "Europe") points nowhere, so it is not worth indexing
+        if where and not (len(prose) >= 5 and len(where) > 0.6 * len(prose)):
             rows.append(f"- **{term}** — chapter{'s' if len(where) > 1 else ''} {', '.join(where)}")
     return "\n".join(rows[:120]) or "_No names recurred often enough to index._"
 
