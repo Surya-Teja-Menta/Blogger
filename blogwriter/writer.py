@@ -178,17 +178,69 @@ SYSTEM = ("You are an experienced news reporter who writes clear, plain English 
           "preamble, no notes, no word counts, no questions to the reader, no bracketed source numbers.")
 
 
+# who the piece is for: added to the writer's instructions (the empty entries are the default reader)
+LEVELS = {
+    "basic": "LEVEL: a beginner. Assume no background: explain every term and acronym the first time it appears, "
+             "give the context before the detail, and keep paragraphs short.",
+    "intermediate": "",
+    "advanced": "LEVEL: an expert. Skip basic explanations, use the precise terms of the field without defining "
+                "common ones, and pack more figures, comparisons and analysis into each paragraph (still only from "
+                "the notes).",
+}
+NICHES = {
+    "general": "",
+    "upsc": "READER: a UPSC / State PSC civil-services aspirant. Make it exam-ready: name the constitutional "
+            "articles, laws, schemes, government bodies, reports and indices involved whenever the notes state them, "
+            "set out both sides of every debate, and keep facts crisp enough to revise from.",
+    "business": "READER: a founder or business manager. Bring out what the facts mean for costs, prices, demand, "
+                "competitors, supply chains and regulation, as far as the notes support it.",
+    "tech": "READER: an engineer or product builder. Explain how the technology works and what it changes for "
+            "people who build products, as far as the notes support it.",
+}
+LANGS = {"en": "English", "hi": "Hindi", "te": "Telugu", "kn": "Kannada", "ta": "Tamil"}
+
+
+def audience(level: str = "intermediate", niche: str = "general") -> str:
+    """Extra writer instructions for the requested reader level and niche ('' for the default reader)."""
+    parts = [p for p in (NICHES.get(niche, ""), LEVELS.get(level, "")) if p]
+    return ("\n" + "\n".join(parts)) if parts else ""
+
+
 class Writer:
-    def __init__(self, llm: LLMClient, log: Callable[[str], None] = print):
+    def __init__(self, llm: LLMClient, log: Callable[[str], None] = print, reader: str = ""):
         self.llm = llm
         self.log = log
+        self.reader = reader          # from audience(): level and niche instructions for every piece
+
+    def translate(self, text: str, lang: str) -> str:
+        """Translate a finished, fact-checked markdown piece section by section (facts are checked in English
+        first, so translation never adds claims). A section that fails to translate stays in English."""
+        if lang == "en" or not text.strip():
+            return text
+        name = LANGS.get(lang, lang)
+        out = []
+        for part in re.split(r"\n(?=#{1,3} )", text):
+            if not part.strip():
+                continue
+            prompt = (f"Translate this markdown into {name}. Keep every markdown mark (#, **, >, |, -, links) and the "
+                      "paragraph breaks exactly as they are. Keep all numbers as digits. Write names of people, "
+                      f"places and organisations in {name} script, followed by the English name in brackets the first "
+                      "time each appears. Translate faithfully: add, drop or explain nothing. Output only the "
+                      f"translation.\n\n{part}")
+            try:
+                done = clean_output(self.llm.complete(prompt, max_tokens=max(800, words(part) * 5), temperature=0.2))
+                out.append(done if words(done) >= 0.3 * words(part) else part)
+            except LLMError:
+                self.log(f"[writer] translation to {name} failed for one section; it stays in English")
+                out.append(part)
+        return "\n\n".join(out)
 
     def _generate(self, prompt: str, title: str, target: int, lo=0.7, hi=1.35, system=SYSTEM,
                   check_length=True) -> str:
         """Generate -> clean -> validate; retry once with the concrete problems fed back."""
         feedback, text = "", ""
         for attempt in range(2):
-            raw = self.llm.complete(prompt + feedback, system=system,
+            raw = self.llm.complete(prompt + feedback, system=system + self.reader,
                                     max_tokens=max(600, int(target * 2.2)), temperature=0.75)
             text = clean_output(raw)
             issues = validate(text, int(target * lo) if check_length else 20,

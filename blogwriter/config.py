@@ -1,6 +1,6 @@
 """Settings and workflow modes. All secrets come from the environment / .env, never from code."""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List
 
 from dotenv import load_dotenv
@@ -35,6 +35,22 @@ MODES = {
     "standard": Mode("standard", 16, 2, 14, 700, 800, 1400, 3, 5, 8, 1, 5),
     "deep": Mode("deep", 19, 3, 16, 900, 1000, 1800, 4, 6, 10, 2, 6),
 }
+NOMINAL_PAGES = {"fast": 6, "standard": 20, "deep": 30}     # roughly what each mode prints when research is rich
+
+
+def mode_for_pages(pages: int) -> Mode:
+    """A mode sized for a requested page count: the nearest mode's research depth, with its chapter count and
+    chapter length scaled so the body has about the right number of words. It is a target, not a promise:
+    chapters still shrink to what the verified facts support."""
+    name = "fast" if pages <= 3 else "standard" if pages <= 22 else "deep"   # paid orders get real research depth
+    base = MODES[name]
+    chapters = max(3, min(16, round(pages * 0.7)))
+    body = base.chapters * base.chapter_words * pages / NOMINAL_PAGES[name]
+    return replace(base, chapters=chapters, chapter_words=max(300, min(1100, round(body / chapters))))
+
+
+# Cerebras first: the strongest free model (gpt-oss-120b) with the largest daily quota
+DEFAULT_PROVIDERS = ("cerebras", "groq", "gemini", "nvidia", "openrouter", "github", "ollama")
 
 
 @dataclass(frozen=True)
@@ -47,12 +63,21 @@ class Settings:
     nvidia_models: List[str] = field(default_factory=lambda: [
         "nvidia/nemotron-3.5-lightning-30b-a3b", "mistralai/mistral-large-4-1t-a52b"])
     groq_model: str = "openai/gpt-oss-20b"
+    # more free OpenAI-compatible providers, each with its own quota (used only when its keys are set)
+    cerebras_keys: List[str] = field(default_factory=list)
+    cerebras_model: str = "gpt-oss-120b"
+    gemini_keys: List[str] = field(default_factory=list)       # Google AI Studio
+    gemini_model: str = "gemini-flash-lite-latest"   # alias that follows the current Flash-Lite
+    openrouter_keys: List[str] = field(default_factory=list)
+    openrouter_model: str = "google/gemma-3-12b-it:free"
+    github_keys: List[str] = field(default_factory=list)       # GitHub Models: a PAT, or GITHUB_TOKEN in Actions
+    github_model: str = "openai/gpt-4.1-mini"
     ollama_model: str = "qwen3.5:latest"
     ollama_url: str = "http://localhost:11434"
     ollama_ctx: int = 8192
     max_tokens: int = 4000
     # Order in which LLM providers are tried.
-    providers: List[str] = field(default_factory=lambda: ["groq", "nvidia", "ollama"])
+    providers: List[str] = field(default_factory=lambda: list(DEFAULT_PROVIDERS))
     output_dir: str = "output"
     # step 5: results are emailed over SMTP (587 = STARTTLS, 465 = SSL)
     smtp_host: str = ""
@@ -104,11 +129,19 @@ class Settings:
             nvidia_models=_split(e("NVIDIA_MODELS", "")) or [
                 "nvidia/nemotron-3.5-lightning-30b-a3b", "mistralai/mistral-large-4-1t-a52b"],
             groq_model=e("GROQ_MODEL", "openai/gpt-oss-20b"),
+            cerebras_keys=_split(e("CEREBRAS_API_KEYS", e("CEREBRAS_API_KEY", ""))),
+            cerebras_model=e("CEREBRAS_MODEL", "") or "gpt-oss-120b",
+            gemini_keys=_split(e("GEMINI_API_KEYS", e("GEMINI_API_KEY", ""))),
+            gemini_model=e("GEMINI_MODEL", "") or "gemini-flash-lite-latest",
+            openrouter_keys=_split(e("OPENROUTER_API_KEYS", e("OPENROUTER_API_KEY", ""))),
+            openrouter_model=e("OPENROUTER_MODEL", "") or "google/gemma-3-12b-it:free",
+            github_keys=_split(e("GITHUB_MODELS_TOKEN", "")),
+            github_model=e("GITHUB_MODEL", "") or "openai/gpt-4.1-mini",
             ollama_model=e("OLLAMA_MODEL", "qwen3.5:latest").removeprefix("ollama/"),
             ollama_url=e("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/"),
             ollama_ctx=int(e("OLLAMA_NUM_CTX", "8192")),
             max_tokens=int(e("MAX_TOKENS", "4000")),
-            providers=_split(e("LLM_PROVIDERS", "groq,nvidia,ollama")),
+            providers=_split(e("LLM_PROVIDERS", "")) or list(DEFAULT_PROVIDERS),
             output_dir=e("OUTPUT_DIR", "output"),
             smtp_host=e("SMTP_HOST", ""),
             smtp_port=int(e("SMTP_PORT", "587") or 587),

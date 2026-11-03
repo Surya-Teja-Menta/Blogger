@@ -1,4 +1,5 @@
-"""One LLM client with an ordered provider chain (Groq -> NVIDIA -> local Ollama)."""
+"""One LLM client with an ordered provider chain (Groq -> Cerebras -> Gemini -> OpenRouter -> GitHub Models ->
+NVIDIA -> local Ollama); providers without keys are skipped."""
 import json
 import re
 import time
@@ -10,6 +11,14 @@ from .config import Settings
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+# more OpenAI-compatible providers: name -> (url, timeout s, reasoning headroom tokens, output-token cap or None).
+# Keys and model come from Settings.<name>_keys / <name>_model.
+OPENAI_COMPAT = {
+    "cerebras": ("https://api.cerebras.ai/v1/chat/completions", 120, 1500, None),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", 180, 3000, None),
+    "openrouter": ("https://openrouter.ai/api/v1/chat/completions", 180, 1500, None),
+    "github": ("https://models.github.ai/inference/chat/completions", 120, 0, 4000),   # free tier: 4k out per call
+}
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
@@ -87,6 +96,8 @@ class LLMClient:
         self._turn = 0               # rotates which Groq key is tried first, spreading the per-minute load
         self._ollama_model: Optional[str] = None
         self.last_endpoint = ""
+        self._tokens = 0             # tokens of the last successful call, as the provider reported them
+        self.usage = {}              # provider -> {"calls", "tokens"}: what a run really costs
 
     # ---- public API -------------------------------------------------------
     def complete(self, prompt: str, system: str = "", max_tokens: Optional[int] = None,
@@ -100,11 +111,15 @@ class LLMClient:
                     continue
                 for attempt in range(3):
                     try:
+                        self._tokens = 0
                         # a truncated reply is retried with a bigger budget (reasoning models burn tokens silently)
                         text = strip_think(call(system, prompt, max_tokens * (attempt + 1), temperature))
                         if not text:
                             raise RuntimeError("empty response")
                         self.last_endpoint = name
+                        used = self.usage.setdefault(name.split("#")[0].split(":")[0], {"calls": 0, "tokens": 0})
+                        used["calls"] += 1
+                        used["tokens"] += self._tokens
                         return text
                     except _Hard as exc:
                         errors.append(f"{name}: {exc}")
@@ -145,16 +160,20 @@ class LLMClient:
 
     # ---- provider plumbing ------------------------------------------------
     def _rotated(self, endpoints: List[Tuple[str, Callable]]) -> List[Tuple[str, Callable]]:
-        """Each request starts at the next Groq key (each key has its own per-minute token budget), so the
-        load is spread across all keys instead of always exhausting key #1 first. Provider order is kept."""
-        idx = [i for i, (n, _) in enumerate(endpoints) if n.startswith("groq#")]
-        if len(idx) < 2:
-            return endpoints
-        k = self._turn % len(idx)
-        groq = [endpoints[i] for i in idx]
+        """Each request starts at the next key of every provider (and model), so the per-minute load is spread
+        across all keys instead of always exhausting key #1 first. Provider order is kept."""
+        groups = {}
+        for i, (n, _) in enumerate(endpoints):
+            if "#" in n:
+                groups.setdefault(n.split("#")[0], []).append(i)
         out = list(endpoints)
-        for i, ep in zip(idx, groq[k:] + groq[:k]):
-            out[i] = ep
+        for idx in groups.values():
+            if len(idx) < 2:
+                continue
+            k = self._turn % len(idx)
+            same = [endpoints[i] for i in idx]
+            for i, ep in zip(idx, same[k:] + same[:k]):
+                out[i] = ep
         return out
 
     def _endpoints(self) -> List[Tuple[str, Callable]]:
@@ -173,21 +192,32 @@ class LLMClient:
                         out.append((f"nvidia:{model.split('/')[-1]}#{i + 1}", self._openai_compat(
                             NVIDIA_URL, key, model, 240 if slow else 90, headroom=3000,
                             extra={"reasoning_effort": "high"} if slow else None)))
+            elif provider in OPENAI_COMPAT:
+                url, timeout, headroom, cap = OPENAI_COMPAT[provider]
+                model = getattr(self.s, f"{provider}_model")
+                # keep the hidden reasoning short on models that think by default
+                low = "gpt-oss" in model or (provider == "gemini" and re.search(r"2\.5|-3|latest", model))
+                for i, key in enumerate(getattr(self.s, f"{provider}_keys")):
+                    out.append((f"{provider}#{i + 1}", self._openai_compat(
+                        url, key, model, timeout, headroom=headroom, cap=cap,
+                        extra={"reasoning_effort": "low"} if low else None)))
             elif provider == "ollama":
                 out.append(("ollama", self._ollama))
         return out
 
-    def _openai_compat(self, url, key, model, timeout, headroom=0, extra=None):
+    def _openai_compat(self, url, key, model, timeout, headroom=0, extra=None, cap=None):
         extra = extra or {}
         # headroom: extra tokens for models that spend hidden "reasoning" tokens inside max_tokens
+        # cap: the provider's own ceiling on output tokens per call
         def call(system, prompt, max_tokens, temperature):
+            budget = min(max_tokens + headroom, cap) if cap else max_tokens + headroom
             messages = ([{"role": "system", "content": system}] if system else []) + \
                        [{"role": "user", "content": prompt}]
             try:
                 r = requests.post(url, timeout=timeout,
                                   headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                                   json={"model": model, "messages": messages,
-                                        "temperature": temperature, "max_tokens": max_tokens + headroom, **extra})
+                                        "temperature": temperature, "max_tokens": budget, **extra})
             except requests.Timeout:         # too slow right now: skip this endpoint for a while, don't retry
                 raise _Hard(f"timed out after {timeout}s", cooldown=300)
             if r.status_code == 404:       # model removed / not served: same for every key
@@ -198,7 +228,9 @@ class LLMClient:
                 raise _Hard(f"HTTP {r.status_code}")
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text[:120]}")
-            choice = r.json()["choices"][0]
+            data = r.json()
+            self._tokens = (data.get("usage") or {}).get("total_tokens") or 0
+            choice = data["choices"][0]
             if choice.get("finish_reason") == "length":
                 raise RuntimeError("truncated (max_tokens too small)")
             return choice["message"].get("content") or ""
@@ -234,6 +266,7 @@ class LLMClient:
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}: {r.text[:120]}")
         data = r.json()
+        self._tokens = (data.get("prompt_eval_count") or 0) + (data.get("eval_count") or 0)
         if data.get("done_reason") == "length":
             raise RuntimeError("truncated (max_tokens too small)")
         return data.get("message", {}).get("content", "")

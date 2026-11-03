@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Callable, Optional
 
-from .config import MODES, Settings
+from .config import MODES, Settings, mode_for_pages
 from .gumroad import list_product
 from .history import History
 from .llm import LLMClient, LLMError
@@ -25,11 +25,17 @@ from .rank import audience_rank
 from .render import pdf_pages, to_html, to_pdf
 from .research import Researcher, domain
 from .storage import upload_run, zip_run
-from .writer import Writer, words
+from .writer import LANGS, LEVELS, NICHES, Writer, audience, words
 
 
 class PipelineError(RuntimeError):
     pass
+
+
+def heading_of(chapter: str, fallback: str) -> str:
+    """A chapter's own '## ' heading (after translation it differs from the plan's English title)."""
+    m = re.match(r"\s*#{1,3} +(.+)", chapter)
+    return m.group(1).strip() if m else fallback
 
 
 def slugify(text: str, limit: int = 40) -> str:
@@ -122,8 +128,10 @@ def acknowledgements_md(article, dossier) -> str:
     thanks = (f"Its facts were verified against the published pages of {len(used)} sources, with particular thanks to "
               f"{', '.join(outlets[:-1])} and {outlets[-1]}." if len(outlets) > 1 else
               f"Its facts were verified against the published pages of {outlets[0]}." if outlets else "")
-    return (f"This report stands on the work of reporters, editors and researchers who published before it. The story "
-            f"it follows was first reported by **{article.source}**. {thanks}\n\n"
+    origin = (f"Its starting point was **{article.source}**." if article.api == "topic" else
+              f"The story it follows was first reported by **{article.source}**.")
+    return (f"This report stands on the work of reporters, editors and researchers who published before it. "
+            f"{origin} {thanks}\n\n"
             "There is no original reporting here. Every statement traces to a passage quoted from a cited source, and "
             "the full list of passages is printed in the evidence register at the end. Any fault in how those facts "
             "are arranged belongs to this report, not to the outlets that gathered them.")
@@ -178,6 +186,14 @@ def evidence_md(dossier) -> str:
 def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None, product: dict = None,
                posts: dict = None) -> str:
     kf = "\n".join(f"  {i}. {f['claim']}" for i, f in enumerate(dossier.key_facts(5), 1))
+    if meta.get("source") == "topic":
+        chosen = (f"REQUESTED TOPIC: {meta['topic']} ({meta.get('level', 'intermediate')} level, "
+                  f"{meta.get('niche', 'general')} reader, {meta.get('lang', 'en')})\n"
+                  f"  Starting text: {article.source} - {article.url}\n\n")
+    else:
+        chosen = (f"STORY CHOSEN: {article.title}\n  {article.source} - {article.real_url or article.url}\n"
+                  f"  Audience appeal: {article.audience:g}/10 ({article.why or 'n/a'}); "
+                  f"picked from {meta['candidates']} candidates.\n\n")
     stored = ("\nSTORED ONLINE:\n" + "\n".join(f"  {n}: {u}" for n, u in links.items()) + "\n") if links else ""
     if posts:
         stored += "\nPOSTED:\n" + "\n".join(f"  {p}: {u}" for p, u in posts.items()) + "\n"
@@ -186,10 +202,7 @@ def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None
         stored += (f"\nGUMROAD ({'live' if product['published'] else 'DRAFT - review and publish it in your dashboard'}):"
                    f"\n  {product['url']}\n")
     return (f"Your {meta['mode']}-mode report on \"{meta['topic']}\" is ready.\n\n"
-            f"STORY CHOSEN: {article.title}\n  {article.source} - {article.real_url or article.url}\n"
-            f"  Audience appeal: {article.audience:g}/10 ({article.why or 'n/a'}); "
-            f"picked from {meta['candidates']} candidates.\n\n"
-            f"KEY FINDINGS\n{kf}\n\n"
+            f"{chosen}KEY FINDINGS\n{kf}\n\n"
             f"RESEARCH: {meta['verified_facts']} verified facts ({meta['corroborated_facts']} confirmed by a second "
             f"source) from {meta['sources']} sources.\n\n"
             f"ATTACHED: documentary report ({meta['report_words']} words{pages}), article ({meta['article_words']} words), "
@@ -207,9 +220,20 @@ class BlogPipeline:
         self.history = History(os.path.join(self.s.output_dir, "history.jsonl"))
 
     def run(self, topic: str, mode: str = "standard", days: int = 1, make_pdf: bool = True,
-            email: bool = True) -> dict:
+            email: bool = True, source: str = "news", pages: int = 0, level: str = "intermediate",
+            niche: str = "general", lang: str = "en", publish: bool = True) -> dict:
+        """source: 'news' writes about today's hottest story on the topic; 'topic' researches the topic itself.
+        pages: a page target that overrides the mode's size (0 = the mode decides). level / niche: who the report
+        is written for. lang: the language of the finished pieces. publish: list on Gumroad and post to the blogs
+        (off for private orders, which are only emailed)."""
+        for value, allowed, what in ((source, ("news", "topic"), "source"), (level, LEVELS, "level"),
+                                     (niche, NICHES, "niche"), (lang, LANGS, "lang")):
+            if value not in allowed:
+                raise PipelineError(f"unknown {what} '{value}' (choose from {', '.join(allowed)})")
+        self.writer.reader = audience(level, niche)
         try:
-            return self._run(topic, mode, days, make_pdf, email)
+            return self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
+                             {"level": level, "niche": niche, "lang": lang, "pages_requested": pages})
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
 
@@ -230,25 +254,41 @@ class BlogPipeline:
                 return cand, ""
         raise PipelineError("could not read the full text of any candidate story; try again later or another topic")
 
-    def _run(self, topic: str, mode: str, days: int, make_pdf: bool, email: bool) -> dict:
+    def _run(self, topic: str, mode: str, days: int, make_pdf: bool, email: bool, source: str = "news",
+             target_pages: int = 0, lang: str = "en", publish: bool = True, order: Optional[dict] = None) -> dict:
         if mode not in MODES:
             raise PipelineError(f"unknown mode '{mode}' (choose from {', '.join(MODES)})")
         m, t0 = MODES[mode], time.time()
+        if target_pages:
+            m = mode_for_pages(target_pages)
+            mode = m.name
+            self.log(f"[pipeline] {target_pages} pages requested: {mode} research, up to {m.chapters} chapters of "
+                     f"~{m.chapter_words} words")
 
-        # ---- 1. the top 20 latest news items / research papers -------------------------------------
-        self.log(f"\n=== 1/5 Collecting the top 20 latest news and research items on '{topic}' ===")
-        candidates = self.news.pick(topic, self.history, days=days, limit=20)
-        if not candidates:
-            raise PipelineError("no new articles found (all recent ones already covered, or no news sources reachable)")
-        self.log(f"Collected {len(candidates)} candidates")
+        if source == "topic":
+            # ---- 1-2. a requested topic: no news to collect or rank, research the subject itself ----------
+            self.log(f"\n=== 1-2/5 Topic mode: finding a starting text on '{topic}' ===")
+            article, article_text = self.researcher.seed(topic)
+            article.why = "requested topic"
+            ranked = [article]
+            if not (article_text or article.description):
+                self.log("[pipeline] no starting text found; researching from web search alone")
+        else:
+            # ---- 1. the top 20 latest news items / research papers -------------------------------------
+            self.log(f"\n=== 1/5 Collecting the top 20 latest news and research items on '{topic}' ===")
+            candidates = self.news.pick(topic, self.history, days=days, limit=20)
+            if not candidates:
+                raise PipelineError("no new articles found (all recent ones already covered, or no news sources "
+                                    "reachable)")
+            self.log(f"Collected {len(candidates)} candidates")
 
-        # ---- 2. rank by hotness / audience appeal, choose the best readable one ---------------------
-        self.log("\n=== 2/5 Ranking by audience appeal and likely reaction ===")
-        ranked = audience_rank(self.llm, list(candidates), topic, self.log)
-        for i, a in enumerate(ranked[:5], 1):
-            self.log(f"  {i}. [{a.score:.2f} | appeal {a.audience:g}/10] {a.title[:90]}  ({a.why})")
-        article, article_text = self._choose_readable(ranked)
-        self.log(f"Selected: {article.title}  [{article.source}, appeal {article.audience:g}/10]")
+            # ---- 2. rank by hotness / audience appeal, choose the best readable one ---------------------
+            self.log("\n=== 2/5 Ranking by audience appeal and likely reaction ===")
+            ranked = audience_rank(self.llm, list(candidates), topic, self.log)
+            for i, a in enumerate(ranked[:5], 1):
+                self.log(f"  {i}. [{a.score:.2f} | appeal {a.audience:g}/10] {a.title[:90]}  ({a.why})")
+            article, article_text = self._choose_readable(ranked)
+            self.log(f"Selected: {article.title}  [{article.source}, appeal {article.audience:g}/10]")
 
         # ---- 3. research it several ways --------------------------------------------------------------
         self.log("\n=== 3/5 Researching: article, other outlets, RSS pool, encyclopedia, archives, web search ===")
@@ -284,26 +324,35 @@ class BlogPipeline:
             chapters.append(closing)
 
         title = article.title
-        toc = "\n".join(f"{i}. {c['title']}" for i, c in enumerate(plan, 1))
-        report = (f"# {title}\n\n*A documentary report* · **Research date:** {datetime.now():%B %d, %Y} · "
-                  f"**Original story:** [{article.source}]({article.real_url or article.url})\n\n"
-                  f"## Acknowledgements\n\n{acknowledgements_md(article, dossier)}\n\n" +
-                  (f"## Executive Summary\n\n{summary}\n\n" if summary else "") +
-                  f"## Key findings\n\n{key_findings_md(dossier)}\n\n" +
-                  (f"## Who is affected\n\n{impact}\n\n" if impact else "") +
-                  f"## Contents\n\n{toc}\n\n---\n\n" +
-                  "\n\n".join(chapters) +
-                  f"\n\n---\n\n## Index\n\n{index_md(chapters)}\n\n"
-                  f"## Evidence register\n\n{evidence_md(dossier)}\n\n"
-                  f"## How this report was researched\n\n{quality_md(dossier, mode, skipped)}\n\n"
-                  f"## Sources\n\n{sources_md(dossier)}\n")
         body_of_report = "\n\n".join(chapters)            # the chapters only: what the blog/article adapt
 
         self.log("[writer] article (from the documentary)")
         article_md = self.writer.article(dossier, m, body_of_report)
         self.log("[writer] blog (from the documentary)")
         blog = self.writer.blog(dossier, m, body_of_report)
+
+        index = index_md(chapters)                          # names are indexed from the English text
+        if lang != "en":
+            self.log(f"[writer] translating the report, article and blog into {LANGS[lang]}")
+            chapters = [self.writer.translate(c, lang) for c in chapters]
+            summary, impact = self.writer.translate(summary, lang), self.writer.translate(impact, lang)
+            article_md, blog = self.writer.translate(article_md, lang), self.writer.translate(blog, lang)
         meta = self.writer.blog_meta(blog, dossier)
+
+        toc = "\n".join(f"{i}. {heading_of(t, c['title'])}" for i, (c, t) in enumerate(zip(plan, chapters), 1))
+        report = (f"# {title}\n\n*A documentary report* · **Research date:** {datetime.now():%B %d, %Y} · " +
+                  ("**Researched on request**\n\n" if article.api == "topic" else
+                   f"**Original story:** [{article.source}]({article.real_url or article.url})\n\n") +
+                  f"## Acknowledgements\n\n{acknowledgements_md(article, dossier)}\n\n" +
+                  (f"## Executive Summary\n\n{summary}\n\n" if summary else "") +
+                  f"## Key findings\n\n{key_findings_md(dossier)}\n\n" +
+                  (f"## Who is affected\n\n{impact}\n\n" if impact else "") +
+                  f"## Contents\n\n{toc}\n\n---\n\n" +
+                  "\n\n".join(chapters) +
+                  f"\n\n---\n\n## Index\n\n{index}\n\n"
+                  f"## Evidence register\n\n{evidence_md(dossier)}\n\n"
+                  f"## How this report was researched\n\n{quality_md(dossier, mode, skipped)}\n\n"
+                  f"## Sources\n\n{sources_md(dossier)}\n")
 
         # ---- save -----------------------------------------------------------------------------------
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -323,7 +372,8 @@ class BlogPipeline:
         pages = pdf_pages(os.path.join(out, "documentary_report.pdf")) if pdf else 0
         if pdf:
             self.log(f"[render] PDF has {pages or 'an unknown number of'} pages" +
-                     (" - under the 20-page target: the story did not yield enough verified material" if 0 < pages < 20 else ""))
+                     (f" - under the {target_pages or 20}-page target: the story did not yield enough verified material"
+                      if 0 < pages < (target_pages or 20) else ""))
         with open(os.path.join(out, "research.json"), "w", encoding="utf-8") as f:
             json.dump(dossier.to_dict(), f, indent=2, ensure_ascii=False)
         with open(os.path.join(out, "candidates.json"), "w", encoding="utf-8") as f:
@@ -337,7 +387,7 @@ class BlogPipeline:
                     "corroborated_facts": sum(1 for f in dossier.facts if f["corroboration"]),
                     "angles_with_data": len(dossier.usable_angles()), "angles_total": len(dossier.angles),
                     "sources": len(dossier.sources), "llm_endpoint": self.llm.last_endpoint,
-                    "seconds": round(time.time() - t0, 1)}
+                    "seconds": round(time.time() - t0, 1), "source": source, **(order or {})}
 
         # ---- 5. store online, then email the three deliverables ---------------------------------------
         self.log("\n=== 5/5 Storing and emailing the results ===")
@@ -345,12 +395,14 @@ class BlogPipeline:
                         "article.md", "blog.md")
         # the product comes first, so the blog can link to it before it is stored, posted and emailed
         sellable = "documentary_report.pdf" if pdf else "documentary_report.html"
-        product = list_product(
+        if not publish:
+            self.log("[pipeline] private order: not listed on Gumroad and not posted anywhere")
+        product = publish and list_product(
             self.s, title,
             f"{meta['description']}\n\n**Key findings**\n\n{key_findings_md(dossier)}\n\n"
             f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
             f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
-            os.path.join(out, sellable), self.log)
+            os.path.join(out, sellable), self.log) or {}
         if product and product.get("published"):
             teaser, closing = blog_cta(product, self.s.gumroad_price_cents, len(chapters), len(dossier.facts), pages)
             files["blog.md"] = add_cta(files["blog.md"], teaser, closing)
@@ -364,7 +416,7 @@ class BlogPipeline:
         bundle = zip_run(out, ["documentary_report.pdf" if pdf else "documentary_report.html", "article.md", "blog.md"])
         # research.json stays local: it holds the full text of the news articles read, which must not be republished
         links = upload_run(self.s, out, [bundle] + list(deliverables), self.log)
-        posts = post_all(self.s, files["blog.md"], files["article.md"], meta, self.log)
+        posts = post_all(self.s, files["blog.md"], files["article.md"], meta, self.log) if publish else {}
         sent = False
         if email:
             sent = send_email(self.s, f"[Blog Writer] {title[:120]}",
@@ -374,12 +426,15 @@ class BlogPipeline:
         metadata["stored"] = links
         metadata["gumroad"] = product
         metadata["posts"] = posts
+        metadata["llm_usage"] = self.llm.usage
         with open(os.path.join(out, "metadata.json"), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
 
-        self.history.add(topic, article.url, article.title)   # only after the files are safely saved
+        if source == "news":                                  # a requested topic may be ordered again
+            self.history.add(topic, article.url, article.title)   # only after the files are safely saved
         self.log(f"\nDone in {metadata['seconds']}s -> {out}\n  documentary report {metadata['report_words']} words, "
                  f"article {metadata['article_words']} words, blog {metadata['blog_words']} words, "
                  f"{metadata['verified_facts']} verified facts, pdf={'yes' if pdf else 'no (no Chrome/Edge or WeasyPrint found)'}, "
-                 f"stored={len(links)} file(s), email={'sent' if sent else 'not sent'}")
+                 f"stored={len(links)} file(s), email={'sent' if sent else 'not sent'}\n  llm usage: "
+                 + ", ".join(f"{p} {u['calls']} calls/{u['tokens']} tokens" for p, u in self.llm.usage.items()))
         return {"dir": out, **metadata}

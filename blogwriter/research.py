@@ -8,10 +8,10 @@ import time
 import unicodedata
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from .config import Mode
@@ -224,6 +224,36 @@ class Researcher:
         text = fetch_text(url, 6000) if "news.google.com" not in url else ""
         self.log(f"[research] article text: {len(text)} chars from {url[:80]}")
         return text
+
+    def seed(self, topic: str) -> Tuple[Article, str]:
+        """Topic mode: the requested subject is researched directly instead of today's news. The best encyclopedia
+        page on it (else the best readable web page) stands in for the news article, so every later research pass
+        has a core text, names and vocabulary to stay on topic with. Returns (article, its text); the text is
+        empty when nothing relevant could be read."""
+        wanted = _terms(topic)
+        need = max(1, (len(wanted) + 1) // 2)              # at least half the topic's distinctive words
+
+        def on_topic(text: str) -> bool:
+            return len(wanted & _terms(text)) >= need
+
+        url, text = "", ""
+        for title, link, lead in wikipedia_leads(topic, 2):
+            if on_topic(f"{title} {lead[:600]}") and len(lead) >= 400:
+                url, text = link, lead
+                break
+        if not text:
+            for hit in web_search(topic, n=6):
+                if any(b in hit.url for b in LOW_QUALITY) or not on_topic(f"{hit.title} {hit.snippet}"):
+                    continue
+                page = fetch_text(hit.url, 6000)
+                if len(page) >= 500:
+                    url, text = hit.url, page
+                    break
+        title = topic.strip()[:1].upper() + topic.strip()[1:]
+        article = Article(title, text[:300], url or f"topic:{topic}", datetime.now(timezone.utc),
+                          domain(url) if url else "requested topic", "topic")
+        self.log(f"[research] topic seed: {len(text)} chars from {url or 'nowhere'}")
+        return article, text
 
     def _queries(self, article: Article, angles, per_angle: int) -> Dict[str, List[str]]:
         """One LLM call for every angle's search queries; deterministic fallback if it fails."""

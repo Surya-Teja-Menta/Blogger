@@ -915,3 +915,109 @@ def test_limit_detail_names_the_limit_without_the_org_id():
             'Please try again in 7.5s."}}')
     out = limit_detail(body)
     assert out == "TPM: used 7100 + requested 1900 of 8000" and "org_" not in out
+
+
+def test_page_target_sizes_the_report():
+    from blogwriter.config import MODES, mode_for_pages
+    assert mode_for_pages(3).name == "fast" and mode_for_pages(5).name == "standard"
+    assert mode_for_pages(40).name == "deep"
+    m = mode_for_pages(20)
+    assert m.chapters == 14 and m.chapter_words == MODES["standard"].chapter_words
+    small, big = mode_for_pages(10), mode_for_pages(40)
+    assert small.chapters * small.chapter_words < m.chapters * m.chapter_words < big.chapters * big.chapter_words
+    assert 3 <= mode_for_pages(1).chapters and mode_for_pages(200).chapters == 16
+
+
+def test_new_providers_are_used_only_with_keys_and_rotate_per_provider(monkeypatch):
+    import requests
+    from blogwriter import llm as L
+    from blogwriter.config import Settings
+    s = Settings(groq_keys=["g1"], cerebras_keys=["c1", "c2"], gemini_keys=["m1"], github_keys=["t1"],
+                 providers=["groq", "cerebras", "gemini", "openrouter", "github"])
+    c = L.LLMClient(s, log=lambda m: None)
+    names = [n for n, _ in c._endpoints()]
+    assert names == ["groq#1", "cerebras#1", "cerebras#2", "gemini#1", "github#1"]      # no OpenRouter keys
+    c._turn = 1
+    assert [n for n, _ in c._rotated(c._endpoints())][1:3] == ["cerebras#2", "cerebras#1"]
+
+    sent = []
+
+    class Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    monkeypatch.setattr(requests, "post", lambda url, **kw: (sent.append((url, kw["json"])), Resp())[1])
+    dict(c._endpoints())["github#1"]("", "hi", 8000, 0.2)
+    dict(c._endpoints())["gemini#1"]("", "hi", 1000, 0.2)
+    assert "models.github.ai" in sent[0][0] and sent[0][1]["max_tokens"] == 4000       # the free tier's cap
+    assert "generativelanguage" in sent[1][0] and sent[1][1]["reasoning_effort"] == "low"
+
+
+def test_usage_is_counted_per_provider_and_cerebras_leads_by_default(monkeypatch):
+    import requests
+    from blogwriter import llm as L
+    from blogwriter.config import Settings
+    assert Settings().providers[0] == "cerebras"
+    c = L.LLMClient(Settings(cerebras_keys=["c1", "c2"], providers=["cerebras"]), log=lambda m: None)
+
+    class Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                    "usage": {"total_tokens": 120}}
+    monkeypatch.setattr(requests, "post", lambda url, **kw: Resp())
+    c.complete("a")
+    c.complete("b")
+    assert c.usage == {"cerebras": {"calls": 2, "tokens": 240}}       # both keys counted under one provider
+
+
+def test_reader_level_and_niche_reach_the_writer_and_bad_inputs_are_refused():
+    import pytest
+    from blogwriter.pipeline import BlogPipeline, PipelineError
+    from blogwriter.writer import audience
+    assert audience() == ""
+    text = audience("advanced", "upsc")
+    assert "UPSC" in text and "expert" in text
+    p = BlogPipeline.__new__(BlogPipeline)
+    with pytest.raises(PipelineError):
+        BlogPipeline.run(p, "x", lang="fr")
+    with pytest.raises(PipelineError):
+        BlogPipeline.run(p, "x", source="tweets")
+
+
+def test_topic_seed_prefers_a_relevant_encyclopedia_page_then_the_web(monkeypatch):
+    from blogwriter import research as R
+    r = R.Researcher(llm=None, log=lambda m: None)
+    lead = "India and the Maldives have close relations shaped by trade, tourism and security. " * 10
+    monkeypatch.setattr(R, "wikipedia_leads", lambda q, n: [("India–Maldives relations",
+                                                             "https://en.wikipedia.org/wiki/IM", lead)])
+    article, text = r.seed("india maldives relations")
+    assert article.url.endswith("/IM") and text == lead and article.api == "topic"
+    assert article.title == "India maldives relations"
+
+    monkeypatch.setattr(R, "wikipedia_leads", lambda q, n: [("Cricket", "https://en.wikipedia.org/wiki/C", "A bat and ball game. " * 40)])
+    monkeypatch.setattr(R, "web_search", lambda q, n: [R.Source("Maldives india ties", "https://reddit.com/x", "s"),
+                                                       R.Source("India Maldives relations explained",
+                                                                "https://news.example/im", "india maldives")])
+    monkeypatch.setattr(R, "fetch_text", lambda url, limit: "Full page text. " * 50)
+    article, text = r.seed("india maldives relations")
+    assert article.url == "https://news.example/im" and text.startswith("Full page")
+
+
+def test_translation_keeps_a_failed_section_in_english_and_headings_are_read_back():
+    from blogwriter.llm import LLMError
+    from blogwriter.pipeline import heading_of
+    from blogwriter.writer import Writer
+
+    class FakeLLM:
+        def complete(self, prompt, **kw):
+            if "SECOND" in prompt:
+                raise LLMError("down")
+            return "## అనువాదం\n\nతెలుగు వచనం ఇక్కడ ఉంది మరియు ఇది పొడవుగా ఉంది"
+    w = Writer(FakeLLM(), log=lambda m: None)
+    assert w.translate("anything", "en") == "anything"
+    out = w.translate("## First\n\nSome text here.\n\n## SECOND\n\nMore text here.", "te")
+    assert out.startswith("## అనువాదం") and "## SECOND\n\nMore text here." in out
+    assert heading_of(out, "x") == "అనువాదం" and heading_of("no heading", "fallback") == "fallback"
