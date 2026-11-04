@@ -49,7 +49,8 @@ def send_email(settings: Settings, subject: str, body: str, attachments: List[st
             if settings.smtp_user and settings.smtp_password:
                 server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(msg)
-        log(f"[mail] sent to {', '.join(settings.mail_to)} with {len(list(msg.iter_attachments()))} attachment(s)")
+        # the count, not the addresses: the Actions logs of a public repository are public
+        log(f"[mail] sent to {len(settings.mail_to)} recipient(s) with {len(list(msg.iter_attachments()))} attachment(s)")
         return True
     except Exception as exc:      # auth errors, network, bad address ...
         log(f"[mail] FAILED: {type(exc).__name__}: {str(exc)[:200]}")

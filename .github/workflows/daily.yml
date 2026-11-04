@@ -43,6 +43,10 @@ on:
       email_to:
         description: "Email the result to (blank = MAIL_TO secret)"
         default: ""
+      video:
+        description: "Also make the videos (long video + audio tracks + Shorts), emailed for review, never posted"
+        type: boolean
+        default: false
 
 permissions:
   contents: write          # commits output/history.jsonl back so stories are never repeated
@@ -65,11 +69,31 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      - name: Hide the customer's email address in the public logs
+        if: inputs.email_to != ''
+        env:
+          RUN_EMAIL_TO: ${{ inputs.email_to }}
+        run: |
+          IFS=',' read -ra to <<< "$RUN_EMAIL_TO"
+          for a in "${to[@]}"; do echo "::add-mask::$(echo "$a" | xargs)"; done
+
       - run: pip install -r requirements.txt
 
       - name: Fonts for Indian scripts
-        if: github.event_name == 'workflow_dispatch' && inputs.lang != 'en'
+        if: github.event_name == 'schedule' || inputs.video || inputs.lang != 'en'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
+
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'schedule' || inputs.video
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: video/package-lock.json
+
+      - name: Video renderer
+        if: github.event_name == 'schedule' || inputs.video
+        working-directory: video
+        run: npm ci --no-audit --no-fund && npx remotion browser ensure
 
       - name: Write the blog
         env:
@@ -83,6 +107,8 @@ jobs:
           RUN_LANG: ${{ inputs.lang || 'en' }}
           RUN_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
           RUN_EMAIL_TO: ${{ inputs.email_to }}
+          RUN_VIDEO: ${{ github.event_name == 'schedule' || inputs.video }}
+          VIDEO_LANGS: ${{ vars.VIDEO_LANGS }}                     # default en,hi,te
           LLM_PROVIDERS: cerebras,groq,gemini,nvidia,openrouter,github  # no local Ollama on the runner
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
@@ -130,18 +156,8 @@ jobs:
                 --niche "$RUN_NICHE" --lang "$RUN_LANG")
           [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)
           [ -z "$RUN_EMAIL_TO" ] || args+=(--email-to "$RUN_EMAIL_TO")
+          [ "$RUN_VIDEO" != "true" ] || args+=(--video)
           python main.py "$RUN_TOPIC" "${args[@]}"
-
-      - name: Keep the files (backup in case object storage is not configured)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: run-${{ github.run_id }}
-          path: |
-            output/*/
-            !output/history.jsonl
-          if-no-files-found: ignore
-          retention-days: 30
 
       - name: Commit story history
         if: success() && (inputs.source || 'news') == 'news'

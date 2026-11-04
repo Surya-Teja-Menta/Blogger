@@ -1021,3 +1021,55 @@ def test_translation_keeps_a_failed_section_in_english_and_headings_are_read_bac
     out = w.translate("## First\n\nSome text here.\n\n## SECOND\n\nMore text here.", "te")
     assert out.startswith("## అనువాదం") and "## SECOND\n\nMore text here." in out
     assert heading_of(out, "x") == "అనువాదం" and heading_of("no heading", "fallback") == "fallback"
+
+
+def test_video_captions_are_split_and_timed_and_srt_is_well_formed():
+    from blogwriter.video import chunks, srt
+    lines = chunks("one two three four five six seven eight", 10.0, 14.0, 15)
+    assert [l[2] for l in lines] == ["one two three", "four five six", "seven eight"]
+    assert lines[0][0] == 10.0 and abs(lines[-1][1] - 14.0) < 1e-9
+    assert srt([(61.5, 62.25, "hi")]) == "1\n00:01:01,500 --> 00:01:02,250\nhi\n"
+
+
+def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            return {"title": "T", "thumb_text": "Big deal", "description": "D", "tags": ["a"],
+                    "scenes": [{"kind": "hook", "narration": "A 115 billion dollar deal.", "number": "$115B",
+                                "subjects": ["Marvell Technology"], "facts": [1]},
+                               {"kind": "fact", "narration": "Shares rose 7 percent. It was big.", "number": "7%",
+                                "subjects": [], "facts": [1]},
+                               {"kind": "fact", "narration": "Talks began in 2024.", "number": "", "facts": []},
+                               {"kind": "quote", "narration": "He said it fits.", "number": "", "facts": [1]},
+                               {"kind": "fact", "narration": "Lumentum makes optics.", "number": "", "facts": []}],
+                    "short": [{"scene": 0, "narration": "A 115 billion dollar deal."}, {"scene": 9, "narration": "x"}]}
+
+    facts = [{"claim": "Marvell agreed to buy Lumentum for $115 billion", "quote": "", "source": "1"}]
+    sources = [{"url": "https://www.reuters.com/x"}]
+    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", facts, sources)
+    narr = [s["narration"] for s in plan["scenes"]]
+    assert plan["scenes"][0]["number"] == "$115B" and plan["scenes"][0]["source"] == "reuters.com"
+    assert plan["scenes"][1]["number"] == "" and narr[1] == "It was big."      # 7 is not a verified number
+    assert "Talks began in 2024." not in narr                                   # nor is 2024
+    assert plan["scenes"][-1]["kind"] == "outro" and "1 verified facts" in narr[-1]
+    assert [b["scene"] for b in plan["short"]] == [0, len(plan["scenes"]) - 1]   # bad index dropped, ending added
+
+
+def test_video_translation_must_keep_the_line_count_or_the_language_is_skipped():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker
+
+    class FakeLLM:
+        def __init__(self, reply):
+            self.reply = reply
+
+        def complete_json(self, prompt, **kw):
+            return self.reply
+
+    good = VideoMaker(Settings(), FakeLLM(["एक", "दो"]), log=lambda m: None)
+    assert good.translate_lines(["one", "two"], "hi") == ["एक", "दो"]
+    bad = VideoMaker(Settings(), FakeLLM(["एक"]), log=lambda m: None)
+    assert bad.translate_lines(["one", "two"], "hi") is None

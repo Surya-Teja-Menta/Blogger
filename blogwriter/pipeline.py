@@ -221,21 +221,28 @@ class BlogPipeline:
 
     def run(self, topic: str, mode: str = "standard", days: int = 1, make_pdf: bool = True,
             email: bool = True, source: str = "news", pages: int = 0, level: str = "intermediate",
-            niche: str = "general", lang: str = "en", publish: bool = True) -> dict:
+            niche: str = "general", lang: str = "en", publish: bool = True, video: bool = False) -> dict:
         """source: 'news' writes about today's hottest story on the topic; 'topic' researches the topic itself.
         pages: a page target that overrides the mode's size (0 = the mode decides). level / niche: who the report
         is written for. lang: the language of the finished pieces. publish: list on Gumroad and post to the blogs
-        (off for private orders, which are only emailed)."""
+        (off for private orders, which are only emailed). video: also make the videos for review (never posted)."""
         for value, allowed, what in ((source, ("news", "topic"), "source"), (level, LEVELS, "level"),
                                      (niche, NICHES, "niche"), (lang, LANGS, "lang")):
             if value not in allowed:
                 raise PipelineError(f"unknown {what} '{value}' (choose from {', '.join(allowed)})")
         self.writer.reader = audience(level, niche)
         try:
-            return self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
-                             {"level": level, "niche": niche, "lang": lang, "pages_requested": pages})
+            result = self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
+                               {"level": level, "niche": niche, "lang": lang, "pages_requested": pages})
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
+        if video:
+            from .video import VideoMaker
+            try:                     # the report is already saved and sent; a video failure must not undo that
+                result["videos"] = VideoMaker(self.s, self.llm, self.log).make(result["dir"], email=email)
+            except Exception as exc:
+                self.log(f"[video] FAILED: {type(exc).__name__}: {str(exc)[:300]}")
+        return result
 
     def _choose_readable(self, ranked, tries: int = 14):
         """Best-ranked story whose full text we can read (tried in parallel, since many sites block scrapers).

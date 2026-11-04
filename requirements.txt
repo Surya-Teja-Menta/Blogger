@@ -5,6 +5,7 @@ lxml
 python-dotenv>=1.0
 ddgs
 markdown
+edge-tts      # free narration voices for the videos (English, Hindi, Telugu, ...)
 boto3         # upload to S3-compatible object storage (Cloudflare R2 / Backblaze B2)
 # optional: PDF output (needs GTK/Pango; HTML report is always written)
 # weasyprint

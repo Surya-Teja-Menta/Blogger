@@ -11,3 +11,8 @@ output/*
 # old experiments (contain hardcoded keys)
 legacy/
 .mcp.json
+
+# video app: dependencies and the per-run working files
+video/node_modules/
+video/public/job/
+video/out/

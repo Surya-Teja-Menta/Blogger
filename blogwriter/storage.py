@@ -2,6 +2,7 @@
 import mimetypes
 import os
 import zipfile
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List
 
 from .config import Settings
@@ -28,8 +29,8 @@ def zip_run(run_dir: str, files: List[str]) -> str:
 
 
 def upload_run(settings: Settings, run_dir: str, files: List[str],
-               log: Callable[[str], None] = print) -> Dict[str, str]:
-    """Upload `files` (names inside run_dir) under reports/<run folder>/; returns {name: link}.
+               log: Callable[[str], None] = print, prefix: str = "") -> Dict[str, str]:
+    """Upload `files` (names inside run_dir) under `prefix` (default reports/<run folder>/); returns {name: link}.
     Links are public URLs when S3_PUBLIC_URL is set, otherwise 7-day signed links. Never raises - the
     files are already saved locally, so a storage problem must not lose the run."""
     if not settings.storage_configured:
@@ -39,13 +40,14 @@ def upload_run(settings: Settings, run_dir: str, files: List[str],
     links = {}
     try:
         s3 = _client(settings)
-        prefix = f"reports/{os.path.basename(os.path.normpath(run_dir))}"
+        prefix = prefix or f"reports/{os.path.basename(os.path.normpath(run_dir))}"
         for name in files:
             path = os.path.join(run_dir, name)
             if not os.path.exists(path):
                 continue
             key = f"{prefix}/{name}"
-            mime = ("text/markdown; charset=utf-8" if name.endswith(".md") else "application/zip"
+            mime = ("text/markdown; charset=utf-8" if name.endswith(".md") else "text/plain; charset=utf-8"
+                    if name.endswith((".txt", ".srt")) else "application/zip"
                     if name.endswith(".zip") else mimetypes.guess_type(name)[0] or "application/octet-stream")
             if mime in ("text/html", "application/json"):
                 mime += "; charset=utf-8"
@@ -57,3 +59,21 @@ def upload_run(settings: Settings, run_dir: str, files: List[str],
     except Exception as exc:          # credentials, network, missing bucket, boto3 not installed ...
         log(f"[storage] FAILED: {type(exc).__name__}: {str(exc)[:200]}")
     return links
+
+
+def prune_prefix(settings: Settings, prefix: str, days: int, log: Callable[[str], None] = print) -> None:
+    """Delete objects under `prefix` older than `days` days (big video files would fill the free tier). Done by
+    the run itself, because a storage token usually may not change the bucket's own clean-up rules. Never raises."""
+    if not settings.storage_configured:
+        return
+    try:
+        s3 = _client(settings)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        old = [o["Key"] for page in s3.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket, Prefix=prefix)
+               for o in page.get("Contents", []) if o["LastModified"] < cutoff]
+        for i in range(0, len(old), 1000):
+            s3.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": [{"Key": k} for k in old[i:i + 1000]]})
+        if old:
+            log(f"[storage] deleted {len(old)} file(s) older than {days} days under {prefix}")
+    except Exception as exc:
+        log(f"[storage] could not clean up {prefix}: {type(exc).__name__}: {str(exc)[:120]}")
