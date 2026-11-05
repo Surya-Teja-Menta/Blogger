@@ -542,7 +542,7 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
                 break
             parts.append({"tex": tex, "label": words(p.get("label"), 3)})
         out["parts"] = parts[:8]
-        if len(out["parts"]) < 2:
+        if not out["parts"]:              # one piece is fine: the whole formula, named once
             out["kind"] = "photo"
     elif kind == "plot":
         out["plot"] = sc.get("plot") if sc.get("plot") in PLOTS else "fit"
@@ -562,7 +562,10 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
             if tex and len(tex) <= 120 and not re.search(r"\\(href|url|includegraphics|html)", tex):
                 steps.append({"tex": tex, "note": words(st.get("note"), 5)})
         out["steps"] = steps
-        if len(steps) < 2:
+        if len(steps) == 1:               # a one-line working is just a formula
+            out["kind"], out["parts"] = "equation", [{"tex": steps[0]["tex"], "label": steps[0]["note"]}]
+            del out["steps"]
+        elif not steps:
             out["kind"] = "photo"
     elif kind == "chapter" and not out["headline"]:
         out["kind"] = "photo"
@@ -703,11 +706,28 @@ class VideoMaker:
         brief = brief or check_brief({}, style)
         shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines))
         prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots)
-        plan = self.llm.complete_json(prompt.replace("{{", "{").replace("}}", "}"), max_tokens=12000)
+        prompt = prompt.replace("{{", "{").replace("}}", "}")
+        plan = self.llm.complete_json(prompt, max_tokens=12000)
         kicker = KICKERS[int(hashlib.md5(title.encode()).hexdigest(), 16) % len(KICKERS)]
         allowed = " ".join(f"{f['claim']} {f.get('quote', '')}" for f in facts)
         quotes = " ".join(_norm(f.get("quote", "")) for f in facts)
         countries = country_names()
+
+        def maths(p) -> int:
+            return sum(1 for sc in (p.get("scenes") or [] if isinstance(p, dict) else [])
+                       if isinstance(sc, dict) and check_scene(sc, allowed, quotes, countries)["kind"] in MATH_KINDS)
+        need = max(5, len(plan.get("scenes") or []) * 2 // 5) if brief.get("maths") else 0
+        if need and maths(plan) < need:      # a lesson without its maths is not the lesson; ask once more
+            self.log(f"[video] only {maths(plan)} usable maths shots (need {need}); rewriting the script")
+            try:
+                again = self.llm.complete_json(
+                    prompt + f"\n\nIMPORTANT: a first draft had only {maths(plan)} maths shots. This lesson needs at "
+                    f"least {need} \"equation\", \"graph\", \"derive\" or \"plot\" shots, each with its required "
+                    f"fields filled in exactly as described.", max_tokens=12000)
+            except LLMError:
+                again = {}
+            if maths(again) > maths(plan) and len((again or {}).get("scenes") or []) >= 5:
+                plan = again
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:32]:
             if not isinstance(sc, dict):

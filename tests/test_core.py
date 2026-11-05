@@ -1295,7 +1295,11 @@ def test_derive_and_graph_shots_are_checked_timed_and_translated():
                                                         "\frac{dJ}{dw} = -2x(y - wx)", {"tex": "\href{x}{y}"}]},
                     "", "", set())
     assert d["kind"] == "derive" and [s["note"] for s in d["steps"]] == ["the cost", ""]
-    assert check_scene({**base, "kind": "derive", "steps": [{"tex": "x"}]}, "", "", set())["kind"] == "photo"
+    one = check_scene({**base, "kind": "derive", "steps": [{"tex": "x", "note": "start"}]}, "", "", set())
+    assert one["kind"] == "equation" and one["parts"] == [{"tex": "x", "label": "start"}] and "steps" not in one
+    assert check_scene({**base, "kind": "derive", "steps": []}, "", "", set())["kind"] == "photo"
+    assert check_scene({**base, "kind": "equation", "parts": [{"tex": "w \\leftarrow w - \\alpha g", "label": "step"}]},
+                       "", "", set())["kind"] == "equation"
     g = check_scene({**base, "kind": "graph", "graph": {"curves": [{"fn": "x^2", "tex": "y=x^2"}], "x": [-2, 2]},
                      "xlabel": "time", "ylabel": "distance"}, "", "", set())
     assert g["kind"] == "graph" and g["xlabel"] == "time"
