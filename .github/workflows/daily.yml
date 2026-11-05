@@ -1,170 +1,63 @@
-name: Daily blog
+name: Daily news
 
-# GitHub cron is UTC. India (IST, UTC+5:30): 09:00 IST = 03:30 UTC, 10:00 IST = 04:30 UTC.
+# Every morning: one job per news topic (today's hottest story on it) plus the oldest topics waiting in the video
+# queue, all in parallel. Each makes a report and videos, emailed for review; nothing is posted to YouTube.
+# GitHub cron is UTC: 03:30 UTC = 09:00 IST.
 on:
   schedule:
-    - cron: "30 3 * * *"   # 09:00 IST - Geopolitics
-    - cron: "30 4 * * *"   # 10:00 IST - Technology
-  workflow_dispatch:       # Actions -> Daily blog -> Run workflow (works from the phone browser / GitHub app)
+    - cron: "30 3 * * *"
+  workflow_dispatch:       # run today's batch by hand: Actions -> Daily news -> Run workflow
     inputs:
-      topic:
-        description: "Topic to write about"
-        default: "geopolitics"
-      source:
-        description: "news = today's hottest story on the topic; topic = research the topic itself"
-        type: choice
-        options: [news, topic]
-        default: news
-      pages:
-        description: "Target pages (0 = use mode)"
-        default: "0"
-      mode:
-        description: "Research depth when pages = 0"
-        type: choice
-        options: [fast, standard, deep]
-        default: standard
-      level:
-        type: choice
-        options: [basic, intermediate, advanced]
-        default: intermediate
-      niche:
-        type: choice
-        options: [general, upsc, business, tech]
-        default: general
-      lang:
-        description: "en, hi (Hindi), te (Telugu), kn (Kannada), ta (Tamil)"
-        type: choice
-        options: [en, hi, te, kn, ta]
-        default: en
-      publish:
-        description: "List on Gumroad and post to the blogs (off = private, email only)"
+      news_topics:
+        description: "News topics, comma separated (blank = the NEWS_TOPICS variable, else geopolitics,technology)"
+        default: ""
+      take:
+        description: "How many queued topics to make in this run"
+        default: "2"
+      video:
+        description: "Make the videos too"
         type: boolean
         default: true
-      email_to:
-        description: "Email the result to (blank = MAIL_TO secret)"
-        default: ""
-      video:
-        description: "Also make the videos (long video + audio tracks + Shorts), emailed for review, never posted"
-        type: boolean
-        default: false
 
 permissions:
-  contents: write          # commits output/history.jsonl back so stories are never repeated
-  models: read             # GitHub Models (free LLM) through the built-in GITHUB_TOKEN
+  contents: write
+  models: read
 
 concurrency:
-  # the daily news runs never overlap and never race on history.jsonl; topic orders run on their own
-  group: ${{ (github.event_name == 'workflow_dispatch' && inputs.source == 'topic') && format('order-{0}', github.run_id) || 'daily-blog' }}
+  group: daily-news        # two batches never pick the same queued topics
   cancel-in-progress: false
 
 jobs:
-  run:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      jobs: ${{ steps.plan.outputs.jobs }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-
-      - name: Hide the customer's email address in the public logs
-        if: inputs.email_to != ''
+      - id: plan
         env:
-          RUN_EMAIL_TO: ${{ inputs.email_to }}
+          NEWS: ${{ inputs.news_topics || vars.NEWS_TOPICS || 'geopolitics,technology' }}
+          TAKE: ${{ inputs.take || vars.QUEUE_PER_DAY || '2' }}
         run: |
-          IFS=',' read -ra to <<< "$RUN_EMAIL_TO"
-          for a in "${to[@]}"; do echo "::add-mask::$(echo "$a" | xargs)"; done
+          jobs="$(python3 blogwriter/videoqueue.py plan --news "$NEWS" --take "$TAKE")"
+          echo "jobs=$jobs" >> "$GITHUB_OUTPUT"
+          echo "$jobs" | python3 -c "import json,sys; [print('-', j['topic'], '(' + j['style'] + ')') for j in json.load(sys.stdin)]"
 
-      - run: pip install -r requirements.txt
-
-      - name: Fonts for Indian scripts
-        if: github.event_name == 'schedule' || inputs.video || inputs.lang != 'en'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
-
-      - uses: actions/setup-node@v4
-        if: github.event_name == 'schedule' || inputs.video
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: video/package-lock.json
-
-      - name: Video renderer
-        if: github.event_name == 'schedule' || inputs.video
-        working-directory: video
-        run: npm ci --no-audit --no-fund && npx remotion browser ensure
-
-      - name: Write the blog
-        env:
-          # inputs reach the script as environment variables, never pasted into the shell command
-          RUN_TOPIC: ${{ github.event_name == 'workflow_dispatch' && inputs.topic || (github.event.schedule == '30 4 * * *' && 'technology' || 'geopolitics') }}
-          RUN_SOURCE: ${{ inputs.source || 'news' }}
-          RUN_MODE: ${{ inputs.mode || 'standard' }}
-          RUN_PAGES: ${{ inputs.pages || '0' }}
-          RUN_LEVEL: ${{ inputs.level || 'intermediate' }}
-          RUN_NICHE: ${{ inputs.niche || 'general' }}
-          RUN_LANG: ${{ inputs.lang || 'en' }}
-          RUN_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || inputs.publish }}
-          RUN_EMAIL_TO: ${{ inputs.email_to }}
-          RUN_VIDEO: ${{ github.event_name == 'schedule' || inputs.video }}
-          VIDEO_LANGS: ${{ vars.VIDEO_LANGS }}                     # default en,hi,te
-          LLM_PROVIDERS: cerebras,groq,gemini,nvidia,openrouter,github  # no local Ollama on the runner
-          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
-          GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
-          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-          CEREBRAS_API_KEYS: ${{ secrets.CEREBRAS_API_KEYS }}
-          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
-          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NVIDIA_API_KEYS: ${{ secrets.NVIDIA_API_KEYS }}
-          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
-          CEREBRAS_MODEL: ${{ vars.CEREBRAS_MODEL }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL }}
-          GITHUB_MODEL: ${{ vars.GITHUB_MODEL }}
-          NVIDIA_MODELS: ${{ vars.NVIDIA_MODELS }}
-          MAX_TOKENS: ${{ vars.MAX_TOKENS }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
-          S3_BUCKET: ${{ secrets.S3_BUCKET }}
-          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          S3_REGION: ${{ secrets.S3_REGION }}
-          S3_PUBLIC_URL: ${{ secrets.S3_PUBLIC_URL }}
-          GUMROAD_ACCESS_TOKEN: ${{ secrets.GUMROAD_ACCESS_TOKEN }}
-          GUMROAD_PRICE_CENTS: ${{ vars.GUMROAD_PRICE_CENTS || '390' }}   # US$3.90 unless the repo variable overrides it
-          GUMROAD_PUBLISH: ${{ vars.GUMROAD_PUBLISH }}           # "true" = go live; empty = draft for review
-          PUBLISH_LIVE: ${{ vars.PUBLISH_LIVE }}                   # "false" = save drafts instead of posting
-          DEVTO_API_KEY: ${{ secrets.DEVTO_API_KEY }}
-          HASHNODE_TOKEN: ${{ secrets.HASHNODE_TOKEN }}
-          HASHNODE_PUBLICATION_ID: ${{ secrets.HASHNODE_PUBLICATION_ID }}
-          WORDPRESS_URL: ${{ secrets.WORDPRESS_URL }}
-          WORDPRESS_USER: ${{ secrets.WORDPRESS_USER }}
-          WORDPRESS_APP_PASSWORD: ${{ secrets.WORDPRESS_APP_PASSWORD }}
-          GHOST_URL: ${{ secrets.GHOST_URL }}
-          GHOST_ADMIN_KEY: ${{ secrets.GHOST_ADMIN_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          args=(--source "$RUN_SOURCE" --mode "$RUN_MODE" --pages "$RUN_PAGES" --level "$RUN_LEVEL"
-                --niche "$RUN_NICHE" --lang "$RUN_LANG")
-          [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)
-          [ -z "$RUN_EMAIL_TO" ] || args+=(--email-to "$RUN_EMAIL_TO")
-          [ "$RUN_VIDEO" != "true" ] || args+=(--video)
-          python main.py "$RUN_TOPIC" "${args[@]}"
-
-      - name: Commit story history
-        if: success() && (inputs.source || 'news') == 'news'
-        env:
-          RUN_TOPIC: ${{ github.event_name == 'workflow_dispatch' && inputs.topic || (github.event.schedule == '30 4 * * *' && 'technology' || 'geopolitics') }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add output/history.jsonl
-          git diff --cached --quiet || (git commit -m "history: $RUN_TOPIC $(date -u +%F)" && git pull --rebase && git push)
+  make:
+    needs: plan
+    if: needs.plan.outputs.jobs != '[]'
+    strategy:
+      fail-fast: false     # one failed topic never stops the others
+      matrix:
+        job: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    uses: ./.github/workflows/make.yml
+    with:
+      topic: ${{ matrix.job.topic }}
+      source: ${{ matrix.job.source }}
+      style: ${{ matrix.job.style }}
+      mode: ${{ matrix.job.mode }}
+      level: ${{ matrix.job.level }}
+      publish: ${{ matrix.job.publish }}
+      video: ${{ github.event_name == 'schedule' || inputs.video }}
+      queue_id: ${{ matrix.job.id }}
+    secrets: inherit

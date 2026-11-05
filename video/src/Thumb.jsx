@@ -1,29 +1,36 @@
 import React from "react";
 import {AbsoluteFill, Img, staticFile} from "remotion";
-import {FONT} from "./Board";
+import {C, FONT, alpha, useTheme} from "./theme";
 
-// YouTube thumbnail: the hook's photos as a collage, its headline number and a few big words
-export const Thumb = ({scenes, thumbText = "", accent = "#e63946"}) => {
-  const hook = scenes[0] || {};
-  const images = scenes.flatMap((s) => s.images || []).filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
+// YouTube thumbnail in the video's theme: the strongest photo, three or four huge words with one in the accent,
+// and the headline figure
+export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null}) => {
+  useTheme(theme);
+  const photo = scenes.flatMap((s) => s.images || [])[0];
+  const figure = (scenes.find((s) => s.number) || {}).number;
+  const words = thumbText.split(/\s+/).filter(Boolean);
+  const mark = thumbHighlight.toLowerCase();
   return (
-    <AbsoluteFill style={{background: "radial-gradient(circle at 30% 40%, #2b2118, #0e1116 75%)", fontFamily: FONT}}>
-      {images.map((src, k) => (
-        <div key={src} style={{position: "absolute", left: 40 + k * 230, top: 70 + k * 200, width: 470, height: 360,
-                               background: "#fff", padding: 12, transform: `rotate(${k ? 6 : -5}deg)`,
-                               boxShadow: "0 20px 50px rgba(0,0,0,.6)"}}>
-          <Img src={staticFile(src)} style={{width: "100%", height: "100%", objectFit: "cover"}}/>
+    <AbsoluteFill style={{background: C.bg, fontVariantNumeric: "lining-nums"}}>
+      <div style={{position: "absolute", width: 900, height: 900, borderRadius: "50%", left: -300, top: -300,
+                   background: `radial-gradient(circle, ${alpha(C.accent, 0.35)}, transparent 65%)`}}/>
+      {photo && <Img src={staticFile(photo)} style={{position: "absolute", right: 0, width: "68%", height: "100%", objectFit: "cover",
+                                                    filter: "contrast(1.2) saturate(1.15) brightness(.95)"}}/>}
+      <AbsoluteFill style={{background: `linear-gradient(90deg, ${C.bg} 32%, ${alpha(C.bg, 0.6)} 56%, transparent 80%)`}}/>
+      <div style={{position: "absolute", left: 56, top: 64, width: 780}}>
+        {figure && (
+          <div style={{display: "inline-block", padding: "4px 26px", borderRadius: 14, background: C.hot, color: "#fff",
+                       fontFamily: FONT.display, fontWeight: C.weight, fontSize: 112, lineHeight: 1.05, transform: "rotate(-3deg)",
+                       marginBottom: 26, boxShadow: `0 12px 30px ${alpha("#000000", 0.4)}`}}>{figure}</div>
+        )}
+        <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: C.upper ? 146 : 124, lineHeight: 0.95, color: C.text,
+                     textTransform: C.upper ? "uppercase" : "none", textShadow: C.light ? "none" : `0 8px 24px ${alpha("#000000", 0.7)}`}}>
+          {words.map((w, k) => (
+            <span key={k} style={{color: w.toLowerCase().includes(mark) && mark ? C.accent : C.text}}>{w} </span>
+          ))}
         </div>
-      ))}
-      <svg style={{position: "absolute", inset: 0}} width={1280} height={720}>
-        <line x1={250} y1={120} x2={1100} y2={600} stroke="#c1121f" strokeWidth={6}/>
-      </svg>
-      <div style={{position: "absolute", right: 50, top: 70, width: 620, textAlign: "right"}}>
-        {hook.number && <div style={{fontSize: 170, fontWeight: 900, color: accent, letterSpacing: -5, lineHeight: 1,
-                                     textShadow: "0 6px 0 rgba(0,0,0,.5)"}}>{hook.number}</div>}
-        <div style={{marginTop: 24, fontSize: 76, fontWeight: 900, color: "#fff", lineHeight: 1.05,
-                     textTransform: "uppercase", textShadow: "0 5px 0 rgba(0,0,0,.6)"}}>{thumbText}</div>
       </div>
+      <div style={{position: "absolute", left: 0, bottom: 0, width: "100%", height: 14, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`}}/>
     </AbsoluteFill>
   );
 };

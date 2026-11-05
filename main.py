@@ -1,6 +1,7 @@
 """CLI:  python main.py "topic" [--source news|topic] [--mode fast|standard|deep] [--pages N]
                   [--level basic|intermediate|advanced] [--niche general|upsc|business|tech] [--lang en|hi|te|kn|ta]
-                  [--days N] [--no-pdf] [--no-email] [--no-publish] [--email-to a@x.com,b@y.com] [--video]"""
+                  [--days N] [--no-pdf] [--no-email] [--no-publish] [--email-to a@x.com,b@y.com] [--video]
+                  [--style auto|news|story|education|concept]"""
 import argparse
 import sys
 from dataclasses import replace
@@ -25,6 +26,8 @@ def main() -> int:
     ap.add_argument("--no-email", action="store_true", help="save the files but do not send the email")
     ap.add_argument("--no-publish", action="store_true", help="private order: no Gumroad listing, no blog posts")
     ap.add_argument("--email-to", default="", help="send the result to these addresses instead of MAIL_TO")
+    ap.add_argument("--style", default="", choices=["", "auto", "news", "story", "education", "concept"],
+                    help="video style (default: news for --source news, auto for --source topic)")
     ap.add_argument("--video", action="store_true",
                     help="also make a long video, audio tracks per language and Shorts, emailed for review")
     args = ap.parse_args()
@@ -39,7 +42,7 @@ def main() -> int:
         BlogPipeline(settings).run(topic, args.mode, args.days, make_pdf=not args.no_pdf, email=not args.no_email,
                                    source=args.source, pages=max(0, args.pages), level=args.level,
                                    niche=args.niche, lang=args.lang, publish=not args.no_publish,
-                                   video=args.video)
+                                   video=args.video, style=args.style)
     except PipelineError as exc:
         print(f"\nFAILED: {exc}")
         return 1

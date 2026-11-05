@@ -162,6 +162,14 @@ def test_unverified_figures_are_stripped():
     assert "11 March" in out and "20%" in out
 
 
+def test_video_figures_are_shortened_never_cut():
+    from blogwriter.video import _figure
+    allowed = "UPI handled 241.62 billion transactions worth ₹314 trillion, up 1,234,567,890.5 units"
+    assert _figure("241.62 billion", allowed) == "241.62B"
+    assert _figure("₹ 314 trillion", allowed) == "₹ 314T"
+    assert _figure("1,234,567,890.5 units", allowed) == ""      # too long to show whole: dropped, not cut
+
+
 def _dossier():
     from blogwriter.research import Dossier
     d = Dossier(article={"title": "T", "published": "2026-10-30T00:00:00+00:00", "source": "BBC", "description": ""},
@@ -1044,7 +1052,8 @@ def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
                                 "subjects": [], "facts": [1]},
                                {"kind": "fact", "narration": "Talks began in 2024.", "number": "", "facts": []},
                                {"kind": "quote", "narration": "He said it fits.", "number": "", "facts": [1]},
-                               {"kind": "fact", "narration": "Lumentum makes optics.", "number": "", "facts": []}],
+                               {"kind": "fact", "narration": "Lumentum makes optics.", "number": "", "facts": []},
+                               {"kind": "map", "narration": "Both firms are American.", "countries": ["USA"]}],
                     "short": [{"scene": 0, "narration": "A 115 billion dollar deal."}, {"scene": 9, "narration": "x"}]}
 
     facts = [{"claim": "Marvell agreed to buy Lumentum for $115 billion", "quote": "", "source": "1"}]
@@ -1073,3 +1082,186 @@ def test_video_translation_must_keep_the_line_count_or_the_language_is_skipped()
     assert good.translate_lines(["one", "two"], "hi") == ["एक", "दो"]
     bad = VideoMaker(Settings(), FakeLLM(["एक"]), log=lambda m: None)
     assert bad.translate_lines(["one", "two"], "hi") is None
+
+
+def test_video_scene_visuals_need_verified_data_or_fall_back_to_a_photo():
+    from blogwriter.video import check_scene
+    allowed = "Marvell paid $115 billion in 2024; revenue rose 46% in 2025 and 13% in 2026"
+    quotes = "we are building the future of light"
+    countries = {"india": "India", "united states of america": "United States of America"}
+    stat = check_scene({"kind": "stat", "number": "$115B", "label": "deal value", "headline": "A huge bet"}, allowed,
+                       quotes, countries)
+    assert stat["kind"] == "stat" and stat["number"] == "$115B"
+    assert check_scene({"kind": "stat", "number": "$999B"}, allowed, quotes, countries)["kind"] == "photo"
+    cmp = check_scene({"kind": "compare", "items": [{"label": "2025", "display": "46%"}, {"label": "2026", "display": "13%"},
+                                                    {"label": "x", "display": "77%"}]}, allowed, quotes, countries)
+    assert cmp["kind"] == "compare" and [i["value"] for i in cmp["items"]] == [46.0, 13.0]   # 77% is not verified
+    tl = check_scene({"kind": "timeline", "events": [{"date": "2024", "label": "deal"}, {"date": "2025", "label": "growth"},
+                                                     {"date": "2031", "label": "invented"}]}, allowed, quotes, countries)
+    assert tl["kind"] == "photo"                                   # only two verified dates left
+    m = check_scene({"kind": "map", "countries": ["USA", "India", "Atlantis"]}, allowed, quotes, countries)
+    assert m["countries"] == ["United States of America", "India"]
+    q = check_scene({"kind": "quote", "quote": "We are building the future of light.", "speaker": "CEO"}, allowed,
+                    quotes, countries)
+    assert q["kind"] == "quote" and q["speaker"] == "CEO"
+    assert check_scene({"kind": "quote", "quote": "Made up words here"}, allowed, quotes, countries)["kind"] == "photo"
+    h = check_scene({"kind": "photo", "headline": "A $300B rival appears", "highlight": "rival"}, allowed, quotes, countries)
+    assert "$300B" not in h["headline"] and h["highlight"] == "rival"
+
+
+def test_video_timeline_overlaps_scenes_by_the_transition():
+    from blogwriter.video import FPS, TRANSITION, timeline
+    frames, starts, total = timeline([2.0, 0.0, 3.0], ["hook", "chapter", "photo"])
+    assert frames[1] == 75 and starts[1] == frames[0] - TRANSITION
+    assert total == sum(frames) - 2 * TRANSITION and frames[0] >= 2 * FPS + TRANSITION
+
+
+def test_video_charts_are_drawn_only_as_the_verified_figures_allow():
+    from blogwriter.video import check_scene
+    allowed = "Revenue was $4.5B in 2022, $5.9B in 2023 and $7.1B in 2024; data centers are 74% and carriers 12%"
+    chk = lambda sc: check_scene(sc, allowed, "", {})
+    line = chk({"kind": "line", "items": [{"label": "2022", "display": "$4.5B"}, {"label": "2023", "display": "$5.9B"},
+                                          {"label": "2024", "display": "$7.1B"}]})
+    assert line["kind"] == "line" and [i["value"] for i in line["items"]] == [4.5, 5.9, 7.1]
+    # an invented year label drops its point, and two points are not a trend: they become a comparison
+    short = chk({"kind": "line", "items": [{"label": "2022", "display": "$4.5B"}, {"label": "2031", "display": "$5.9B"},
+                                           {"label": "2024", "display": "$7.1B"}]})
+    assert short["kind"] == "compare" and len(short["items"]) == 2
+    donut = chk({"kind": "donut", "items": [{"label": "Data centers", "display": "74%"}, {"label": "Carriers", "display": "12%"}]})
+    assert donut["kind"] == "donut"
+    mixed = chk({"kind": "bars", "items": [{"label": "Revenue", "display": "$7.1B"}, {"label": "Share", "display": "74%"},
+                                           {"label": "Other", "display": "12%"}]})
+    assert mixed["kind"] == "kpis"                      # different units cannot share one axis
+    steps = chk({"kind": "steps", "items": [{"label": "Chip sends data"}, {"label": "Laser makes light"},
+                                            {"label": "Fiber carries it"}]})
+    assert steps["kind"] == "steps" and len(steps["items"]) == 3
+    assert chk({"kind": "steps", "items": [{"label": "one"}, {"label": "two"}]})["kind"] == "photo"
+
+
+def test_video_plan_shapes_the_script_and_acts_become_stings():
+    from blogwriter.config import Settings
+    from blogwriter.video import KICKERS, VideoMaker, check_brief
+
+    brief = check_brief({"style": "story", "structure": "a mystery told clue by clue", "minutes": 4, "maths": True,
+                         "acts": [{"title": "The missing ship", "job": "set up the mystery"}],
+                         "opening": "Start on the empty harbour."}, "auto")
+    assert brief["style"] == "story" and brief["minutes"] == 4 and brief["maths"]
+    assert check_brief(None, "education")["style"] == "education"          # a failed plan keeps the asked style
+    assert check_brief({"minutes": "lots"}, "auto")["minutes"] == 3.0
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            assert "Lemmino" in prompt and "clue by clue" in prompt and "Start on the empty harbour." in prompt
+            assert "MATHS INTUITION" in prompt and r"\frac{1}{n}" in prompt and "28 to 40 scenes" in prompt
+            assert "{shape}" not in prompt and "{shots}" not in prompt and "{{" not in prompt
+            return {"title": "T", "thumb_text": "x", "description": "D", "tags": [],
+                    "outro": "So the ship was never lost. The full report and every source are in the description.",
+                    "scenes": [{"kind": "hook", "narration": "Why does light win?"},
+                               {"kind": "chapter", "narration": "Part one.", "headline": "The idea"},
+                               {"kind": "photo", "narration": "Light is fast."},
+                               {"kind": "photo", "narration": "Copper is slow.", "act": "How it works"},
+                               {"kind": "photo", "narration": "So data goes optical."},
+                               {"kind": "photo", "narration": "That is the answer."}],
+                    "short": []}
+
+    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", [], [], brief=brief)
+    kicker = plan["scenes"][1]["chapter"]["kicker"]
+    assert [s["narration"] for s in plan["scenes"]][:2] == ["Why does light win?", "Light is fast."]   # no title shot
+    assert plan["scenes"][1]["chapter"]["title"] == "The idea" and kicker in [k(0) for k in KICKERS]
+    assert plan["scenes"][2]["chapter"]["kicker"] != kicker and "chapter" not in plan["scenes"][3]
+    assert plan["scenes"][-1]["narration"].startswith("So the ship was never lost.")
+
+
+def test_every_video_gets_its_own_readable_design():
+    from blogwriter import design
+
+    good = {"palette": {"bg": "#0b1020", "panel": "#131a30", "line": "#2a3352", "text": "#f5f3ee", "muted": "#9aa3b8",
+                        "accent": "#ffb000", "hot": "#ff5a5f", "cool": "#3ec9f0", "violet": "#a77bff"},
+            "display": "Fraunces", "body": "Inter", "upper": False, "background": "waves",
+            "cuts": ["iris", "sweep", "nope"], "pace": "calm"}
+    d = design.check(good)
+    assert d and d["cuts"] == ["iris", "sweep"] and not d["light"] and d["speed"] < 1 and d["weight"] == 900
+    faint = design.check({**good, "palette": {**good["palette"], "text": "#20263a", "accent": "#3a2a10"}})
+    assert design.contrast(faint["text"], faint["bg"]) >= 7 and design.contrast(faint["accent"], faint["bg"]) >= 3
+    assert design.check({**good, "palette": {**good["palette"], "panel": "#ffffff"}}) is None    # cards vanish
+    assert design.check({**good, "body": "RobotoSlab"})["body"] == "RobotoSlab"
+    assert design.check({**good, "body": "BebasNeue"}) is None                                   # one weight only
+    assert design.check({**good, "display": "Comic Sans"}) is None and design.check("no") is None
+    looks = set()
+    for k in range(40):                     # the fallback is new every time and always passes the same checks
+        g = design.generate(f"title {k}")
+        raw = {"palette": {c: g[c] for c in design.COLOURS}, "display": g["display"], "body": g["body"],
+               "background": g["back"], "cuts": g["cuts"], "pace": g["pace"]}
+        assert design.check(raw), g
+        looks.add((g["bg"], g["display"], g["back"]))
+    assert len(looks) == 40
+    logs = []
+    got = design.design(lambda *a, **k: good, "T", "story", "", logs.append)
+    assert got["source"] == "designed" and logs
+    boom = design.design(lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")), "T", "story", "", logs.append)
+    assert boom["source"] == "generated"
+
+
+def test_graphics_take_the_nearest_real_icon():
+    from blogwriter import graphics
+    assert graphics.icon("chart line") == "chart-line" and graphics.icon("brain") == "brain"
+    assert graphics.icon("conditional-probability") == "sparkles"
+
+
+def test_video_dubbed_lines_are_sped_up_to_fit_the_english_picture():
+    from blogwriter.sound import mix_filter
+    graph, _ = mix_filter([0.2, 3.0], [], [], [1.25, 1.0])
+    assert "atempo=1.250,adelay=delays=200" in graph and graph.count("atempo") == 1
+
+
+
+
+def test_graphics_are_checked_timed_and_translated():
+    from blogwriter import graphics
+    from blogwriter.video import _verified, on_screen, with_text
+    scenes = [
+        {"kind": "photo", "headline": "Your phone pays the shop", "number": "", "label": "", "kicker": "", "quote": "",
+         "narration": "Your phone sends money through NPCI to the shop in two seconds."},
+        {"kind": "stat", "headline": "UPI dominates", "number": "84%", "label": "of digital payments", "kicker": "",
+         "quote": "", "narration": "UPI carries 84% of digital payments."},
+        {"kind": "photo", "headline": "Same again", "number": "", "label": "", "kicker": "", "quote": "",
+         "narration": "Phones and shops again."},
+        {"kind": "bars", "headline": "Not eligible", "number": "", "label": "", "kicker": "", "quote": "", "narration": "x"},
+    ]
+    flow = {"type": "flow", "nodes": [{"icon": "smartphone", "label": "Your phone"}, {"icon": "network", "label": "NPCI"},
+                                      {"icon": "store", "label": "The shop"}]}
+    reply = [{"scene": 0, **flow}, {"scene": 1, "type": "grid", "icon": "users"}, {"scene": 2, **flow},
+             {"scene": 3, **flow},
+             {"scene": 0, "type": "flow", "nodes": [{"icon": "not-an-icon", "label": "x"}]}]
+    assert graphics.assign(scenes, reply, _verified, lambda m: None) == 3
+    assert scenes[1]["graphic"] == {"type": "grid", "icon": "users", "number": "84%", "label": "of digital payments"}
+    assert "graphic" not in scenes[3]                                  # charts keep their templates
+    assert graphics.check({"type": "versus", "nodes": [{"icon": "user", "label": "500 rivals"},
+                                                       {"icon": "user", "label": "B"}]}, scenes[0], _verified) is None
+    words = [(0.0, 0.3, "Your"), (0.3, 0.7, "phone"), (0.7, 1.0, "sends"), (1.0, 1.2, "money"), (1.2, 1.6, "through"),
+             (1.6, 2.0, "NPCI"), (2.0, 2.2, "to"), (2.2, 2.4, "the"), (2.4, 2.8, "shop")]
+    g = graphics.timed(scenes[0]["graphic"], scenes[0]["headline"], words, 120, 30, 6)
+    assert [n["at"] for n in g["nodes"]] == [15, 54, 78] and "at" not in scenes[0]["graphic"]["nodes"][0]
+    texts = on_screen(scenes[0])
+    assert texts[-3:] == ["Your phone", "NPCI", "The shop"]
+    hindi = with_text(scenes[0], texts[:-3] + ["आपका फ़ोन", "एनपीसीआई", "दुकान"])
+    assert [n["label"] for n in hindi["graphic"]["nodes"]] == ["आपका फ़ोन", "एनपीसीआई", "दुकान"]
+
+
+def test_queue_adds_plans_and_retries_topics(tmp_path, monkeypatch):
+    from blogwriter import videoqueue as queue
+    monkeypatch.setattr(queue, "QUEUE", str(tmp_path / "topics.jsonl"))
+    monkeypatch.setattr(queue, "DONE", str(tmp_path / "done.jsonl"))
+    assert queue.split_topics(" Linear regression ;; the Titanic\nlinear REGRESSION ") == \
+        ["Linear regression", "the Titanic"]
+    new = queue.add(["Linear regression", "The Titanic"], style="education", level="basic")
+    assert [i["source"] for i in new] == ["topic", "topic"] and queue.add(["linear regression"]) == []
+    jobs = queue.plan(["geopolitics", "technology"], take=1)
+    assert [j["topic"] for j in jobs] == ["geopolitics", "technology", "Linear regression"]
+    assert jobs[0]["style"] == "news" and jobs[0]["publish"] and jobs[2]["style"] == "education"
+    first = new[0]["id"]
+    assert [queue.done(first, ok=False) for _ in range(2)] == ["retry", "retry"]
+    assert queue.done(first, ok=False) == "gave up" and [i["topic"] for i in queue.read()] == ["The Titanic"]
+    assert queue.done(new[1]["id"], ok=True) == "made" and queue.read() == []
+    assert [d["status"] for d in queue.read(queue.DONE)] == ["gave up", "made"]
+    assert queue.done("nope", ok=True) == "missing"

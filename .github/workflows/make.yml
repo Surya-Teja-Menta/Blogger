@@ -1,0 +1,109 @@
+name: Make one topic
+
+# The shared job behind "Daily news" and "Make a video": research one topic, write the report, make the videos
+# (emailed for review, never posted) and save the story history / queue state. Called once per topic, in parallel.
+on:
+  workflow_call:
+    inputs:
+      topic: {type: string, required: true}
+      source: {type: string, default: news}          # news = today's hottest story on it; topic = the topic itself
+      style: {type: string, default: ""}             # auto, news, story, education, concept
+      mode: {type: string, default: standard}        # research depth: fast, standard, deep
+      level: {type: string, default: intermediate}
+      publish: {type: boolean, default: false}       # list the report on Gumroad and post to the blogs
+      video: {type: boolean, default: true}
+      queue_id: {type: string, default: ""}          # set when the topic came from the queue
+
+permissions:
+  contents: write          # saves output/history.jsonl and queue/ back to the repo
+  models: read             # GitHub Models (free LLM) through the built-in GITHUB_TOKEN
+
+jobs:
+  make:
+    name: ${{ inputs.topic }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Fonts for Indian scripts
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
+
+      - uses: actions/setup-node@v4
+        if: inputs.video
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: video/package-lock.json
+
+      - name: Video renderer
+        if: inputs.video
+        working-directory: video
+        run: npm ci --no-audit --no-fund && npx remotion browser ensure
+
+      # Every repository secret and variable becomes an environment variable of the same name, so a new API key
+      # only has to be added in Settings -> Secrets and variables -> Actions (no change to this file).
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):           # a secret wins over a variable of the same name
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+
+      - name: Research, write and make the videos
+        id: run
+        env:
+          # inputs reach the script as environment variables, never pasted into the shell command
+          RUN_TOPIC: ${{ inputs.topic }}
+          RUN_SOURCE: ${{ inputs.source }}
+          RUN_STYLE: ${{ inputs.style }}
+          RUN_MODE: ${{ inputs.mode }}
+          RUN_LEVEL: ${{ inputs.level }}
+          RUN_PUBLISH: ${{ inputs.publish }}
+          RUN_VIDEO: ${{ inputs.video }}
+          ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export LLM_PROVIDERS="${LLM_PROVIDERS:-cerebras,groq,gemini,nvidia,openrouter,github}"  # no Ollama here
+          export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
+          export GUMROAD_PRICE_CENTS="${GUMROAD_PRICE_CENTS:-390}"
+          args=(--source "$RUN_SOURCE" --mode "$RUN_MODE" --level "$RUN_LEVEL")
+          [ -z "$RUN_STYLE" ] || args+=(--style "$RUN_STYLE")
+          [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)
+          [ "$RUN_VIDEO" != "true" ] || args+=(--video)
+          python -u main.py "$RUN_TOPIC" "${args[@]}" 2>&1 | tee run.log
+          status=${PIPESTATUS[0]}
+          # the report can succeed while the video fails; a queued topic only counts as made with its video
+          if [ "$RUN_VIDEO" = "true" ] && grep -q '^\[video\] FAILED' run.log; then status=1; fi
+          exit $status
+
+      - name: Save story history and queue
+        if: always() && (steps.run.outcome == 'success' || inputs.queue_id != '')
+        env:
+          QUEUE_ID: ${{ inputs.queue_id }}
+          OUTCOME: ${{ steps.run.outcome }}
+          RUN_TOPIC: ${{ inputs.topic }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ -n "$QUEUE_ID" ]; then
+            flag=$([ "$OUTCOME" = "success" ] && echo --ok || echo --failed)
+            export APPLY='python blogwriter/videoqueue.py done "$QUEUE_ID" '"$flag"
+          fi
+          export MSG="$( [ -n "$QUEUE_ID" ] && echo queue || echo history ): $RUN_TOPIC $(date -u +%F)"
+          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"     # the checkout is reset while it runs
+          bash "$RUNNER_TEMP/commit.sh"

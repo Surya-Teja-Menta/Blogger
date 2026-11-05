@@ -7,8 +7,15 @@
   },
   "dependencies": {
     "@remotion/cli": "4.0.535",
+    "@remotion/google-fonts": "4.0.535",
+    "@remotion/transitions": "4.0.535",
+    "d3-geo": "3.1.1",
+    "katex": "0.16.11",
+    "lucide": "0.468.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "remotion": "4.0.535"
+    "remotion": "4.0.535",
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2"
   }
 }
