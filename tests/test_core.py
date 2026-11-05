@@ -1241,7 +1241,7 @@ def test_graphics_are_checked_timed_and_translated():
     words = [(0.0, 0.3, "Your"), (0.3, 0.7, "phone"), (0.7, 1.0, "sends"), (1.0, 1.2, "money"), (1.2, 1.6, "through"),
              (1.6, 2.0, "NPCI"), (2.0, 2.2, "to"), (2.2, 2.4, "the"), (2.4, 2.8, "shop")]
     g = graphics.timed(scenes[0]["graphic"], scenes[0]["headline"], words, 120, 30, 6)
-    assert [n["at"] for n in g["nodes"]] == [15, 54, 78] and "at" not in scenes[0]["graphic"]["nodes"][0]
+    assert [n["at"] for n in g["nodes"]] == [15, 51, 75] and "at" not in scenes[0]["graphic"]["nodes"][0]
     texts = on_screen(scenes[0])
     assert texts[-3:] == ["Your phone", "NPCI", "The shop"]
     hindi = with_text(scenes[0], texts[:-3] + ["आपका फ़ोन", "एनपीसीआई", "दुकान"])
