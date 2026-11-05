@@ -1350,3 +1350,23 @@ def test_unfinished_formulas_are_dropped():
     e = check_scene({**base, "kind": "equation", "parts": [{"tex": "w", "label": ""}, {"tex": r"\leftarrow", "label": ""}]},
                     "", "", set())
     assert e["kind"] == "photo"
+
+
+def test_narration_is_speakable_and_typed_hats_are_repaired():
+    from blogwriter import graphics
+    from blogwriter.video import fix_tex, speakable
+    assert fix_tex(r"\betâ = (X^{T}X)^{-1}X^{T}y") == r"\hat{\beta} = (X^{T}X)^{-1}X^{T}y"
+    assert fix_tex("ŷ = wx + b") == r"\hat{y} = wx + b"
+    assert speakable(r"We model the predicted price \hat y as w times x") == "We model the predicted price y hat as w times x"
+    assert speakable(r"so \betâ shrinks, and \lambda grows; a rôle") == "so beta hat shrinks, and lambda grows; a rôle"
+    assert "\\" not in speakable(r"the cost \frac{1}{n} of it")
+    g = graphics.timed({"type": "versus", "nodes": [{"icon": "x", "label": "inflated slope"}, {"icon": "y", "label": "true slope"}]},
+                       "", [(9.0, 9.5, "inflated"), (9.6, 10.0, "true")], 400, 30, 6)
+    assert all(n["at"] <= 6 + 6 + 240 // 2 + 30 for n in g["nodes"]) and g["nodes"][0]["at"] < 200
+
+
+def test_grid_graphic_times_its_number():
+    from blogwriter import graphics
+    g = graphics.timed({"type": "grid", "icon": "users", "number": "46%", "label": "share"}, "", [(2.0, 2.4, "46")],
+                       200, 30, 6)
+    assert g["at"] == 66

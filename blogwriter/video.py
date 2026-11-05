@@ -6,6 +6,7 @@ files are stored and emailed, and a person reviews and uploads them.
     python -m blogwriter.video output/<run folder> [--no-email]     # (re)make the videos of a saved run"""
 import asyncio
 import hashlib
+import unicodedata
 import json
 import math
 import os
@@ -128,6 +129,8 @@ SCRIPT_PROMPT = """{shape}
 - {shots} scenes ("shots") in total. One shot is ONE spoken sentence of 8 to 24 words, 3 to 8 seconds on
   screen: the picture changes with every sentence, which is what makes it feel like video and not slides.
   End each act so it leads into the next ("But that was only half of it.").
+- The narration is read aloud by a voice: write maths in words ("y hat equals w times x plus b"), never LaTeX
+  or symbols in the narration.
 - Spoken style: short sentences, plain words, contrast and stakes. Name sources naturally ("Reuters reports").
   No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
@@ -536,7 +539,7 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         parts = []
         for p in sc.get("parts") or []:
             p = p if isinstance(p, dict) else {"tex": p, "label": ""}     # a piece sent as plain TeX
-            tex = str(p.get("tex", "")).strip()
+            tex = fix_tex(str(p.get("tex", "")).strip())
             if not tex or len(tex) > 80 or re.search(r"\\(href|url|includegraphics|html)", tex):
                 parts = []
                 break
@@ -560,7 +563,7 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         steps = []
         for st in (sc.get("steps") or [])[:5]:
             st = st if isinstance(st, dict) else {"tex": st, "note": ""}
-            tex = str(st.get("tex", "")).strip()
+            tex = fix_tex(str(st.get("tex", "")).strip())
             if tex and len(tex) <= 120 and tex_complete(tex) and \
                     not re.search(r"\\(href|url|includegraphics|html)", tex):
                 steps.append({"tex": tex, "note": words(st.get("note"), 5)})
@@ -591,6 +594,26 @@ def chart_kind(kind: str, items: List[dict]) -> tuple:
         if ok[k]:
             return k, items[:FIGURE_KINDS[k][1]]
     return "photo", []
+
+
+def fix_tex(tex: str) -> str:
+    r"""Repair a hat a model typed as a character (betâ, ŷ) instead of \hat{...}."""
+    tex = unicodedata.normalize("NFD", tex)
+    return re.sub(r"(\\[a-zA-Z]+|[a-zA-Z])\u0302", r"\\hat{\1}", tex)
+
+
+GREEK = ("alpha", "beta", "gamma", "delta", "epsilon", "theta", "lambda", "mu", "sigma", "pi", "rho", "omega", "nabla")
+
+
+def speakable(text: str) -> str:
+    r"""Narration is read aloud: LaTeX a model slipped into it becomes words (\hat{y} -> "y hat", \beta -> "beta")."""
+    text = unicodedata.normalize("NFD", text)
+    text = re.sub(r"\\hat\s*\{?\\?([A-Za-z]+)\}?|\\?([A-Za-z]+)\u0302(?![A-Za-z])", lambda m: f"{m.group(1) or m.group(2)} hat", text)
+    text = re.sub(r"\\(" + "|".join(GREEK) + r")\b", r"\1", text)
+    text = re.sub(r"\\partial", "d", text)
+    text = re.sub(r"\\[A-Za-z]+", "", text)
+    text = re.sub(r"[{}\\$]", "", text)
+    return unicodedata.normalize("NFC", re.sub(r"\s+", " ", text)).strip()
 
 
 def tex_complete(tex: str) -> bool:
@@ -732,17 +755,32 @@ class VideoMaker:
         def maths(p) -> int:
             return sum(1 for sc in (p.get("scenes") or [] if isinstance(p, dict) else [])
                        if isinstance(sc, dict) and check_scene(sc, allowed, quotes, countries)["kind"] in MATH_KINDS)
+        def spoken_words(p) -> int:
+            return sum(len(str(sc.get("narration", "")).split())
+                       for sc in (p.get("scenes") or [] if isinstance(p, dict) else []) if isinstance(sc, dict))
+
+        def score(p) -> tuple:
+            return (min(maths(p), need), min(spoken_words(p), words_needed))
+
+        # a lesson without its maths, or a 4 minute plan narrated in 90 seconds, is not the video; ask once more
         need = max(5, len(plan.get("scenes") or []) * 2 // 5) if brief.get("maths") else 0
-        if need and maths(plan) < need:      # a lesson without its maths is not the lesson; ask once more
-            self.log(f"[video] only {maths(plan)} usable maths shots (need {need}); rewriting the script")
+        words_needed = round(brief["minutes"] * 150 * 0.75)      # ~150 spoken words a minute
+        notes = []
+        if need and maths(plan) < need:
+            notes.append(f"it had only {maths(plan)} maths shots; this lesson needs at least {need} \"equation\", "
+                         f"\"graph\", \"derive\" or \"plot\" shots, each with its required fields filled in exactly")
+        if spoken_words(plan) < words_needed:
+            notes.append(f"its narration was only {spoken_words(plan)} words; the planned {brief['minutes']:g} minutes "
+                         f"need at least {words_needed} words, so give each shot a full sentence or two and explain "
+                         f"each idea properly")
+        if notes:
+            self.log(f"[video] first draft too thin ({'; '.join(n.split(';')[0] for n in notes)}); rewriting the script")
             try:
-                again = self.llm.complete_json(
-                    prompt + f"\n\nIMPORTANT: a first draft had only {maths(plan)} maths shots. This lesson needs at "
-                    f"least {need} \"equation\", \"graph\", \"derive\" or \"plot\" shots, each with its required "
-                    f"fields filled in exactly as described.", max_tokens=12000)
+                again = self.llm.complete_json(prompt + "\n\nIMPORTANT: a first draft fell short: " + "; and ".join(notes)
+                                               + ".", max_tokens=14000)
             except LLMError:
                 again = {}
-            if maths(again) > maths(plan) and len((again or {}).get("scenes") or []) >= 5:
+            if score(again) > score(plan) and len((again or {}).get("scenes") or []) >= 5:
                 plan = again
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:32]:
@@ -752,7 +790,7 @@ class VideoMaker:
                 act = str(sc.get("headline") or "")
                 continue
             act = str(sc.get("act") or "").strip() or act
-            narration = strip_unsupported_numbers(str(sc.get("narration", "")).strip(), allowed)
+            narration = strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()), allowed)
             if not narration:
                 continue
             scene = check_scene(sc, allowed, quotes, countries)

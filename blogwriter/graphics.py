@@ -214,13 +214,14 @@ def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps
     span = max(30, int(frames * 0.6))
     for k, piece in enumerate(pieces):
         guess = lead + 6 + round(span * k / max(1, len(pieces)))
-        piece["at"] = when(piece["label"]) if when(piece["label"]) is not None else guess
+        hit = when(piece["label"])          # on its word, but never more than ~1 s after its place in the build
+        piece["at"] = min(hit, guess + 30) if hit is not None else guess
     if g["type"] in ("flow", "stack"):
         for a, b in zip(g["nodes"], g["nodes"][1:]):
             b["at"] = max(b["at"], a["at"] + 8)
     if g["type"] == "grid":
         digits = re.findall(r"\d+", g["number"])[0]
-        g["at"] = next((f for f, w in spoken if digits in w), lead + 10)
+        g["at"] = next((round(a * fps) + lead for a, _, w in words if digits in w), lead + 10)
     if g["type"] == "kinetic":
         g["words"] = []
         for k, w in enumerate(headline.split()):
