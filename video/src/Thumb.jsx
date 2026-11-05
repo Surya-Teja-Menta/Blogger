@@ -31,6 +31,8 @@ export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null
         </div>
       </div>
       <div style={{position: "absolute", left: 0, bottom: 0, width: "100%", height: 14, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`}}/>
+      <Img src={staticFile("logo.png")} style={{position: "absolute", right: 28, bottom: 28, width: 110, height: 110,
+                                               filter: "drop-shadow(0 6px 24px rgba(0,0,0,.5))"}}/>
     </AbsoluteFill>
   );
 };

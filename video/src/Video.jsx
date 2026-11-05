@@ -1,7 +1,7 @@
 // The whole video: shots joined by the theme's transitions, act stings, the channel badge, progress, captions and
 // the film finish on top. Rendered silently; blogwriter/video.py lays the mixed narration, music and effects on after.
 import React from "react";
-import {AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig} from "remotion";
+import {AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
 import {TransitionSeries, springTiming} from "@remotion/transitions";
 import {wipe} from "@remotion/transitions/wipe";
 import {flip} from "@remotion/transitions/flip";
@@ -27,7 +27,8 @@ const cut = (name, width, height) => {
 const Badge = ({channel, vertical}) => (
   <div style={{position: "absolute", left: vertical ? 50 : 70, top: vertical ? 120 : 56, display: "flex", alignItems: "center",
                gap: 14, fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 30 : 24, letterSpacing: 4, color: C.text}}>
-    <div style={{width: 14, height: 14, borderRadius: 7, background: C.hot, boxShadow: `0 0 16px ${C.hot}`}}/>
+    <Img src={staticFile("logo.png")} style={{width: vertical ? 64 : 52, height: vertical ? 64 : 52,
+                                             filter: `drop-shadow(0 4px 14px ${alpha("#000000", 0.35)})`}}/>
     {channel.toUpperCase()}
   </div>
 );
@@ -43,10 +44,10 @@ const Caption = ({captions, vertical}) => {
   const pop = clamp((frame - c.from) / 5);
   let acc = 0;
   return (
-    <div style={{position: "absolute", left: 50, right: 50, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 90,
+    <div style={{position: "absolute", left: 50, right: 50, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
                  textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
       <span style={{display: "inline-block", padding: "14px 26px", borderRadius: 24, background: alpha(C.light ? "#ffffff" : "#000000", 0.55),
-                    backdropFilter: "blur(10px)", fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 62 : 46,
+                    backdropFilter: "blur(10px)", fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 62 : 40,
                     lineHeight: 1.35, color: C.text}}>
         {words.map((w, k) => {
           const start = acc;

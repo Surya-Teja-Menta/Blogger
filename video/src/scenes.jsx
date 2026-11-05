@@ -2,7 +2,7 @@
 // Every shot moves the whole time: a moving background or photo, a slow camera drift, and reveals timed to the
 // spoken word (s.cue: the frame the figure is said; s.hcue: the frame the highlighted word is said).
 import React from "react";
-import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from "remotion";
+import {AbsoluteFill, Img, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
 import {geoCentroid, geoGraticule10, geoInterpolate, geoNaturalEarth1, geoPath} from "d3-geo";
 import {feature} from "topojson-client";
 import atlas from "world-atlas/countries-50m.json";
@@ -649,6 +649,9 @@ export const OutroScene = ({s, i, vertical}) => {
           </div>
         </div>
         <div style={{textAlign: vertical ? "center" : "left", maxWidth: 760}}>
+          <Img src={staticFile("logo.png")} style={{width: 150, height: 150, marginBottom: 30, opacity: p,
+                                                   transform: `scale(${0.7 + 0.3 * p}) rotate(${(1 - p) * -12}deg)`,
+                                                   filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
           <Words text={s.kicker} size={110} delay={10} align={vertical ? "center" : "left"} highlight={s.highlight} maxWidth={760}/>
           <div style={{display: "inline-flex", alignItems: "center", gap: 18, marginTop: 50, padding: "26px 54px",
                        borderRadius: 60, background: press > 0.5 ? alpha(C.text, 0.15) : C.hot,

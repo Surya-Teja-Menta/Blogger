@@ -80,7 +80,7 @@ class Settings:
     providers: List[str] = field(default_factory=lambda: list(DEFAULT_PROVIDERS))
     output_dir: str = "output"
     # languages of the video narration: English drives the long video, the others become extra audio tracks
-    video_langs: List[str] = field(default_factory=lambda: ["en", "hi", "te"])
+    video_langs: List[str] = field(default_factory=lambda: ["en"])   # add hi,te via VIDEO_LANGS
     channel_name: str = "Researched"     # shown as the badge in every video
     pixabay_key: str = ""                # optional: more free stock footage for the videos
     # step 5: results are emailed over SMTP (587 = STARTTLS, 465 = SSL)
@@ -147,7 +147,7 @@ class Settings:
             max_tokens=int(e("MAX_TOKENS", "4000")),
             providers=_split(e("LLM_PROVIDERS", "")) or list(DEFAULT_PROVIDERS),
             output_dir=e("OUTPUT_DIR", "output"),
-            video_langs=_split(e("VIDEO_LANGS", "")) or ["en", "hi", "te"],
+            video_langs=_split(e("VIDEO_LANGS", "")) or ["en"],
             channel_name=e("CHANNEL_NAME", "") or "Researched",
             pixabay_key=e("PIXABAY_API_KEY", ""),
             smtp_host=e("SMTP_HOST", ""),

@@ -938,9 +938,15 @@ class VideoMaker:
                         "steps": graphics.timed_steps(s.get("steps", []), spoken.get(("en", "long", i), []), frames[i],
                                                       FPS, LEAD)}
                        for i, s in enumerate(scenes)]
+        # the English captions are part of the picture: short lines, timed to the spoken words
+        long_captions = []
+        for i in range(n_long):
+            for ca, cz, line in word_lines(spoken.get(("en", "long", i), []), 0, 42):
+                long_captions.append({"from": starts[i] + LEAD + round(ca * FPS),
+                                      "to": starts[i] + LEAD + round(cz * FPS), "text": line})
         props = os.path.join(job, "long.json")
         with open(props, "w", encoding="utf-8") as f:
-            json.dump({"scenes": long_scenes, "captions": [], "channel": self.s.channel_name, "theme": theme,
+            json.dump({"scenes": long_scenes, "captions": long_captions, "channel": self.s.channel_name, "theme": theme,
                        "thumbText": plan["thumb_text"], "thumbHighlight": plan["thumb_highlight"]}, f, ensure_ascii=False)
         files = {}
         for lang in texts:
@@ -1064,7 +1070,7 @@ def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits
     parts = [f"POSTING GUIDE - {plan['title']}\n", "Nothing was posted automatically. Review the videos first.\n",
              "LONG VIDEO (YouTube)",
              "1. YouTube Studio > Create > Upload videos > long_video_en.mp4. Use the English title and description "
-             "below and thumbnail.png. Upload subtitles_en.srt under Subtitles.",
+             "below and thumbnail.png. English captions are already in the picture; subtitles_en.srt is optional (CC).",
              "2. After it is processed: Studio > Subtitles > Add language (Hindi, Telugu, ...). For each language: "
              "Audio > Add > upload audio_track_<lang>.mp3; Subtitles > Upload file > subtitles_<lang>.srt; "
              "Title & description > add the translated text below.",
