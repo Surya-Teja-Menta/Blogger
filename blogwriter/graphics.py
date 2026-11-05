@@ -130,6 +130,17 @@ def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log:
     return sum(1 for s in scenes if s.get("graphic"))
 
 
+def no_stock_photos(scenes: List[dict]) -> int:
+    """For lessons and concepts: a picture shot the art director left without a graphic becomes the headline as
+    animated type instead of a stock photo search (which, for ideas, returns unrelated pictures)."""
+    n = 0
+    for s in scenes:
+        if s["kind"] in ("photo", "hook") and not s.get("graphic") and not s.get("video") and s.get("headline"):
+            s["graphic"] = {"type": "kinetic", "nodes": []}
+            n += 1
+    return n
+
+
 def labels(g: Optional[dict]) -> List[str]:
     """The graphic's words, in a fixed order, for translation."""
     if not g:

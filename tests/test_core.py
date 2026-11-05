@@ -1312,3 +1312,13 @@ def test_derive_and_graph_shots_are_checked_timed_and_translated():
                                   {"tex": "c", "note": ""}], [(0.2, 0.5, "derivative")], 300, 30, 6)
     ats = [s["at"] for s in steps]
     assert ats == sorted(ats) and all(b - a >= 20 for a, b in zip(ats, ats[1:])) and ats[-1] <= 300
+
+
+def test_lessons_use_type_not_unrelated_stock_photos():
+    from blogwriter import graphics
+    scenes = [{"kind": "photo", "headline": "Guessing line"}, {"kind": "photo", "headline": "x", "graphic": {"type": "hub"}},
+              {"kind": "plot", "headline": "Fit"}, {"kind": "hook", "headline": ""}]
+    assert graphics.no_stock_photos(scenes) == 1
+    assert scenes[0]["graphic"] == {"type": "kinetic", "nodes": []} and scenes[1]["graphic"]["type"] == "hub"
+    assert "graphic" not in scenes[2] and "graphic" not in scenes[3]
+    assert graphics.timed(scenes[0]["graphic"], "Guessing line", [], 120, 30, 6)["words"]

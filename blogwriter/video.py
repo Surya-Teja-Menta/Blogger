@@ -830,6 +830,10 @@ class VideoMaker:
                               f"{brief['mood']} {brief['tone']}", self.log)
         self.log(f"[video] {len(scenes)} scenes ({', '.join(s['kind'] for s in scenes)}), Short of {len(beats)} beats")
         self.art_direct(scenes)
+        if brief["style"] in ("education", "concept"):
+            n = graphics.no_stock_photos(scenes)
+            if n:
+                self.log(f"[graphics] {n} picture shot(s) shown as animated type, not stock photos")
 
         out = os.path.abspath(os.path.join(run_dir, "video"))
         job = os.path.join(VIDEO_APP, "public", "job")
