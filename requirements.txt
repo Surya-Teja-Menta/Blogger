@@ -9,5 +9,6 @@ numpy         # music and sound effects for the videos are generated, not downlo
 imageio-ffmpeg  # a full ffmpeg for the video soundtrack (filters Remotion's build lacks)
 edge-tts      # free narration voices for the videos (English, Hindi, Telugu, ...)
 boto3         # upload to S3-compatible object storage (Cloudflare R2 / Backblaze B2)
+Pillow        # contact sheet for the video quality check
 # optional: PDF output (needs GTK/Pango; HTML report is always written)
 # weasyprint

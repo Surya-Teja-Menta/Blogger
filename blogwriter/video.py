@@ -26,7 +26,7 @@ from .critic import review, summary
 from .footage import CLIP_SECONDS, find_clip, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
-from . import design, graphics
+from . import design, graphics, mathexpr
 from .research import domain
 from .storage import prune_prefix, upload_run
 from .web import UA
@@ -44,8 +44,8 @@ SHORT_MAX_SECONDS = 58
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
 KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
-         "quote", "equation", "plot")
-MATH_KINDS = ("equation", "plot")      # lesson shots drawn from maths, not from facts or photos
+         "quote", "equation", "plot", "graph", "derive")
+MATH_KINDS = ("equation", "plot", "graph", "derive")      # lesson shots drawn from maths, not from facts or photos
 PLOTS = ("scatter", "fit", "residuals", "squares", "descent")
 FIGURE_KINDS = {"compare": (2, 3), "bars": (3, 6), "line": (3, 8), "donut": (2, 4), "kpis": (3, 4)}  # items (min, max)
 CHART_KINDS = ("stat", "hook", "compare", "bars", "line", "donut", "kpis")      # a hit sound lands under these
@@ -107,8 +107,11 @@ THE PLAN FOR THIS VIDEO (follow it; it was made for this subject)
 - Show any process as a "steps" shot and any set of numbers as a chart."""
 
 MATHS_RULES = r"""
-- The MATHS INTUITION is the heart of this video: at least half of all shots are "equation" or "plot" shots, and
-  at least 3 are "equation" shots. Always picture first, then the formula that says the same thing. For fitting a
+- The MATHS INTUITION is the heart of this video: at least half of all shots are maths shots ("equation", "graph",
+  "derive", "plot"), with at least 3 "equation" or "derive" shots and at least 2 "graph" shots. Always picture
+  first, then the formula that says the same thing. Use "graph" to SHOW behaviour: sweep a parameter to show what
+  it does, a tangent for rates and gradients, the area for integrals, totals and probabilities. Use "derive" for
+  algebra a viewer should follow step by step, each step with a note on what changed. For fitting a
   line, teach in this order: the data (scatter), the idea of a line through it (fit), the model formula, each
   point's error (residuals), why we square the errors (squares), the cost formula (e.g.
   J = \frac{1}{n}\sum (y_i - \hat{y}_i)^2), how the cost is minimised (descent), and the update rule (e.g.
@@ -158,6 +161,15 @@ chart: every figure on screen must be in the facts, written the same way.
               left to right, e.g. [{{"tex": "\\\\hat{{y}}", "label": "prediction"}}, {{"tex": "=", "label": ""}},
               {{"tex": "w", "label": "slope"}}, {{"tex": "x", "label": "input"}}, {{"tex": "+", "label": ""}},
               {{"tex": "b", "label": "intercept"}}]. Label at most 4 pieces; keep \\\\frac and \\\\sum inside one piece.
+- "graph":    (lessons) an animated graph of 1 to 3 functions of x. Needs "graph": {{"curves": [{{"fn": the function
+              in plain maths using only x, a, numbers, + - * / ^, brackets, sin cos tan exp log sqrt abs, pi, e
+              (always write * for multiplication: "a*x^2", "exp(-x^2/2)"), "tex": its KaTeX label, e.g.
+              "y = ax^2"}}], "x": [xmin, xmax], "param": {{"from": 0.5, "to": 3}} (only if a curve uses a: a then
+              slides between these values while the narration says what it does), "mark": "tangent" (a point slides
+              along the first curve with its tangent and slope), "area" (the area under it fills in, with its value),
+              "point" (a point traces it with its coordinates) or ""}}; plus "xlabel" and "ylabel" (max 3 words).
+- "derive":   (lessons) a working written out line by line. Needs "steps": [{{"tex": one full KaTeX line,
+              "note": what this step did, max 5 words, e.g. "take the derivative"}}], 2 to 5 steps.
 - "plot":     (lessons on fitting data) an animated plot of sample data. Needs "plot": one of "scatter" (the data
               points), "fit" (a line turning into the best fit), "residuals" (each point's error to the line),
               "squares" (each error drawn as a square, their total shrinking as the line improves), "descent"
@@ -535,6 +547,23 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
     elif kind == "plot":
         out["plot"] = sc.get("plot") if sc.get("plot") in PLOTS else "fit"
         out["xlabel"], out["ylabel"] = words(sc.get("xlabel"), 3) or "x", words(sc.get("ylabel"), 3) or "y"
+    elif kind == "graph":
+        graph = mathexpr.check_graph(sc.get("graph"))
+        if graph:
+            out["graph"] = graph
+            out["xlabel"], out["ylabel"] = words(sc.get("xlabel"), 3) or "x", words(sc.get("ylabel"), 3) or "y"
+        else:
+            out["kind"] = "photo"
+    elif kind == "derive":
+        steps = []
+        for st in (sc.get("steps") or [])[:5]:
+            st = st if isinstance(st, dict) else {"tex": st, "note": ""}
+            tex = str(st.get("tex", "")).strip()
+            if tex and len(tex) <= 120 and not re.search(r"\\(href|url|includegraphics|html)", tex):
+                steps.append({"tex": tex, "note": words(st.get("note"), 5)})
+        out["steps"] = steps
+        if len(steps) < 2:
+            out["kind"] = "photo"
     elif kind == "chapter" and not out["headline"]:
         out["kind"] = "photo"
     if not _verified(out["headline"], allowed):
@@ -617,7 +646,8 @@ def on_screen(scene: dict) -> List[str]:
     return ([scene["headline"], scene["kicker"], scene["label"], scene.get("quote", "")] +
             [i["label"] for i in scene.get("items", [])] + [e["label"] for e in scene.get("events", [])] +
             graphics.labels(scene.get("graphic")) + [p["label"] for p in scene.get("parts", [])] +
-            ([scene["xlabel"], scene["ylabel"]] if scene["kind"] == "plot" else []))
+            [st["note"] for st in scene.get("steps", [])] +
+            ([scene["xlabel"], scene["ylabel"]] if scene["kind"] in ("plot", "graph") else []))
 
 
 def with_text(scene: dict, texts: List[str]) -> dict:
@@ -632,7 +662,9 @@ def with_text(scene: dict, texts: List[str]) -> dict:
         rest = graphics.relabel(s["graphic"], rest)
     for p in s.get("parts", []):
         p["label"], rest = rest[0], rest[1:]
-    if s["kind"] == "plot":
+    for st in s.get("steps", []):
+        st["note"], rest = rest[0], rest[1:]
+    if s["kind"] in ("plot", "graph"):
         s["xlabel"], s["ylabel"] = rest[:2]
     s["highlight"] = ""          # the marked word cannot be matched across languages
     s.pop("chapter", None)       # act titles belong to the long video
@@ -705,11 +737,15 @@ class VideoMaker:
             scenes.append(scene)
         if len(scenes) < 5:
             raise LLMError("the video script came back too short")
-        bad = typeset_errors([p["tex"] for sc in scenes for p in sc.get("parts", [])])
+        def texs(sc):
+            return [p["tex"] for p in sc.get("parts", []) + sc.get("steps", []) +
+                    (sc.get("graph") or {}).get("curves", []) if p["tex"]]
+        bad = typeset_errors([t for sc in scenes for t in texs(sc)])
         for sc in scenes:             # a formula KaTeX cannot typeset turns the shot into a plain one
-            if any(p["tex"] in bad for p in sc.get("parts", [])):
-                self.log(f"[video] formula skipped: {' '.join(p['tex'] for p in sc['parts'])[:80]}")
-                sc["kind"], sc["parts"] = "photo", []
+            if any(t in bad for t in texs(sc)):
+                self.log(f"[video] formula skipped ({sc['kind']}): {' | '.join(texs(sc))[:100]}")
+                sc["kind"], sc["parts"], sc["steps"] = "photo", [], []
+                sc.pop("graph", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
         outro = strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed)
         if not 8 <= len(outro.split()) <= 60:
@@ -874,6 +910,8 @@ class VideoMaker:
                         "graphic": graphics.timed(s.get("graphic"), s.get("headline", ""), spoken.get(("en", "long", i), []),
                                                   frames[i], FPS, LEAD),
                         "parts": graphics.timed_parts(s.get("parts", []), spoken.get(("en", "long", i), []), frames[i],
+                                                      FPS, LEAD),
+                        "steps": graphics.timed_steps(s.get("steps", []), spoken.get(("en", "long", i), []), frames[i],
                                                       FPS, LEAD)}
                        for i, s in enumerate(scenes)]
         props = os.path.join(job, "long.json")
@@ -934,7 +972,8 @@ class VideoMaker:
                                         hcue=cue(words, visual.get("highlight", "")),
                                         graphic=graphics.timed(visual.get("graphic"), visual.get("headline", ""), words,
                                                                fr[j], FPS, LEAD),
-                                        parts=graphics.timed_parts(visual.get("parts", []), words, fr[j], FPS, LEAD))
+                                        parts=graphics.timed_parts(visual.get("parts", []), words, fr[j], FPS, LEAD),
+                                        steps=graphics.timed_steps(visual.get("steps", []), words, fr[j], FPS, LEAD))
                 for ca, cz, line in word_lines(words, 0, 30):
                     captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
                                      "text": line})

@@ -4,7 +4,7 @@
 import React from "react";
 import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {icons} from "lucide";
-import {Backdrop, Camera, Kicker, Particles, Words, clamp, countUp, ease} from "./fx";
+import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease} from "./fx";
 import {C, FONT, SERIES, alpha} from "./theme";
 
 const pascal = (name) => String(name || "").replace(/(^|-)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
@@ -85,13 +85,7 @@ const Link = ({a, b, at, bend = 0.12, color, dashed}) => {
   );
 };
 
-const Header = ({s, vertical}) => (
-  <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: vertical ? 250 : 112}}>
-    <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
-    <Words text={s.headline} highlight={s.highlight} size={vertical ? 84 : 78} delay={2} markAt={s.hcue}
-           maxWidth={vertical ? 940 : 1500}/>
-  </div>
-);
+const Header = ({s, vertical}) => <Title s={s} vertical={vertical} maxWidth={vertical ? 940 : 1500}/>;
 
 const Frame = ({s, i, vertical, children, header = true, hue}) => (
   <AbsoluteFill>

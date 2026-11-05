@@ -175,6 +175,21 @@ def timed_parts(parts: List[dict], words: List[tuple], frames: int, fps: int, le
     return out
 
 
+def timed_steps(steps: List[dict], words: List[tuple], frames: int, fps: int, lead: int) -> List[dict]:
+    """A derivation's lines with `at`: spread over the first 70% of the shot, or when the note's words are said
+    if that is later; always in order and at least 20 frames apart, so each line is written before the next."""
+    when = _finder(words, fps, lead)
+    out, last = [], None
+    span = max(1, len(steps) - 1)
+    for k, st in enumerate(steps):
+        at = lead + 4 + round((frames * 0.7 - lead) * k / span) if k else lead + 4
+        hit = when(st.get("note", "")) if st.get("note") else None
+        at = max(at, hit or 0, (last + 20) if last is not None else 0)
+        out.append({**st, "at": at})
+        last = at
+    return out
+
+
 def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps: int, lead: int) -> Optional[dict]:
     """A copy of the graphic with `at` (the frame its word is spoken) on every piece; pieces without a spoken
     match are spread over the first part of the shot, and a flow or stack never builds out of order."""

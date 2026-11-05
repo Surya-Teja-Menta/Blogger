@@ -61,6 +61,17 @@ export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
   const frame = useCurrentFrame();
   const p = useEnter(delay);
   if (!text) return null;
+  center = center || C.title === "center";
+  if (C.kicker === "rule") {           // a design may prefer a drawn rule and spaced capitals to the glass pill
+    return (
+      <div style={{display: "flex", alignItems: "center", gap: size * 0.6, justifyContent: center ? "center" : "flex-start",
+                   marginBottom: size * 0.9, opacity: p}}>
+        <div style={{width: size * 2.4 * ease(p), height: 3, background: C.accent, boxShadow: `0 0 12px ${alpha(C.accent, 0.6)}`}}/>
+        <div style={{fontFamily: FONT.body, fontWeight: 800, fontSize: size, letterSpacing: size * 0.3, color: C.accent,
+                     textTransform: "uppercase", clipPath: `inset(0 ${(1 - clamp(p)) * 100}% 0 0)`}}>{text}</div>
+      </div>
+    );
+  }
   return (
     <div style={{display: "flex", justifyContent: center ? "center" : "flex-start", marginBottom: size * 0.9}}>
       <div style={{display: "inline-flex", alignItems: "center", gap: size * 0.5, padding: `${size * 0.35}px ${size * 0.8}px`,
@@ -72,6 +83,19 @@ export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
         <div style={{fontFamily: FONT.body, fontWeight: 800, fontSize: size, letterSpacing: size * 0.18, color: C.text,
                      textTransform: "uppercase"}}>{text}</div>
       </div>
+    </div>
+  );
+};
+
+// the headline block at the top of a shot; the design decides left or centred
+export const Title = ({s, vertical, top, size, maxWidth}) => {
+  const center = C.title === "center";
+  return (
+    <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: top ?? (vertical ? 250 : 112),
+                 display: "flex", flexDirection: "column", alignItems: center ? "center" : "flex-start"}}>
+      <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
+      <Words text={s.headline} highlight={s.highlight} size={size || (vertical ? 84 : 78)} delay={2} markAt={s.hcue}
+             maxWidth={maxWidth || (vertical ? 940 : 1600)} align={center ? "center" : "left"}/>
     </div>
   );
 };

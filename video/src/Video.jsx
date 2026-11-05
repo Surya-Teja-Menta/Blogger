@@ -78,7 +78,8 @@ export const Video = ({scenes, captions = [], channel = "", theme = null}) => {
             ...s.graphic, at: late(s.graphic.at), words: (s.graphic.words || []).map(late),
             center: s.graphic.center && {...s.graphic.center, at: late(s.graphic.center.at)},
             nodes: (s.graphic.nodes || []).map((nd) => ({...nd, at: late(nd.at)}))},
-            parts: s.parts && s.parts.map((p) => ({...p, at: late(p.at)}))} : s;
+            parts: s.parts && s.parts.map((p) => ({...p, at: late(p.at)})),
+            steps: s.steps && s.steps.map((p) => ({...p, at: late(p.at)}))} : s;
           return (
             <React.Fragment key={i}>
               {i > 0 && <TransitionSeries.Transition presentation={cut(C.cuts[i % C.cuts.length], width, height)}

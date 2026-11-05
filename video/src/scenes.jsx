@@ -6,21 +6,16 @@ import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from
 import {geoCentroid, geoGraticule10, geoInterpolate, geoNaturalEarth1, geoPath} from "d3-geo";
 import {feature} from "topojson-client";
 import atlas from "world-atlas/countries-50m.json";
-import {Backdrop, Camera, Glass, Kicker, Particles, PhotoCard, Plate, Shade, Words, clamp, countUp, ease, useEnter} from "./fx";
+import {Backdrop, Camera, Glass, Kicker, Particles, PhotoCard, Plate, Shade, Title, Words, clamp, countUp, ease, useEnter} from "./fx";
 import {C, FONT, SERIES, alpha} from "./theme";
-import {EquationScene, PlotScene} from "./math";
+import {DeriveScene, EquationScene, GraphScene, PlotScene} from "./math";
 
 const pad = (v) => (v ? {left: 70, right: 70} : {left: 120, right: 120});
 const media = (s) => s.video || (s.images && s.images[0]);
 
 // headline block used at the top of chart shots
-const Head = ({s, vertical, top}) => (
-  <div style={{position: "absolute", ...pad(vertical), top: top ?? (vertical ? 250 : 90)}}>
-    <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
-    <Words text={s.headline} highlight={s.highlight} size={vertical ? 92 : 88} delay={2} markAt={s.hcue}
-           maxWidth={vertical ? 940 : 1600}/>
-  </div>
-);
+const Head = ({s, vertical, top}) => <Title s={s} vertical={vertical} top={top ?? (vertical ? 250 : 90)}
+                                              size={vertical ? 92 : 88}/>;
 
 // ---- photo / hook: three layouts so consecutive photo shots never look the same -------------------------
 export const PhotoScene = ({s, i, vertical}) => {
@@ -667,6 +662,6 @@ export const OutroScene = ({s, i, vertical}) => {
   );
 };
 
-export const SCENES = {equation: EquationScene, plot: PlotScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
+export const SCENES = {equation: EquationScene, plot: PlotScene, graph: GraphScene, derive: DeriveScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
                        line: LineScene, donut: DonutScene, kpis: KpiScene, timeline: TimelineScene, steps: StepsScene,
                        map: MapScene, list: ListScene, quote: QuoteScene, chapter: ChapterScene, outro: OutroScene};

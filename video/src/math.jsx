@@ -5,8 +5,9 @@ import React, {useEffect, useState} from "react";
 import {AbsoluteFill, continueRender, delayRender, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import {Backdrop, Camera, Kicker, Words, clamp, ease} from "./fx";
+import {Backdrop, Camera, Title, clamp, ease} from "./fx";
 import {C, FONT, SERIES, alpha} from "./theme";
+import {compile} from "./expr";
 
 // KaTeX loads its fonts lazily; hold the frame until they are in, or the first frames show a fallback serif
 function useMathFonts() {
@@ -21,13 +22,7 @@ const Tex = ({tex, color}) => (
   <span style={{color}} dangerouslySetInnerHTML={{__html: katex.renderToString(tex, {throwOnError: false})}}/>
 );
 
-const Head = ({s, vertical}) => (
-  <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: vertical ? 250 : 112}}>
-    <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
-    <Words text={s.headline} highlight={s.highlight} size={vertical ? 80 : 72} delay={2} markAt={s.hcue}
-           maxWidth={vertical ? 940 : 1600}/>
-  </div>
-);
+const Head = ({s, vertical}) => <Title s={s} vertical={vertical} size={vertical ? 80 : 72}/>;
 
 // faint symbols drifting behind, like a blackboard full of earlier working
 const Symbols = () => {
@@ -248,6 +243,214 @@ export const PlotScene = ({s, i, vertical}) => {
             </div>
           </div>
         )}
+      </Camera>
+    </AbsoluteFill>
+  );
+};
+
+// ---- graph: any function of x, drawn on; a parameter a can sweep (the curve reshapes live) and a mark can
+// trace it: a point, its tangent with the slope, or the area under it with the integral so far ------------------
+const nice = (lo, hi, n = 5) => {
+  const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((v) => v >= raw) || raw;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(Math.abs(v) < step / 1e6 ? 0 : v);
+  return out;
+};
+const fmt = (v) => (!Number.isFinite(v) ? "-" : Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2));
+
+export const GraphScene = ({s, i, vertical}) => {
+  useMathFonts();
+  const frame = useCurrentFrame();
+  const {width, height} = useVideoConfig();
+  const g = s.graph || {curves: [{fn: "x^2", tex: "y = x^2"}], x: [-3, 3]};
+  const T = s.frames || 180;
+  const fns = g.curves.map((c) => {
+    try { return compile(c.fn); } catch (e) { return () => NaN; }
+  });
+  const [x0, x1] = g.x;
+  const pa = g.param || {from: 1, to: 1};
+  const build = ease(clamp((frame - T * 0.32) / (T * 0.45)));
+  const a = pa.from + (pa.to - pa.from) * build;
+  // the y range covers every curve over the whole sweep, trimmed of spikes, so the axes never jump
+  const ys = [];
+  [pa.from, (pa.from + pa.to) / 2, pa.to].forEach((av) => fns.forEach((f) => {
+    for (let k = 0; k <= 120; k++) {
+      const y = f(x0 + ((x1 - x0) * k) / 120, av);
+      if (Number.isFinite(y)) ys.push(y);
+    }
+  }));
+  ys.sort((p, q) => p - q);
+  let lo = ys.length ? ys[Math.floor(ys.length * 0.02)] : -1;
+  let hi = ys.length ? ys[Math.max(0, Math.ceil(ys.length * 0.98) - 1)] : 1;
+  if (lo > 0 && lo < (hi - lo) * 0.6) lo = 0;
+  if (hi < 0 && -hi < (hi - lo) * 0.6) hi = 0;
+  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  const padY = (hi - lo) * 0.1;
+  lo -= padY; hi += padY;
+  const box = vertical ? {x0: 140, x1: 980, y0: 640, y1: 1440} : {x0: 230, x1: 1360, y0: 330, y1: 960};
+  const mark = SERIES[1] || C.cool;                        // the tangent and readings: a colour unlike the first curve
+  const X = (x) => box.x0 + ((x - x0) / (x1 - x0)) * (box.x1 - box.x0);
+  const Y = (y) => box.y1 - ((y - lo) / (hi - lo)) * (box.y1 - box.y0);
+  const inY = (y) => Number.isFinite(y) && y >= lo && y <= hi;
+  const axisX = lo <= 0 && hi >= 0 ? Y(0) : box.y1;
+  const axisY = x0 <= 0 && x1 >= 0 ? X(0) : box.x0;
+  const axes = ease((frame - 2) / 18);
+  const path = (f, av) => {
+    let d = "", pen = false;
+    for (let k = 0; k <= 240; k++) {
+      const x = x0 + ((x1 - x0) * k) / 240, y = f(x, av);
+      if (!inY(y)) { pen = false; continue; }
+      d += `${pen ? "L" : "M"}${X(x).toFixed(1)},${Y(y).toFixed(1)}`;
+      pen = true;
+    }
+    return d;
+  };
+  const f0 = fns[0];
+  const mx = x0 + (x1 - x0) * (0.08 + 0.84 * build);       // where the mark is
+  const my = f0(mx, a);
+  const h = (x1 - x0) / 2000;
+  const slope = (f0(mx + h, a) - f0(mx - h, a)) / (2 * h);
+  let area = 0, areaPath = "";
+  if (g.mark === "area") {
+    let prev = null;
+    for (let k = 0; k <= 160; k++) {
+      const x = x0 + ((mx - x0) * k) / 160, y = f0(x, a);
+      if (!Number.isFinite(y)) continue;
+      if (prev) area += ((prev[1] + y) / 2) * (x - prev[0]);
+      prev = [x, y];
+      const yc = Math.max(lo, Math.min(hi, y));
+      areaPath += `${areaPath ? "L" : `M${X(x).toFixed(1)},${axisX.toFixed(1)} L`}${X(x).toFixed(1)},${Y(yc).toFixed(1)}`;
+    }
+    if (prev) areaPath += `L${X(prev[0]).toFixed(1)},${axisX.toFixed(1)} Z`;
+  }
+  const markOn = g.mark && frame > T * 0.3 ? clamp((frame - T * 0.3) / 10) : 0;
+  const readout = g.mark === "tangent" ? `\\frac{dy}{dx} = ${fmt(slope)}` : g.mark === "area" ? `\\int = ${fmt(area)}`
+    : g.mark === "point" ? `(${fmt(mx)},\\ ${fmt(my)})` : "";
+  const panel = {fontSize: vertical ? 50 : 46, padding: "14px 28px", borderRadius: 18, background: alpha(C.panel, 0.88),
+                 border: `2px solid ${alpha(C.accent, 0.4)}`, color: C.text, whiteSpace: "nowrap"};
+  return (
+    <AbsoluteFill>
+      <Backdrop word="" i={i}/>
+      <Symbols/>
+      <Camera i={i} amount={0.4}>
+        <Head s={s} vertical={vertical}/>
+        {/* a calm plate behind the plot, so a busy moving background never fights the curves */}
+        <div style={{position: "absolute", left: box.x0 - 90, top: box.y0 - 40, width: box.x1 - box.x0 + 150,
+                     height: box.y1 - box.y0 + 110, borderRadius: 28, background: alpha(C.bg, 0.72 * axes),
+                     border: `1.5px solid ${alpha(C.text, 0.06 * axes)}`}}/>
+        <svg width={width} height={height} style={{position: "absolute"}}>
+          <g opacity={axes}>
+            {nice(x0, x1).map((v, k) => (
+              <g key={`x${k}`}>
+                <line x1={X(v)} x2={X(v)} y1={box.y0} y2={box.y1} stroke={alpha(C.text, 0.06)} strokeWidth={2}/>
+                <text x={X(v)} y={axisX + 40} textAnchor="middle" fill={C.muted}
+                      fontFamily={FONT.body} fontWeight={600} fontSize={26}>{+v.toFixed(4)}</text>
+              </g>
+            ))}
+            {nice(lo, hi).map((v, k) => (
+              <g key={`y${k}`}>
+                <line x1={box.x0} x2={box.x1} y1={Y(v)} y2={Y(v)} stroke={alpha(C.text, 0.06)} strokeWidth={2}/>
+                <text x={axisY - 16} y={Y(v) + 9} textAnchor="end" fill={C.muted}
+                      fontFamily={FONT.body} fontWeight={600} fontSize={26}>{+v.toFixed(4)}</text>
+              </g>
+            ))}
+            <line x1={box.x0} x2={box.x0 + (box.x1 - box.x0) * axes} y1={axisX} y2={axisX} stroke={alpha(C.text, 0.7)} strokeWidth={3}/>
+            <line x1={axisY} x2={axisY} y1={box.y1} y2={box.y1 - (box.y1 - box.y0) * axes} stroke={alpha(C.text, 0.7)} strokeWidth={3}/>
+            <text x={box.x1} y={axisX - 16} textAnchor="end" fill={C.muted} fontFamily={FONT.body} fontWeight={800} fontSize={32}>{s.xlabel || "x"}</text>
+            <text x={axisY + 14} y={box.y0 + 10} fill={C.muted} fontFamily={FONT.body} fontWeight={800} fontSize={32}>{s.ylabel || "y"}</text>
+          </g>
+          {g.mark === "area" && markOn > 0 && <path d={areaPath} fill={alpha(C.accent, 0.22 * markOn)} stroke="none"/>}
+          {fns.map((f, k) => {
+            const col = SERIES[k % SERIES.length];
+            const draw = ease((frame - 14 - k * 8) / (T * 0.2));
+            return (
+              <path key={k} d={path(f, a)} fill="none" stroke={col} strokeWidth={7} strokeLinecap="round" strokeLinejoin="round"
+                    pathLength={1} strokeDasharray={1} strokeDashoffset={1 - draw}
+                    style={{filter: `drop-shadow(0 0 12px ${alpha(col, 0.6)})`}}/>
+            );
+          })}
+          {markOn > 0 && inY(my) && (
+            <g opacity={markOn}>
+              {g.mark === "tangent" && (() => {
+                const k = slope * ((box.y1 - box.y0) / (hi - lo)) / ((box.x1 - box.x0) / (x1 - x0));
+                const len = 170 / Math.sqrt(1 + k * k);
+                return <line x1={X(mx) - len} y1={Y(my) + k * len} x2={X(mx) + len} y2={Y(my) - k * len}
+                             stroke={mark} strokeWidth={6} strokeLinecap="round"
+                             style={{filter: `drop-shadow(0 0 10px ${alpha(mark, 0.7)})`}}/>;
+              })()}
+              <line x1={X(mx)} x2={X(mx)} y1={Y(my)} y2={axisX} stroke={alpha(C.text, 0.35)} strokeWidth={2} strokeDasharray="8 8"/>
+              <circle cx={X(mx)} cy={Y(my)} r={16} fill={C.accent} stroke={C.bg} strokeWidth={4}
+                      style={{filter: `drop-shadow(0 0 16px ${C.accent})`}}/>
+            </g>
+          )}
+        </svg>
+        {/* each curve's formula in its colour, the parameter's value, and the mark's reading */}
+        <div style={{position: "absolute", ...(vertical ? {left: 140, right: 100, top: 1510, flexDirection: "row", flexWrap: "wrap"}
+                                                        : {left: 1420, right: 60, top: 340, flexDirection: "column"}),
+                     display: "flex", gap: 22, alignItems: "flex-start"}}>
+          {g.curves.map((c, k) => c.tex ? (
+            <div key={k} style={{...panel, fontSize: Math.min(vertical ? 42 : 38, (vertical ? 760 : 700) / Math.max(1,
+                                   c.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length)), borderColor: alpha(SERIES[k % SERIES.length], 0.6),
+                                 opacity: ease((frame - 30 - k * 8) / 14)}}>
+              <Tex tex={c.tex} color={SERIES[k % SERIES.length]}/>
+            </div>
+          ) : null)}
+          {g.param && pa.from !== pa.to && (
+            <div style={{...panel, opacity: clamp((frame - T * 0.28) / 10)}}><Tex tex={`a = ${fmt(a)}`} color={C.accent}/></div>
+          )}
+          {readout && <div style={{...panel, opacity: markOn}}><Tex tex={readout} color={mark}/></div>}
+        </div>
+      </Camera>
+    </AbsoluteFill>
+  );
+};
+
+// ---- derive: a working written out line by line, like chalk on a board; each step slides the earlier lines up
+// and says in a few words what changed --------------------------------------------------------------------------
+export const DeriveScene = ({s, i, vertical}) => {
+  useMathFonts();
+  const frame = useCurrentFrame();
+  const {fps, height} = useVideoConfig();
+  const steps = s.steps || [];
+  const longest = Math.max(6, ...steps.map((st) => st.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length));
+  const size = Math.min(vertical ? 84 : 112, (vertical ? 1500 : 2700) / longest);
+  const gap = size * 2.4;
+  // the board scrolls one line per step, sprung, so the lines glide rather than jump
+  const pos = steps.reduce((n, st, k) => n + (k ? spring({frame: frame - (st.at ?? 8 + k * 30), fps, config: {damping: 18}}) : 0), 0);
+  const cy = vertical ? height * 0.55 : height * 0.6;
+  return (
+    <AbsoluteFill>
+      <Backdrop word="" i={i}/>
+      <Symbols/>
+      <Camera i={i} amount={0.4}>
+        <Head s={s} vertical={vertical}/>
+        <AbsoluteFill style={{clipPath: `inset(${vertical ? 520 : 290}px 0 0 0)`}}>
+          {steps.map((st, k) => {
+            const at = st.at ?? 8 + k * 30;
+            const write = clamp((frame - at) / 20);
+            const d = k - pos;                         // 0 = the line being explained
+            const focus = clamp(1 - Math.abs(d));
+            return (
+              <div key={k} style={{position: "absolute", left: 0, right: 0, top: cy + d * gap - size * 0.7,
+                                   display: "flex", flexDirection: "column", alignItems: "center",
+                                   opacity: write > 0 ? 0.3 + 0.7 * focus : 0, transform: `scale(${0.8 + 0.2 * focus})`}}>
+                <div style={{position: "relative", fontSize: size, padding: "6px 24px",
+                             clipPath: `inset(-30% ${(1 - ease(write)) * 100}% -30% 0)`}}>
+                  <Tex tex={st.tex} color={focus > 0.5 ? C.text : C.muted}/>
+                </div>
+                {st.note && (
+                  <div style={{marginTop: size * 0.3, display: "flex", alignItems: "center", gap: 14, fontFamily: FONT.body,
+                               fontWeight: 800, fontSize: vertical ? 40 : 36, color: C.accent,
+                               padding: "8px 22px", borderRadius: 100, background: alpha(C.accent, 0.12),
+                               opacity: focus * clamp((frame - at - 14) / 10)}}>
+                    {st.note}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </AbsoluteFill>
       </Camera>
     </AbsoluteFill>
   );

@@ -52,9 +52,11 @@ Decide:
   paper: dotted paper with rings; rays: slowly turning light rays; dots: a drifting dot field; waves: layered waves)
 - "cuts": 3 or 4 transitions between shots, from: {cuts}
 - "pace": "calm", "steady" or "brisk" (how energetic the motion is).
+- "title": "left" or "center" (where headlines sit); "kicker": "pill" (glass tag) or "rule" (accent line and
+  spaced capitals) for the small label above each headline.
 
 Reply with JSON: {{"palette": {{"bg": "#...", ...}}, "display": "...", "body": "...", "upper": false,
-"background": "...", "cuts": ["..."], "pace": "..."}}"""
+"background": "...", "cuts": ["..."], "pace": "...", "title": "...", "kicker": "..."}}"""
 
 
 def _rgb(h: str) -> tuple:
@@ -96,9 +98,10 @@ def _weight(font: str, want: int) -> int:
 
 
 def _finish(palette: dict, display: str, body: str, upper: bool, back: str, cuts: List[str], pace: str,
-            source: str) -> dict:
+            source: str, title: str = "left", kicker: str = "pill") -> dict:
     speed, damping, stagger = PACES[pace]
-    return {**palette, "light": luminance(palette["bg"]) > 0.4, "display": display, "body": body,
+    return {**palette, "title": title if title in ("left", "center") else "left",
+            "kicker": kicker if kicker in ("pill", "rule") else "pill", "light": luminance(palette["bg"]) > 0.4, "display": display, "body": body,
             "weight": _weight(display, 900), "upper": upper, "back": back, "cuts": cuts, "pace": pace,
             "speed": speed, "damping": damping, "stagger": stagger, "source": source}
 
@@ -123,7 +126,8 @@ def check(raw) -> Optional[dict]:
     pace = raw.get("pace") if raw.get("pace") in PACES else "steady"
     if back not in BACKGROUNDS or len(cuts) < 2:
         return None
-    return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed")
+    return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed",
+                   raw.get("title"), raw.get("kicker"))
 
 
 def generate(seed: str) -> dict:
@@ -163,7 +167,8 @@ def generate(seed: str) -> dict:
     upper = display in ("BebasNeue", "Anton", "Oswald", "BarlowCondensed") or rnd.random() < 0.3
     back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("dots", "waves", "rays")])
     return _finish(pal, display, rnd.choice([b for b in bodies if b != display]), upper, back,
-                   rnd.sample(CUTS, 4), rnd.choice(list(PACES)), "generated")
+                   rnd.sample(CUTS, 4), rnd.choice(list(PACES)), "generated",
+                   rnd.choice(("left", "center")), rnd.choice(("pill", "rule")))
 
 
 def prompt(title: str, style: str, mood: str) -> str:
@@ -178,6 +183,6 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
         log(f"[design] no design from the model ({type(exc).__name__})")
         d = None
     d = d or generate(title)
-    log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, "
+    log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, {d['title']}/{d['kicker']}, "
         f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
     return d

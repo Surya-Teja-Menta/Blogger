@@ -1265,3 +1265,46 @@ def test_queue_adds_plans_and_retries_topics(tmp_path, monkeypatch):
     assert queue.done(new[1]["id"], ok=True) == "made" and queue.read() == []
     assert [d["status"] for d in queue.read(queue.DONE)] == ["gave up", "made"]
     assert queue.done("nope", ok=True) == "missing"
+
+
+def test_graph_expressions_are_parsed_safely_and_checked():
+    from blogwriter import mathexpr
+    f = mathexpr.compile_expr("a*x^2 - 2*sin(pi*x) + exp(-x^2/2)")
+    assert abs(f(1.0, 2.0) - (2 - 0 + 2.718281828 ** -0.5)) < 1e-6
+    assert mathexpr.compile_expr("-x^2")(3, 0) == -9
+    for bad in ("__import__('os')", "x y", "2x", "sin x", "x +", "foo(x)", "open(x)", ""):
+        try:
+            mathexpr.compile_expr(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+    g = mathexpr.check_graph({"curves": [{"fn": "a*x^2", "tex": "y=ax^2"}, {"fn": "nope(x)"}], "x": [-3, 3],
+                              "param": {"from": 0.5, "to": 2}, "mark": "tangent"})
+    assert g == {"curves": [{"fn": "a*x^2", "tex": "y=ax^2"}], "x": [-3.0, 3.0], "mark": "tangent",
+                 "param": {"from": 0.5, "to": 2.0}}
+    assert mathexpr.check_graph({"curves": [{"fn": "1/(x-x)"}], "x": [0, 1]}) is None     # never finite
+    assert mathexpr.check_graph({"curves": [{"fn": "x"}], "x": [2, 1]}) is None
+    assert "param" not in mathexpr.check_graph({"curves": [{"fn": "exp(x)"}], "x": [0, 2], "param": {"from": 1, "to": 2}})
+
+
+def test_derive_and_graph_shots_are_checked_timed_and_translated():
+    from blogwriter import graphics
+    from blogwriter.video import check_scene, on_screen, with_text
+    base = {"narration": "n", "headline": "", "kicker": ""}
+    d = check_scene({**base, "kind": "derive", "steps": [{"tex": "J = (y - wx)^2", "note": "the cost"},
+                                                        "\frac{dJ}{dw} = -2x(y - wx)", {"tex": "\href{x}{y}"}]},
+                    "", "", set())
+    assert d["kind"] == "derive" and [s["note"] for s in d["steps"]] == ["the cost", ""]
+    assert check_scene({**base, "kind": "derive", "steps": [{"tex": "x"}]}, "", "", set())["kind"] == "photo"
+    g = check_scene({**base, "kind": "graph", "graph": {"curves": [{"fn": "x^2", "tex": "y=x^2"}], "x": [-2, 2]},
+                     "xlabel": "time", "ylabel": "distance"}, "", "", set())
+    assert g["kind"] == "graph" and g["xlabel"] == "time"
+    assert check_scene({**base, "kind": "graph", "graph": {"curves": [{"fn": "import os"}]}}, "", "", set())["kind"] == "photo"
+    texts = on_screen(d)
+    assert texts[-2:] == ["the cost", ""]
+    assert [s["note"] for s in with_text(d, texts[:-2] + ["लागत", ""])["steps"]] == ["लागत", ""]
+    assert with_text(g, on_screen(g)[:-2] + ["समय", "दूरी"])["ylabel"] == "दूरी"
+    steps = graphics.timed_steps([{"tex": "a", "note": ""}, {"tex": "b", "note": "derivative"},
+                                  {"tex": "c", "note": ""}], [(0.2, 0.5, "derivative")], 300, 30, 6)
+    ats = [s["at"] for s in steps]
+    assert ats == sorted(ats) and all(b - a >= 20 for a, b in zip(ats, ats[1:])) and ats[-1] <= 300
