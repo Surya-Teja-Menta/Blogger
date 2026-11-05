@@ -345,14 +345,14 @@ export const GraphScene = ({s, i, vertical}) => {
               <g key={`x${k}`}>
                 <line x1={X(v)} x2={X(v)} y1={box.y0} y2={box.y1} stroke={alpha(C.text, 0.06)} strokeWidth={2}/>
                 <text x={X(v)} y={axisX + 40} textAnchor="middle" fill={C.muted}
-                      fontFamily={FONT.body} fontWeight={600} fontSize={26}>{+v.toFixed(4)}</text>
+                      fontFamily={FONT.body} fontWeight={700} fontSize={vertical ? 34 : 30}>{+v.toFixed(4)}</text>
               </g>
             ))}
             {nice(lo, hi).map((v, k) => (
               <g key={`y${k}`}>
                 <line x1={box.x0} x2={box.x1} y1={Y(v)} y2={Y(v)} stroke={alpha(C.text, 0.06)} strokeWidth={2}/>
                 <text x={axisY - 16} y={Y(v) + 9} textAnchor="end" fill={C.muted}
-                      fontFamily={FONT.body} fontWeight={600} fontSize={26}>{+v.toFixed(4)}</text>
+                      fontFamily={FONT.body} fontWeight={700} fontSize={vertical ? 34 : 30}>{+v.toFixed(4)}</text>
               </g>
             ))}
             <line x1={box.x0} x2={box.x0 + (box.x1 - box.x0) * axes} y1={axisX} y2={axisX} stroke={alpha(C.text, 0.7)} strokeWidth={3}/>

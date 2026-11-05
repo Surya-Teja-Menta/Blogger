@@ -62,8 +62,9 @@ const Layer = ({L, seed}) => {
       </div>
     );
   }
-  return <AbsoluteFill style={{filter: L.blur ? `blur(${clamp(L.blur, 0, 60)}px)` : undefined,
-                               mixBlendMode: C.light ? "multiply" : "screen"}}>{items}</AbsoluteFill>;
+  // a blob is already a soft gradient, and a full-screen blur is the slowest thing to render: keep blurs small
+  const blur = L.shape === "blob" ? 0 : clamp(L.blur, 0, 8);
+  return <AbsoluteFill style={{filter: blur ? `blur(${blur}px)` : undefined}}>{items}</AbsoluteFill>;
 };
 
 export const GenLayers = ({i = 0}) => {
