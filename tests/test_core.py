@@ -1322,3 +1322,16 @@ def test_lessons_use_type_not_unrelated_stock_photos():
     assert scenes[0]["graphic"] == {"type": "kinetic", "nodes": []} and scenes[1]["graphic"]["type"] == "hub"
     assert "graphic" not in scenes[2] and "graphic" not in scenes[3]
     assert graphics.timed(scenes[0]["graphic"], "Guessing line", [], 120, 30, 6)["words"]
+
+
+def test_nothing_waits_long_for_its_spoken_word():
+    from blogwriter import design, graphics
+    late = [(5.0, 5.4, "robust"), (6.0, 6.3, "line")]
+    parts = graphics.timed_parts([{"tex": "J", "label": "robust loss"}], late, 300, 30, 6)
+    assert parts[0]["at"] <= 30
+    k = graphics.timed({"type": "kinetic", "nodes": []}, "Can a line predict", late, 300, 30, 6)
+    assert max(k["words"]) <= 6 + 16 + 5 * 3 + 3
+    pal = {"bg": "#f7fafc", "panel": "#ffffff", "line": "#d0d7de", "text": "#111827", "muted": "#4b5563",
+           "accent": "#d92d20", "hot": "#b54708", "cool": "#1570ef", "violet": "#6941c6"}
+    d = design.check({"palette": pal, "display": "Inter", "body": "Inter", "background": "grid", "cuts": ["iris", "wipe"]})
+    assert d["light"] and d["back"] == "dots"

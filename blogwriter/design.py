@@ -29,6 +29,7 @@ FONTS: Dict[str, tuple] = {
 }
 BACKGROUNDS = ("aurora", "orbs", "grid", "contour", "paper", "rays", "dots", "waves")
 CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
+DARK_ONLY = ("grid", "orbs")      # backdrops drawn for dark backgrounds
 PACES = {"calm": (0.6, 22, 3.5), "steady": (1.0, 16, 2.5), "brisk": (1.5, 12, 1.6)}   # speed, damping, stagger
 COLOURS = ("bg", "panel", "line", "text", "muted", "accent", "hot", "cool", "violet")
 
@@ -126,6 +127,8 @@ def check(raw) -> Optional[dict]:
     pace = raw.get("pace") if raw.get("pace") in PACES else "steady"
     if back not in BACKGROUNDS or len(cuts) < 2:
         return None
+    if luminance(bg) > 0.4 and back in DARK_ONLY:     # a glowing grid or bold orbs wash a light design out
+        back = "dots"
     return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed",
                    raw.get("title"), raw.get("kicker"))
 

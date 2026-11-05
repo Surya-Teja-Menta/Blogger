@@ -181,7 +181,8 @@ def timed_parts(parts: List[dict], words: List[tuple], frames: int, fps: int, le
     for k, p in enumerate(parts):
         hit = when(p["label"]) if p.get("label") else None
         guess = last + 6 if k else lead + 4
-        out.append({**p, "at": hit if hit is not None and hit >= last else guess})
+        latest = lead + 24 + 12 * k          # never leave the formula unseen for long, whatever the narration does
+        out.append({**p, "at": min(hit, latest) if hit is not None and hit >= last else guess})
         last = out[-1]["at"]
     return out
 
@@ -223,6 +224,6 @@ def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps
     if g["type"] == "kinetic":
         g["words"] = []
         for k, w in enumerate(headline.split()):
-            at = when(w) if when(w) is not None else lead + 4 + 5 * k
+            at = min(when(w), lead + 16 + 5 * k) if when(w) is not None else lead + 4 + 5 * k   # all read in ~1 s
             g["words"].append(max(at, g["words"][-1] + 3) if g["words"] else at)
     return g
