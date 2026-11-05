@@ -236,7 +236,7 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
       <div key={k} style={{position: "absolute", width: width * 0.55, height: width * 0.55, borderRadius: "50%",
                            left: width * (0.15 + 0.5 * random(`bx${k}${i}`)) + 160 * Math.sin(frame / (70 + 20 * k) + k * 2) - width * 0.27,
                            top: height * (0.2 + 0.5 * random(`by${k}${i}`)) + 120 * Math.cos(frame / (90 + 15 * k) + k) - width * 0.27,
-                           background: `radial-gradient(circle, ${alpha(b, C.back === "orbs" ? 0.45 : 0.28)}, transparent 65%)`,
+                           background: `radial-gradient(circle, ${alpha(b, C.back === "orbs" ? 0.45 : C.light ? 0.15 : 0.28)}, transparent 65%)`,
                            filter: "blur(30px)"}}/>
     ));
   }

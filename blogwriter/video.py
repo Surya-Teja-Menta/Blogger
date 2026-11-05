@@ -541,6 +541,8 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
                 parts = []
                 break
             parts.append({"tex": tex, "label": words(p.get("label"), 3)})
+        if parts and not tex_complete(" ".join(p["tex"] for p in parts)):
+            parts = []
         out["parts"] = parts[:8]
         if not out["parts"]:              # one piece is fine: the whole formula, named once
             out["kind"] = "photo"
@@ -559,7 +561,8 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         for st in (sc.get("steps") or [])[:5]:
             st = st if isinstance(st, dict) else {"tex": st, "note": ""}
             tex = str(st.get("tex", "")).strip()
-            if tex and len(tex) <= 120 and not re.search(r"\\(href|url|includegraphics|html)", tex):
+            if tex and len(tex) <= 120 and tex_complete(tex) and \
+                    not re.search(r"\\(href|url|includegraphics|html)", tex):
                 steps.append({"tex": tex, "note": words(st.get("note"), 5)})
         out["steps"] = steps
         if len(steps) == 1:               # a one-line working is just a formula
@@ -588,6 +591,19 @@ def chart_kind(kind: str, items: List[dict]) -> tuple:
         if ok[k]:
             return k, items[:FIGURE_KINDS[k][1]]
     return "photo", []
+
+
+def tex_complete(tex: str) -> bool:
+    r"""False for a formula a model left unfinished: unbalanced braces, an empty group, a derivative with nothing
+    to differentiate (\frac{\partial}{\partial}), or a line that ends on an operator."""
+    depth = 0
+    for ch in tex:
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        if depth < 0:
+            return False
+    t = tex.strip()
+    return (depth == 0 and "{}" not in t.replace(" ", "") and not re.search(r"\\partial\s*}", t)
+            and not re.search(r"(=|\+|-|\\leftarrow|\\to|\\cdot|\\times|\^|_)$", t))
 
 
 def typeset_errors(texs: List[str]) -> set:

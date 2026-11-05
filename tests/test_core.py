@@ -1335,3 +1335,18 @@ def test_nothing_waits_long_for_its_spoken_word():
            "accent": "#d92d20", "hot": "#b54708", "cool": "#1570ef", "violet": "#6941c6"}
     d = design.check({"palette": pal, "display": "Inter", "body": "Inter", "background": "grid", "cuts": ["iris", "wipe"]})
     assert d["light"] and d["back"] == "dots"
+
+
+def test_unfinished_formulas_are_dropped():
+    from blogwriter.video import check_scene, tex_complete
+    good = [r"J = \frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2", r"w \leftarrow w - \alpha \frac{\partial J}{\partial w}",
+            r"\hat{y}", "-x"]
+    bad = [r"w \leftarrow w - \alpha \frac{\partial}{\partial}", r"\frac{1}{n", "y = ", r"x^{}", r"w \leftarrow"]
+    assert all(tex_complete(t) for t in good) and not any(tex_complete(t) for t in bad)
+    base = {"narration": "n", "headline": "", "kicker": ""}
+    d = check_scene({**base, "kind": "derive", "steps": [{"tex": good[0], "note": "cost"}, {"tex": bad[0], "note": "x"},
+                                                        {"tex": good[1], "note": "step"}]}, "", "", set())
+    assert [s["tex"] for s in d["steps"]] == [good[0], good[1]]
+    e = check_scene({**base, "kind": "equation", "parts": [{"tex": "w", "label": ""}, {"tex": r"\leftarrow", "label": ""}]},
+                    "", "", set())
+    assert e["kind"] == "photo"

@@ -130,11 +130,14 @@ const Hub = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
   const g = s.graphic, nodes = g.nodes, n = nodes.length;
-  const cx = width / 2, cy = vertical ? 1180 : height * 0.61;
-  const rx = vertical ? 360 : 640, ry = vertical ? 470 : 250;
-  const turn = frame * 0.0015;
+  const cx = width / 2, cy = vertical ? 1150 : height * 0.575;      // the lowest label stays clear of the captions
+  const rx = vertical ? 360 : 640, ry = vertical ? 440 : 212;
+  const turn = frame * 0.0006;
+  // no node straight below the centre, where the centre's own label sits
+  const below = nodes.some((_, k) => Math.abs(((-90 + (360 * k) / n) % 360 + 360) % 360 - 90) < 25);
+  const start = -Math.PI / 2 + (below ? Math.PI / n : 0);
   const pos = nodes.map((_, k) => {
-    const a = -Math.PI / 2 + (2 * Math.PI * k) / n + turn;
+    const a = start + (2 * Math.PI * k) / n + turn;
     return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)];
   });
   const centerAt = g.center.at;
