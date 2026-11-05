@@ -55,9 +55,21 @@ Decide:
 - "pace": "calm", "steady" or "brisk" (how energetic the motion is).
 - "title": "left" or "center" (where headlines sit); "kicker": "pill" (glass tag) or "rule" (accent line and
   spaced capitals) for the small label above each headline.
+- "fx": the motion language, invented for THIS video (be inventive; it must not look like a stock template):
+  "layers": 1 to 3 backdrop layers, each {{"shape": circle, ring, dot, square, line, plus, triangle or blob,
+  "count": 1-80, "size": 0.004-0.7 (share of the screen), "speed": 0-3, "drift": up, down, left, right, orbit,
+  float or pulse, "opacity": 0.02-0.5, "color": accent, hot, cool, violet or text, "blur": 0-60, "stroke": true/false}}
+  (e.g. a starfield of tiny dots drifting up; a few huge blurred blobs; thin lines sliding right like data);
+  "gradient": {{"x": 0-100, "y": 0-100, "color": ..., "strength": 0-0.4}} (a light source);
+  "text": {{"enter": rise, blur, scale, slide, drop, mask, flip, spread or tilt}} (how words appear);
+  "transitions": 2 to 4 of {{"shape": circle, diamond, split, bars, corner, diagonal or fade, "angle": -60 to 60,
+  "blur": 0-30, "scale": 0-0.4, "spin": -20 to 20}};
+  "camera": 0-2 (how much the camera drifts), "cards": {{"radius": 0-48, "fill": glass, solid or outline,
+  "shadow": 0-1.5}}, "texture": {{"grain": 0-0.2, "vignette": 0-0.6}}, "bigWord": true/false (a giant outlined
+  word drifting behind each shot).
 
 Reply with JSON: {{"palette": {{"bg": "#...", ...}}, "display": "...", "body": "...", "upper": false,
-"background": "...", "cuts": ["..."], "pace": "...", "title": "...", "kicker": "..."}}"""
+"background": "...", "cuts": ["..."], "pace": "...", "title": "...", "kicker": "...", "fx": {{...}}}}"""
 
 
 def _rgb(h: str) -> tuple:
@@ -98,12 +110,77 @@ def _weight(font: str, want: int) -> int:
     return min(FONTS[font][0], key=lambda w: abs(w - want))
 
 
+SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob")
+DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
+FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
+ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt")
+CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
+
+
+def check_fx(raw, seed: str) -> dict:
+    """The motion language as the video can draw it: every number clamped to a safe range, every name checked;
+    anything missing or wrong is drawn at random (seeded by the title), never taken from a preset."""
+    rnd = random.Random(int(hashlib.sha256(("fx" + seed).encode()).hexdigest(), 16))
+    raw = raw if isinstance(raw, dict) else {}
+
+    def num(v, lo, hi, default):
+        try:
+            return round(min(hi, max(lo, float(v))), 3)
+        except (TypeError, ValueError):
+            return round(default, 3)
+
+    def pick(v, options):
+        return v if v in options else rnd.choice(options)
+
+    layers = []
+    for L in (raw.get("layers") or [])[:3]:
+        if isinstance(L, dict):
+            layers.append({"shape": pick(L.get("shape"), SHAPES), "count": int(num(L.get("count"), 1, 80, rnd.randint(4, 40))),
+                           "size": num(L.get("size"), 0.004, 0.7, rnd.uniform(0.005, 0.3)),
+                           "speed": num(L.get("speed"), 0, 3, rnd.uniform(0.2, 1.5)), "drift": pick(L.get("drift"), DRIFTS),
+                           "opacity": num(L.get("opacity"), 0.02, 0.5, rnd.uniform(0.05, 0.3)),
+                           "color": pick(L.get("color"), FX_COLOURS), "blur": num(L.get("blur"), 0, 60, 0),
+                           "stroke": bool(L.get("stroke"))})
+    while len(layers) < 1 + (rnd.random() < 0.6):          # at least one layer, often two
+        big = rnd.random() < 0.35
+        layers.append({"shape": "blob" if big else rnd.choice(SHAPES), "count": rnd.randint(2, 5) if big else rnd.randint(6, 60),
+                       "size": rnd.uniform(0.25, 0.6) if big else rnd.uniform(0.004, 0.08), "speed": rnd.uniform(0.1, 1.6),
+                       "drift": rnd.choice(DRIFTS), "opacity": rnd.uniform(0.08, 0.3) if big else rnd.uniform(0.06, 0.35),
+                       "color": rnd.choice(FX_COLOURS[:4]), "blur": rnd.uniform(20, 50) if big else rnd.choice((0, 0, 2, 6)),
+                       "stroke": rnd.random() < 0.4})
+    g = raw.get("gradient") if isinstance(raw.get("gradient"), dict) else {}
+    cuts = []
+    for c in (raw.get("transitions") or [])[:4]:
+        if isinstance(c, dict):
+            cuts.append({"shape": pick(c.get("shape"), CLIPS), "angle": num(c.get("angle"), -60, 60, rnd.uniform(-40, 40)),
+                         "blur": num(c.get("blur"), 0, 30, rnd.uniform(0, 16)), "scale": num(c.get("scale"), 0, 0.4, 0.1),
+                         "spin": num(c.get("spin"), -20, 20, 0)})
+    while len(cuts) < 2:
+        cuts.append({"shape": rnd.choice(CLIPS), "angle": round(rnd.uniform(-45, 45), 1), "blur": round(rnd.uniform(0, 20), 1),
+                     "scale": round(rnd.uniform(0, 0.3), 2), "spin": round(rnd.choice((0, 0, rnd.uniform(-12, 12))), 1)})
+    text = raw.get("text") if isinstance(raw.get("text"), dict) else {}
+    cards = raw.get("cards") if isinstance(raw.get("cards"), dict) else {}
+    tex = raw.get("texture") if isinstance(raw.get("texture"), dict) else {}
+    return {"seed": seed[:24], "layers": layers,
+            "gradient": {"x": num(g.get("x"), 0, 100, rnd.uniform(10, 90)), "y": num(g.get("y"), 0, 100, rnd.uniform(0, 70)),
+                         "color": pick(g.get("color"), FX_COLOURS[:4]), "strength": num(g.get("strength"), 0, 0.4, rnd.uniform(0.06, 0.25))},
+            "text": {"enter": pick(text.get("enter"), ENTERS)}, "transitions": cuts,
+            "camera": num(raw.get("camera"), 0, 2, rnd.uniform(0.3, 1.4)),
+            "cards": {"radius": num(cards.get("radius"), 0, 48, rnd.uniform(4, 36)),
+                      "fill": pick(cards.get("fill"), ("glass", "solid", "outline")),
+                      "shadow": num(cards.get("shadow"), 0, 1.5, rnd.uniform(0.3, 1.2))},
+            "texture": {"grain": num(tex.get("grain"), 0, 0.2, rnd.uniform(0, 0.12)),
+                        "vignette": num(tex.get("vignette"), 0, 0.6, rnd.uniform(0, 0.45))},
+            "bigWord": bool(raw.get("bigWord")) if "bigWord" in raw else rnd.random() < 0.5}
+
+
 def _finish(palette: dict, display: str, body: str, upper: bool, back: str, cuts: List[str], pace: str,
-            source: str, title: str = "left", kicker: str = "pill") -> dict:
+            source: str, title: str = "left", kicker: str = "pill", fx: Optional[dict] = None) -> dict:
     speed, damping, stagger = PACES[pace]
-    return {**palette, "title": title if title in ("left", "center") else "left",
+    fx = fx or check_fx(None, palette["bg"] + display)
+    return {**palette, "fx": fx, "cuts": fx["transitions"], "named_cuts": cuts, "title": title if title in ("left", "center") else "left",
             "kicker": kicker if kicker in ("pill", "rule") else "pill", "light": luminance(palette["bg"]) > 0.4, "display": display, "body": body,
-            "weight": _weight(display, 900), "upper": upper, "back": back, "cuts": cuts, "pace": pace,
+            "weight": _weight(display, 900), "upper": upper, "back": back, "pace": pace,
             "speed": speed, "damping": damping, "stagger": stagger, "source": source}
 
 
@@ -130,7 +207,7 @@ def check(raw) -> Optional[dict]:
     if luminance(bg) > 0.4 and back in DARK_ONLY:     # a glowing grid or bold orbs wash a light design out
         back = "dots"
     return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed",
-                   raw.get("title"), raw.get("kicker"))
+                   raw.get("title"), raw.get("kicker"), check_fx(raw.get("fx"), pal["bg"] + display + pal["accent"]))
 
 
 def generate(seed: str) -> dict:
@@ -171,7 +248,7 @@ def generate(seed: str) -> dict:
     back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("dots", "waves", "rays")])
     return _finish(pal, display, rnd.choice([b for b in bodies if b != display]), upper, back,
                    rnd.sample(CUTS, 4), rnd.choice(list(PACES)), "generated",
-                   rnd.choice(("left", "center")), rnd.choice(("pill", "rule")))
+                   rnd.choice(("left", "center")), rnd.choice(("pill", "rule")), check_fx(None, seed))
 
 
 def prompt(title: str, style: str, mood: str) -> str:
@@ -181,11 +258,15 @@ def prompt(title: str, style: str, mood: str) -> str:
 
 def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None]) -> dict:
     try:
-        d = check(complete_json(prompt(title, style, mood), max_tokens=900, temperature=1.0))
+        d = check(complete_json(prompt(title, style, mood), max_tokens=2000, temperature=1.0))
     except Exception as exc:            # a design is a nice-to-have; a failed call never stops the video
         log(f"[design] no design from the model ({type(exc).__name__})")
         d = None
     d = d or generate(title)
+    fx = d["fx"]
+    layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
+    log(f"[design] motion: {layers}; "
+        f"words {fx['text']['enter']}; cuts {'/'.join(c['shape'] for c in fx['transitions'])}; cards {fx['cards']['fill']}")
     log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, {d['title']}/{d['kicker']}, "
         f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
     return d

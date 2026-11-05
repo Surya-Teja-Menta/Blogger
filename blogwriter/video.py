@@ -85,12 +85,19 @@ Reply with JSON:
   "opening": "how the first 10 seconds hook the viewer",
   "ending": "how the last shot lands (the answer, a twist, a callback to the opening)",
   "tone": "3 to 5 words",
+  "narrator": "who is telling this, in one sentence, invented for this video (e.g. a lab partner thinking out
+    loud while running the experiment with you; a detective reconstructing a case; a coach teaching a rookie;
+    an engineer looking back on a mistake). Not a generic presenter.",
+  "device": "the storytelling device that carries the whole video (e.g. one running example that grows each
+    shot; a question the viewer is asked to guess before each reveal; a wrong answer that gets corrected; a
+    countdown; a letter; a then-and-now contrast)",
   "mood": "4 to 6 words about how the video should look and feel",
   "minutes": a number from 2 to 5,
   "maths": true if the subject has formulas worth teaching, else false}}"""
 
 SHAPE = """You are the head writer of {persona}. Write the script and direct the visuals of a {minutes} minute
-video built ONLY from these verified facts.
+video built ONLY from these verified facts. This video has its own voice: {narrator} Keep that voice in every
+line, and carry the whole video with this device: {device}
 
 Subject: {title}
 
@@ -651,6 +658,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str) -> tuple:
     acts = "; ".join(f"{a['title']} ({a['job']})" for a in brief["acts"])
     minutes = brief["minutes"]
     text = SHAPE.format(persona=STYLES[style], minutes=f"{minutes:g}", title=title, facts=facts, acts=acts,
+                        narrator=brief["narrator"], device=brief["device"],
                         structure=brief["structure"], opening=brief["opening"], ending=brief["ending"],
                         tone=brief["tone"])
     if brief.get("maths"):
@@ -680,6 +688,8 @@ def check_brief(raw, style: str) -> dict:
             "opening": s("opening", "a question or a surprising fact the viewer already half-wonders about."),
             "ending": s("ending", "answer the opening question in one sentence."),
             "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "minutes": minutes,
+            "narrator": s("narrator", "a curious guide who works things out alongside the viewer."),
+            "device": s("device", "one running example that grows with every shot."),
             "maths": bool(raw.get("maths"))}
 
 
@@ -734,6 +744,7 @@ class VideoMaker:
         b = check_brief(raw, style)
         self.log(f"[video] plan ({b['style']}, {b['minutes']:g} min{', maths' if b['maths'] else ''}): "
                  f"{b['structure'][:140]} | {' / '.join(a['title'] for a in b['acts'])}")
+        self.log(f"[video] narrator: {b['narrator'][:140]} | device: {b['device'][:140]}")
         return b
 
     def script(self, title: str, facts: List[dict], sources: List[dict], style: str = "news",

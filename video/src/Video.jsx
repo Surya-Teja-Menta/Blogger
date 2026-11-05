@@ -11,11 +11,13 @@ import {pushCut} from "@remotion/transitions/push-cut";
 import {CUTS, ChapterSting, Finish, clamp} from "./fx";
 import {SCENES} from "./scenes";
 import {GRAPHICS} from "./graphics";
+import {Texture, genCut} from "./gen";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
 const cut = (name, width, height) => {
+  if (name && typeof name === "object") return genCut(name);      // a transition invented for this video
   if (CUTS[name]) return CUTS[name]();
   if (name === "pushCut") return pushCut({flashColor: C.accent, flashOpacity: 0.25});
   if (name === "iris") return iris({width, height});
@@ -26,10 +28,9 @@ const cut = (name, width, height) => {
 
 const Badge = ({channel, vertical}) => (
   <div style={{position: "absolute", left: vertical ? 50 : 70, top: vertical ? 120 : 56, display: "flex", alignItems: "center",
-               gap: 14, fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 30 : 24, letterSpacing: 4, color: C.text}}>
-    <Img src={staticFile("logo.png")} style={{width: vertical ? 64 : 52, height: vertical ? 64 : 52,
+               gap: 14}}>
+    <Img src={staticFile("logo.png")} style={{width: vertical ? 72 : 60, height: vertical ? 72 : 60,
                                              filter: `drop-shadow(0 4px 14px ${alpha("#000000", 0.35)})`}}/>
-    {channel.toUpperCase()}
   </div>
 );
 
@@ -98,7 +99,8 @@ export const Video = ({scenes, captions = [], channel = "", theme = null}) => {
         })}
       </TransitionSeries>
       <Finish/>
-      {channel && <Badge channel={channel} vertical={vertical}/>}
+      <Texture/>
+      <Badge channel={channel} vertical={vertical}/>
       <Caption captions={captions} vertical={vertical}/>
       <div style={{position: "absolute", left: 0, top: 0, height: 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
                    width: `${(100 * frame) / Math.max(1, durationInFrames - 1)}%`, boxShadow: `0 0 12px ${C.accent}`}}/>

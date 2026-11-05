@@ -3,6 +3,7 @@
 import React from "react";
 import {AbsoluteFill, Img, OffthreadVideo, interpolate, random, spring, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
 import {C, FONT, alpha} from "./theme";
+import {GenLayers, wordEnter} from "./gen";
 
 export const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 export const ease = (t) => 1 - Math.pow(1 - clamp(t), 3);
@@ -41,9 +42,7 @@ export const Words = ({text = "", highlight = "", size = 110, delay = 0, color, 
         const marked = marks.has(w.toLowerCase().replace(/[^\p{L}\p{N}$%.]/gu, ""));
         const sweep = clamp((frame - (markAt ?? delay + words.length * 2.5 + 4)) / 8);
         return (
-          <span key={i} style={{display: "inline-block", marginRight: size * 0.24, opacity: clamp(p * 1.4),
-                                filter: `blur(${(1 - clamp(p)) * 14}px)`,
-                                transform: `translateY(${(1 - p) * size * 0.5}px) rotateX(${(1 - p) * 60}deg)`,
+          <span key={i} style={{display: "inline-block", marginRight: size * 0.24, ...wordEnter(p, size, i),
                                 padding: marked ? `0 ${size * 0.1}px` : 0, borderRadius: size * 0.08,
                                 color: marked && sweep > 0.35 ? (C.light ? "#fff" : C.bg) : undefined,
                                 background: marked ? `linear-gradient(100deg, ${C.accent}, ${C.accent}) no-repeat left / ${sweep * 100}% 100%` : "none",
@@ -101,17 +100,21 @@ export const Title = ({s, vertical, top, size, maxWidth}) => {
 };
 
 // frosted card used by charts, lists and figures
+const card = () => (C.fx || {}).cards || {};
 export const Glass = ({children, style = {}, p = 1, glow}) => (
-  <div style={{background: C.light ? alpha("#ffffff", 0.82) : alpha(C.panel, 0.55), backdropFilter: "blur(18px)",
-               border: `1.5px solid ${C.light ? alpha(C.line, 0.9) : alpha("#ffffff", 0.09)}`, borderRadius: 28,
-               boxShadow: `0 30px 80px ${alpha("#000000", C.light ? 0.12 : 0.45)}${glow ? `, 0 0 60px ${alpha(glow, 0.18)}` : ""}`,
+  <div style={{background: card().fill === "outline" ? "transparent" : card().fill === "solid" ? C.panel
+                 : C.light ? alpha("#ffffff", 0.82) : alpha(C.panel, 0.55), backdropFilter: "blur(18px)",
+               border: `${card().fill === "outline" ? 2.5 : 1.5}px solid ${card().fill === "outline" ? alpha(C.accent, 0.6)
+                 : C.light ? alpha(C.line, 0.9) : alpha("#ffffff", 0.09)}`, borderRadius: card().radius ?? 28,
+               boxShadow: `0 30px 80px ${alpha("#000000", (C.light ? 0.12 : 0.45) * (card().shadow ?? 1))}${glow ? `, 0 0 60px ${alpha(glow, 0.18)}` : ""}`,
                opacity: clamp(p * 1.3), transform: `translateY(${(1 - p) * 60}px) scale(${0.94 + 0.06 * p})`, ...style}}>
     {children}
   </div>
 );
 
 // The scene's content drifts in 3D very slowly, like a camera on a slider: nothing is ever perfectly still.
-export const Camera = ({children, i = 0, amount = 1}) => {
+export const Camera = ({children, i = 0, amount: base = 1}) => {
+  const amount = base * (((C.fx || {}).camera) ?? 1);
   const frame = useCurrentFrame();
   const {durationInFrames} = useVideoConfig();
   const t = frame / Math.max(1, durationInFrames);
@@ -239,6 +242,14 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
                            background: `radial-gradient(circle, ${alpha(b, C.back === "orbs" ? 0.45 : C.light ? 0.15 : 0.28)}, transparent 65%)`,
                            filter: "blur(30px)"}}/>
     ));
+  }
+  if (C.fx && C.fx.layers && C.fx.layers.length) {
+    return (
+      <AbsoluteFill style={{background: C.bg, overflow: "hidden"}}>
+        <GenLayers i={i}/>
+        {(C.fx.bigWord ?? true) && big}
+      </AbsoluteFill>
+    );
   }
   return (
     <AbsoluteFill style={{background: C.bg, overflow: "hidden"}}>

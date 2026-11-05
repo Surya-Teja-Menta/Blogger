@@ -1180,7 +1180,7 @@ def test_every_video_gets_its_own_readable_design():
             "display": "Fraunces", "body": "Inter", "upper": False, "background": "waves",
             "cuts": ["iris", "sweep", "nope"], "pace": "calm"}
     d = design.check(good)
-    assert d and d["cuts"] == ["iris", "sweep"] and not d["light"] and d["speed"] < 1 and d["weight"] == 900
+    assert d and d["named_cuts"] == ["iris", "sweep"] and d["cuts"] == d["fx"]["transitions"] and not d["light"] and d["speed"] < 1 and d["weight"] == 900
     faint = design.check({**good, "palette": {**good["palette"], "text": "#20263a", "accent": "#3a2a10"}})
     assert design.contrast(faint["text"], faint["bg"]) >= 7 and design.contrast(faint["accent"], faint["bg"]) >= 3
     assert design.check({**good, "palette": {**good["palette"], "panel": "#ffffff"}}) is None    # cards vanish
@@ -1191,7 +1191,7 @@ def test_every_video_gets_its_own_readable_design():
     for k in range(40):                     # the fallback is new every time and always passes the same checks
         g = design.generate(f"title {k}")
         raw = {"palette": {c: g[c] for c in design.COLOURS}, "display": g["display"], "body": g["body"],
-               "background": g["back"], "cuts": g["cuts"], "pace": g["pace"]}
+               "background": g["back"], "cuts": g["named_cuts"], "pace": g["pace"]}
         assert design.check(raw), g
         looks.add((g["bg"], g["display"], g["back"]))
     assert len(looks) == 40
@@ -1370,3 +1370,19 @@ def test_grid_graphic_times_its_number():
     g = graphics.timed({"type": "grid", "icon": "users", "number": "46%", "label": "share"}, "", [(2.0, 2.4, "46")],
                        200, 30, 6)
     assert g["at"] == 66
+
+
+def test_motion_language_is_clamped_and_never_a_preset():
+    from blogwriter import design
+    fx = design.check_fx({"layers": [{"shape": "star", "count": 500, "size": 9, "speed": "fast", "drift": "orbit",
+                                      "opacity": -1, "color": "pink", "blur": 999}],
+                          "transitions": [{"shape": "circle", "angle": 400, "blur": 3}], "camera": 50,
+                          "text": {"enter": "mask"}, "cards": {"radius": 1000, "fill": "outline"}}, "t")
+    L = fx["layers"][0]
+    assert L["shape"] in design.SHAPES and L["count"] == 80 and L["size"] == 0.7 and L["drift"] == "orbit"
+    assert L["opacity"] == 0.02 and L["color"] in design.FX_COLOURS and L["blur"] == 60
+    assert fx["transitions"][0]["shape"] == "circle" and fx["transitions"][0]["angle"] == 60 and len(fx["transitions"]) >= 2
+    assert fx["camera"] == 2 and fx["text"]["enter"] == "mask" and fx["cards"] == {**fx["cards"], "radius": 48, "fill": "outline"}
+    looks = {str(design.check_fx(None, f"title {k}")) for k in range(30)}
+    assert len(looks) == 30                                   # every video its own recipe
+    assert design.check_fx(None, "same") == design.check_fx(None, "same")   # and each render of one video identical
