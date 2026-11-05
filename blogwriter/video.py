@@ -528,7 +528,7 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         out["items"] = [{"label": words((it or {}).get("label") if isinstance(it, dict) else it, 7)}
                         for it in sc.get("items") or []][:3]
         if len(out["items"]) < 3 or not all(i["label"] and _verified(i["label"], allowed) for i in out["items"]):
-            out["kind"] = "photo"
+            out["kind"], out["items"] = "photo", []
     elif kind == "quote":
         q = str(sc.get("quote", "")).strip().strip('"“”')
         if q and len(_norm(q)) > 12 and _norm(q) in quotes:

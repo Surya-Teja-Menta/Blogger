@@ -214,8 +214,8 @@ def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps
     span = max(30, int(frames * 0.6))
     for k, piece in enumerate(pieces):
         guess = lead + 6 + round(span * k / max(1, len(pieces)))
-        hit = when(piece["label"])          # on its word, but never more than ~1 s after its place in the build
-        piece["at"] = min(hit, guess + 30) if hit is not None else guess
+        hit = when(piece["label"])          # on its word, but never more than ~0.5 s after its place in the build
+        piece["at"] = min(hit, guess + 15) if hit is not None else guess
     if g["type"] in ("flow", "stack"):
         for a, b in zip(g["nodes"], g["nodes"][1:]):
             b["at"] = max(b["at"], a["at"] + 8)
