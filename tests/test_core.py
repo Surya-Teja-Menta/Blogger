@@ -996,6 +996,42 @@ def test_reader_level_and_niche_reach_the_writer_and_bad_inputs_are_refused():
         BlogPipeline.run(p, "x", source="tweets")
 
 
+def test_a_video_run_makes_only_the_video_no_report_and_no_report_email(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from blogwriter import pipeline as P
+    from blogwriter.config import Settings
+    from blogwriter.news import Article
+    sent, written, made = [], [], []
+    monkeypatch.setattr(P, "send_email", lambda *a, **k: sent.append(a[1]) or True)
+    p = P.BlogPipeline.__new__(P.BlogPipeline)
+    p.s, p.log = Settings(output_dir=str(tmp_path)), lambda m: None
+    p.llm = SimpleNamespace(last_endpoint="x", usage={})
+    p.history = SimpleNamespace(add=lambda *a: None)
+    p.news = SimpleNamespace(pool=None)
+    art = Article(title="Central limit theorem", url="https://en.wikipedia.org/wiki/Central_limit_theorem",
+                  source="Wikipedia", published=None, description="d", api="topic")
+    dossier = SimpleNamespace(facts=[{"claim": "c"}], sources=[{"url": "u"}], rejected=0, to_dict=lambda: {"facts": [], "sources": []})
+    p.researcher = SimpleNamespace(seed=lambda t: (art, "text " * 200), run=lambda *a, **k: dossier)
+    p.writer = SimpleNamespace(reader="", plan_documentary=lambda *a: written.append("report") or [])
+    monkeypatch.setattr(P, "scaled_mode", lambda m, d: m)
+    import blogwriter.video as V
+    monkeypatch.setattr(V.VideoMaker, "__init__", lambda self, *a: None)
+    monkeypatch.setattr(V.VideoMaker, "make", lambda self, d, **k: made.append(d) or {"long": "x.mp4"})
+    r = P.BlogPipeline.run(p, "Central Limit Theorem", source="topic", publish=False, video=True, style="education")
+    assert written == [] and sent == [] and made == [r["dir"]] and r["report"] is False
+    assert sorted(os.listdir(r["dir"])) == ["candidates.json", "metadata.json", "research.json"]
+    meta = json.load(open(os.path.join(r["dir"], "metadata.json"), encoding="utf-8"))
+    assert meta["title"] == "Central limit theorem" and meta["verified_facts"] == 1 and meta["source"] == "topic"
+    # publishing (Gumroad, blogs) needs the report, and --report asks for it: then the report is written
+    for kw in ({"publish": True}, {"publish": False, "report": True}):
+        written.clear()
+        try:
+            P.BlogPipeline.run(p, "Central Limit Theorem", source="topic", video=True, **kw)
+        except Exception:
+            pass                                   # the fake writer stops right after planning the report
+        assert written == ["report"]
+
+
 def test_topic_seed_prefers_a_relevant_encyclopedia_page_then_the_web(monkeypatch):
     from blogwriter import research as R
     r = R.Researcher(llm=None, log=lambda m: None)

@@ -25,7 +25,7 @@ on:
         options: [fast, standard, deep]
         default: standard
       publish:
-        description: "Also list the report on Gumroad and post it to the blogs (off = video and report emailed only)"
+        description: "Also write the report, list it on Gumroad and post it to the blogs (off = only the video is made and emailed)"
         type: boolean
         default: false
 

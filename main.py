@@ -1,7 +1,8 @@
 """CLI:  python main.py "topic" [--source news|topic] [--mode fast|standard|deep] [--pages N]
                   [--level basic|intermediate|advanced] [--niche general|upsc|business|tech] [--lang en|hi|te|kn|ta]
                   [--days N] [--no-pdf] [--no-email] [--no-publish] [--email-to a@x.com,b@y.com] [--video]
-                  [--style auto|news|story|education|concept]"""
+                  [--style auto|news|story|education|concept] [--report]
+A video run makes only the video (no report, article, blog or report email) unless it publishes or --report is given."""
 import argparse
 import sys
 from dataclasses import replace
@@ -30,6 +31,8 @@ def main() -> int:
                     help="video style (default: news for --source news, auto for --source topic)")
     ap.add_argument("--video", action="store_true",
                     help="also make a long video, audio tracks per language and Shorts, emailed for review")
+    ap.add_argument("--report", action="store_true",
+                    help="with --video: also write the report, article and blog and email them (publishing always does)")
     ap.add_argument("--lesson", default="", help="SLUG:LESSON_ID of a planned course (blogwriter/course.py): the "
                                                   "video is that lesson, taught in its place in the course")
     args = ap.parse_args()
@@ -50,7 +53,7 @@ def main() -> int:
                                    source=args.source, pages=max(0, args.pages), level=args.level,
                                    niche=args.niche, lang=args.lang, publish=not args.no_publish,
                                    video=args.video or bool(lesson), style=args.style or ("education" if lesson else ""),
-                                   lesson=lesson)
+                                   lesson=lesson, report=True if args.report else None)
     except PipelineError as exc:
         print(f"\nFAILED: {exc}")
         return 1

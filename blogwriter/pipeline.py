@@ -222,11 +222,15 @@ class BlogPipeline:
     def run(self, topic: str, mode: str = "standard", days: int = 1, make_pdf: bool = True,
             email: bool = True, source: str = "news", pages: int = 0, level: str = "intermediate",
             niche: str = "general", lang: str = "en", publish: bool = True, video: bool = False,
-            style: str = "", lesson: Optional[dict] = None) -> dict:
+            style: str = "", lesson: Optional[dict] = None, report: Optional[bool] = None) -> dict:
         """source: 'news' writes about today's hottest story on the topic; 'topic' researches the topic itself.
         pages: a page target that overrides the mode's size (0 = the mode decides). level / niche: who the report
         is written for. lang: the language of the finished pieces. publish: list on Gumroad and post to the blogs
-        (off for private orders, which are only emailed). video: also make the videos for review (never posted)."""
+        (off for private orders, which are only emailed). video: also make the videos for review (never posted).
+        report: write the report, article and blog and email them. By default a video run does not (it only needs
+        the research; only the video is emailed), unless it publishes, which needs the report to sell and post."""
+        if report is None:
+            report = not video or publish
         for value, allowed, what in ((source, ("news", "topic"), "source"), (level, LEVELS, "level"),
                                      (niche, NICHES, "niche"), (lang, LANGS, "lang")):
             if value not in allowed:
@@ -234,7 +238,7 @@ class BlogPipeline:
         self.writer.reader = audience(level, niche)
         try:
             result = self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
-                               {"level": level, "niche": niche, "lang": lang, "pages_requested": pages})
+                               {"level": level, "niche": niche, "lang": lang, "pages_requested": pages}, report=report)
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
         if video:
@@ -245,6 +249,30 @@ class BlogPipeline:
             except Exception as exc:
                 self.log(f"[video] FAILED: {type(exc).__name__}: {str(exc)[:300]}")
         return result
+
+    def _research_only(self, topic: str, mode: str, article, ranked, dossier, source: str, order: Optional[dict],
+                       t0: float) -> dict:
+        """A video run: keep the verified research the video is built from, and nothing else. No report, article
+        or blog is written, nothing is listed or posted, and no report email is sent (the video is emailed)."""
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = os.path.join(self.s.output_dir, f"{stamp}_{slugify(topic)}")
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "research.json"), "w", encoding="utf-8") as f:
+            json.dump(dossier.to_dict(), f, indent=2, ensure_ascii=False)
+        with open(os.path.join(out, "candidates.json"), "w", encoding="utf-8") as f:
+            json.dump([a.to_dict() for a in ranked], f, indent=2, ensure_ascii=False)
+        metadata = {"topic": topic, "title": article.title, "mode": mode, "date": stamp, "article": article.to_dict(),
+                    "report": False, "verified_facts": len(dossier.facts), "rejected_facts": dossier.rejected,
+                    "sources": len(dossier.sources), "llm_endpoint": self.llm.last_endpoint,
+                    "seconds": round(time.time() - t0, 1), "source": source, "email_sent": False, "stored": {},
+                    "gumroad": {}, "posts": {}, "llm_usage": self.llm.usage, **(order or {})}
+        with open(os.path.join(out, "metadata.json"), "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        if source == "news":
+            self.history.add(topic, article.url, article.title)
+        self.log(f"\n[pipeline] research done in {metadata['seconds']}s: {metadata['verified_facts']} verified facts "
+                 f"from {metadata['sources']} sources. Video only: no report, article, blog or report email.")
+        return {"dir": out, **metadata}
 
     def _choose_readable(self, ranked, tries: int = 14):
         """Best-ranked story whose full text we can read (tried in parallel, since many sites block scrapers).
@@ -264,7 +292,8 @@ class BlogPipeline:
         raise PipelineError("could not read the full text of any candidate story; try again later or another topic")
 
     def _run(self, topic: str, mode: str, days: int, make_pdf: bool, email: bool, source: str = "news",
-             target_pages: int = 0, lang: str = "en", publish: bool = True, order: Optional[dict] = None) -> dict:
+             target_pages: int = 0, lang: str = "en", publish: bool = True, order: Optional[dict] = None,
+             report: bool = True) -> dict:
         if mode not in MODES:
             raise PipelineError(f"unknown mode '{mode}' (choose from {', '.join(MODES)})")
         m, t0 = MODES[mode], time.time()
@@ -305,6 +334,8 @@ class BlogPipeline:
         if not dossier.facts and not (article_text or article.description):
             raise PipelineError("research found no verifiable facts; refusing to write from nothing")
         m = scaled_mode(m, dossier)
+        if not report:
+            return self._research_only(topic, mode, article, ranked, dossier, source, order, t0)
 
         # ---- 4. documentary report first, then the blog and article derived from it -------------------
         self.log("\n=== 4/5 Writing the documentary report, then the article and blog from it ===")
