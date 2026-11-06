@@ -1162,7 +1162,8 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
                          "opening": "Start on the empty harbour."}, "auto")
     assert brief["style"] == "story" and brief["minutes"] == 4 and brief["maths"]
     assert check_brief(None, "education")["style"] == "education"          # a failed plan keeps the asked style
-    assert check_brief({"minutes": "lots"}, "auto")["minutes"] == 3.0
+    assert check_brief({"minutes": "lots"}, "auto")["minutes"] == 4.0
+    assert check_brief({"minutes": "lots"}, "education")["minutes"] == 9.0 and check_brief({"minutes": 30}, "auto")["minutes"] == 12
 
     class FakeLLM:
         def complete_json(self, prompt, **kw):
@@ -1559,3 +1560,108 @@ def test_short_scripts_are_lengthened_line_by_line_and_the_outro_names_the_chann
     assert narr[1] == "Light is fast. and here is why that matters to you"
     assert "subscribe to Adyora" in narr[-1] and plan["scenes"][-1]["channel"] == "Adyora"
     assert plan["short"][-1]["narration"].endswith("on Adyora.")
+
+
+def test_narration_never_claims_a_life_the_narrator_does_not_have():
+    from blogwriter.video import strip_persona
+    assert strip_persona("I'm in my garage lab with a messy spreadsheet. Here is the scatter. Let's draw a line.") == \
+        "Here is the scatter. Let's draw a line."
+    assert strip_persona("In my years as an engineer I saw this. We can check it ourselves.") == "We can check it ourselves."
+    assert strip_persona("I'll show you why the line tilts.") == "I'll show you why the line tilts."
+
+
+def test_worked_examples_keep_their_numbers_only_when_the_arithmetic_is_right():
+    from blogwriter.video import arithmetic_ok, check_scene, maths_shown
+    assert arithmetic_ok([r"\hat{y} = 2 \cdot 3 + 1 = 7", r"J = \frac{1}{2}(3-1)^2 = 2", r"\frac{1}{3} \approx 0.33"])
+    assert not arithmetic_ok([r"\hat{y} = 2 \cdot 3 + 1 = 8"])
+    assert arithmetic_ok([r"w \leftarrow w - \alpha \frac{\partial J}{\partial w}"])              # symbols are not judged
+    good = check_scene({"kind": "derive", "steps": [{"tex": r"\hat{y} = w x + b", "note": "the model"},
+                                                    {"tex": r"\hat{y} = 2 \cdot 3 + 1 = 7", "note": "plug in"}]}, "", "", {})
+    assert good["kind"] == "derive" and "7" in maths_shown(good)
+    bad = check_scene({"kind": "derive", "steps": [{"tex": r"\hat{y} = w x + b", "note": "the model"},
+                                                   {"tex": r"\hat{y} = 2 \cdot 3 + 1 = 9", "note": "plug in"}]}, "", "", {})
+    assert bad["kind"] == "photo"
+
+
+def test_check_shots_need_a_question_options_and_a_real_answer():
+    from blogwriter.video import check_scene, on_screen, with_text
+    sc = check_scene({"kind": "check", "question": "Which way does w move if the slope is negative?",
+                      "options": ["Up", "Down", "It stays"], "answer": 0, "why": "We step against the slope"}, "", "", {})
+    assert sc["kind"] == "check" and sc["answer"] == 0 and len(sc["options"]) == 3
+    assert on_screen(sc)[-5:] == [sc["question"], sc["why"], "Up", "Down", "It stays"]
+    moved = with_text(sc, on_screen(sc)[:-5] + ["Q", "W", "A", "B", "C"])
+    assert moved["question"] == "Q" and moved["options"] == ["A", "B", "C"]
+    assert check_scene({"kind": "check", "question": "Q?", "options": ["a", "b"], "answer": 5}, "", "", {})["kind"] == "photo"
+
+
+def test_long_lessons_are_written_part_by_part_from_an_outline():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker, check_brief
+    asked = []
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            asked.append(prompt)
+            if "THIS IS A LONG VIDEO" in prompt:
+                return {"title": "Gradient descent", "thumb_text": "Roll downhill", "thumb_highlight": "downhill",
+                        "description": "D", "tags": ["a"], "outro": "",
+                        "parts": [{"title": "The bowl", "beats": ["graph: the cost bowl", "check: which way?"]},
+                                  {"title": "The step", "beats": ["derive: one step with numbers"]}]}
+            if "Now write ONLY part" in prompt:
+                part = 1 if 'part 1 of 2' in prompt else 2
+                return {"scenes": [{"kind": "photo", "narration": f"Shot {'abc'[k]} of part {'xy'[part - 1]} explains the idea."}
+                                   for k in range(3)]}
+            if prompt.startswith("These are the shots of a video"):
+                return {"short": [{"scene": 1, "narration": "Watch the ball roll."}]}
+            if prompt.startswith("These are the narration lines"):
+                return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            raise AssertionError("unexpected prompt")
+
+    brief = check_brief({"style": "education", "minutes": 10, "acts": [{"title": "The bowl", "job": "x"}]}, "education")
+    lesson = {"course": "Machine Learning", "module": "Optimisation", "number": 3, "total": 20, "title": "Gradient descent",
+              "goal": "You can take a gradient step.", "key_ideas": ["slope", "step size"], "visuals": ["a bowl"],
+              "previous": [{"title": "Cost functions", "key_ideas": ["squared error"]}], "next": "Learning rates"}
+    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("Gradient descent", [], [], "education", brief,
+                                                                         lesson=lesson)
+    assert len(plan["scenes"]) == 7 and plan["scenes"][3]["chapter"]["title"] == "The step"   # 6 shots + outro
+    assert any('lesson 3 of 20 in the course "Machine Learning"' in p and "Cost functions" in p and "Learning rates" in p
+               for p in asked)
+    assert plan["short"][0] == {"scene": 1, "narration": "Watch the ball roll."}
+
+
+def test_a_long_render_is_split_evenly_into_parts_for_parallel_machines():
+    from blogwriter.video import CHUNK_FRAMES, part_args, render_parts
+    parts = render_parts(18000)
+    assert parts[0][0] == 0 and parts[-1][1] == 17999 and len(parts) == -(-18000 // CHUNK_FRAMES)
+    assert all(b + 1 == c for (_, b), (c, _) in zip(parts, parts[1:]))          # no gap, no overlap
+    assert render_parts(100) == [(0, 99)]
+    assert "--frames=0-99" in part_args(0, 99, "parts/part00.mp4") and "--props=public/job/long.json" in part_args(0, 1, "x")
+
+
+def test_a_course_is_planned_sized_and_handed_out_in_waves(tmp_path, monkeypatch):
+    import pytest
+    from blogwriter import course as c
+    monkeypatch.setattr(c, "COURSES", str(tmp_path))
+    raw = {"course": "Machine Learning from Zero", "description": "You will build models.",
+           "modules": [{"title": "Foundations", "lessons": [
+               {"title": "What is a model", "goal": "Say what a model is.", "key_ideas": ["inputs", "outputs"],
+                "visuals": ["a box"], "maths": False, "minutes": 9},
+               {"title": "What is a model", "goal": "duplicate"},
+               {"title": "Linear regression", "key_ideas": ["line", "error"], "maths": True, "minutes": 40}]},
+               {"title": "Optimisation", "lessons": [{"title": "Gradient descent", "maths": True}]}]}
+    course = c.plan("Machine Learning", "basic", "", lambda *a, **k: raw)
+    assert [x["id"] for x in course["lessons"]] == ["L01", "L02", "L03"] and course["lessons"][1]["minutes"] == 12
+    c.save(course)
+    ctx = c.context(c.load("machine-learning"), "L02")
+    assert ctx["number"] == 2 and ctx["total"] == 3 and ctx["previous"][0]["title"] == "What is a model"
+    assert ctx["next"] == "Gradient descent"
+    wave = c.take_next(course, 2)
+    assert [j["id"] for j in wave] == ["L01", "L02"] and wave[0]["topic"] == "What is a model (Machine Learning from Zero)"
+    c.mark(course, "L01", True)
+    c.mark(course, "L02", False)
+    assert c.remaining(course) == 2                                   # L02 is tried again, L03 is still to come
+    assert [j["id"] for j in c.take_next(course, 5)] == ["L02", "L03"]
+    assert c.budget(30, 4, 0)["per_day"] >= 1 and c.budget(30, 4, 3)["days"] == 10
+    assert "Machine Learning from Zero" in c.summary(course)
+    with pytest.raises(ValueError):
+        c.plan("X", "basic", "", lambda *a, **k: {"modules": []})

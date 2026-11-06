@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Commit the story history and the video queue back to the repo. Many jobs run in parallel and all touch the same
+# Commit the story history, the video queue and the course files back to the repo. Many jobs run in parallel and all touch the same
 # files, so instead of merging, each try starts from the latest main and re-applies this job's own change:
 # the new lines of output/history.jsonl, then $APPLY (a command, e.g. marking a queued topic done).
 # env: MSG (commit message), APPLY (optional command), BRANCH (default main)
@@ -13,7 +13,7 @@ for try in 1 2 3 4 5 6; do
   git fetch -q origin "$BRANCH" && git reset -q --hard "origin/$BRANCH" || { sleep 5; continue; }
   [ -z "$new_history" ] || printf '%s\n' "$new_history" >> output/history.jsonl
   if [ -n "${APPLY:-}" ]; then eval "$APPLY" || exit 1; fi
-  git add output/history.jsonl queue 2>/dev/null
+  for p in output/history.jsonl queue courses; do [ -e "$p" ] && git add "$p"; done
   if git diff --cached --quiet; then echo "nothing to save"; exit 0; fi
   git commit -qm "$MSG"
   if git push -q origin "HEAD:$BRANCH"; then echo "saved: $MSG"; exit 0; fi

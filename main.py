@@ -30,8 +30,15 @@ def main() -> int:
                     help="video style (default: news for --source news, auto for --source topic)")
     ap.add_argument("--video", action="store_true",
                     help="also make a long video, audio tracks per language and Shorts, emailed for review")
+    ap.add_argument("--lesson", default="", help="SLUG:LESSON_ID of a planned course (blogwriter/course.py): the "
+                                                  "video is that lesson, taught in its place in the course")
     args = ap.parse_args()
-    topic = " ".join(args.topic).strip() or input("Topic: ").strip()
+    lesson = None
+    if args.lesson:
+        from blogwriter import course
+        slug, _, lesson_id = args.lesson.partition(":")
+        lesson = course.context(course.load(slug), lesson_id)
+    topic = " ".join(args.topic).strip() or (f"{lesson['title']} ({lesson['course']})" if lesson else "") or         input("Topic: ").strip()
     if not topic:
         print("No topic given.")
         return 2
@@ -42,7 +49,8 @@ def main() -> int:
         BlogPipeline(settings).run(topic, args.mode, args.days, make_pdf=not args.no_pdf, email=not args.no_email,
                                    source=args.source, pages=max(0, args.pages), level=args.level,
                                    niche=args.niche, lang=args.lang, publish=not args.no_publish,
-                                   video=args.video, style=args.style)
+                                   video=args.video or bool(lesson), style=args.style or ("education" if lesson else ""),
+                                   lesson=lesson)
     except PipelineError as exc:
         print(f"\nFAILED: {exc}")
         return 1

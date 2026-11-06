@@ -11,6 +11,7 @@ import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 import {DeriveScene, EquationScene, GraphScene, PlotScene} from "./math";
 import {SurfaceScene} from "./surface";
+import {CheckScene} from "./check";
 
 const pad = (v) => (v ? {left: 70, right: 70} : {left: 120, right: 120});
 const media = (s) => s.video || (s.images && s.images[0]);
@@ -671,6 +672,6 @@ export const OutroScene = ({s, i, vertical}) => {
   );
 };
 
-export const SCENES = {equation: EquationScene, plot: PlotScene, graph: GraphScene, derive: DeriveScene, surface: SurfaceScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
+export const SCENES = {equation: EquationScene, plot: PlotScene, graph: GraphScene, derive: DeriveScene, surface: SurfaceScene, check: CheckScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
                        line: LineScene, donut: DonutScene, kpis: KpiScene, timeline: TimelineScene, steps: StepsScene,
                        map: MapScene, list: ListScene, quote: QuoteScene, chapter: ChapterScene, outro: OutroScene};

@@ -222,7 +222,7 @@ class BlogPipeline:
     def run(self, topic: str, mode: str = "standard", days: int = 1, make_pdf: bool = True,
             email: bool = True, source: str = "news", pages: int = 0, level: str = "intermediate",
             niche: str = "general", lang: str = "en", publish: bool = True, video: bool = False,
-            style: str = "") -> dict:
+            style: str = "", lesson: Optional[dict] = None) -> dict:
         """source: 'news' writes about today's hottest story on the topic; 'topic' researches the topic itself.
         pages: a page target that overrides the mode's size (0 = the mode decides). level / niche: who the report
         is written for. lang: the language of the finished pieces. publish: list on Gumroad and post to the blogs
@@ -241,7 +241,7 @@ class BlogPipeline:
             from .video import VideoMaker
             try:                     # the report is already saved and sent; a video failure must not undo that
                 result["videos"] = VideoMaker(self.s, self.llm, self.log).make(result["dir"], email=email,
-                                                                              style=style)
+                                                                              style=style, lesson=lesson)
             except Exception as exc:
                 self.log(f"[video] FAILED: {type(exc).__name__}: {str(exc)[:300]}")
         return result

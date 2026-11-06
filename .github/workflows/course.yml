@@ -1,0 +1,151 @@
+name: Make a course
+
+# Actions -> Make a course -> Run workflow: name a subject (and, if you like, paste your own syllabus). An AI
+# curriculum planner lays out the whole course (modules and lessons, as many as the subject needs), emails you the
+# syllabus with its cost, and then every lesson becomes a video, in order: each wave makes as many lessons as the
+# free quotas carry in a day, and the next wave follows a day later until the course is done. Each video is
+# emailed for review; nothing is posted. "Continue" picks up a course that is already planned.
+on:
+  workflow_dispatch:
+    inputs:
+      subject:
+        description: "The course, e.g. Machine Learning, Linear Algebra, Probability"
+        required: true
+      level:
+        description: "Who it is for"
+        type: choice
+        options: [basic, intermediate, advanced]
+        default: basic
+      syllabus:
+        description: "Optional: your own syllabus or topics to include, separated by ;"
+        default: ""
+      action:
+        description: "plan and make = plan the course and start the lessons | plan only = just send me the syllabus | continue = make the next lessons of this subject's course"
+        type: choice
+        options: [plan and make, plan only, continue]
+        default: plan and make
+      per_wave:
+        description: "Lessons per wave: auto = as many as the free quotas carry in a day"
+        type: choice
+        options: [auto, "1", "2", "3", "4", "6", "8"]
+        default: auto
+  schedule:
+    - cron: "0 4 * * *"      # the next wave of any unfinished course (does nothing when every course is done)
+
+permissions:
+  contents: write
+  models: read
+  actions: write
+
+concurrency:
+  group: course-planner      # waves never pick the same lessons twice
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch' && inputs.action != 'continue'
+    runs-on: ubuntu-latest
+    outputs:
+      slug: ${{ steps.plan.outputs.slug }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+      - name: Plan the course
+        id: plan
+        env:
+          SUBJECT: ${{ inputs.subject }}
+          LEVEL: ${{ inputs.level }}
+          SYLLABUS: ${{ inputs.syllabus }}
+          ACTION: ${{ inputs.action }}
+          ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          export LLM_PROVIDERS="${LLM_PROVIDERS:-cerebras,groq,gemini,nvidia,openrouter,github}"
+          export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
+          auto=$([ "$ACTION" = "plan and make" ] && echo --auto || true)      # only then do later waves follow by themselves
+          slug=$(python -u blogwriter/course.py plan "$SUBJECT" --level "$LEVEL" --syllabus "$SYLLABUS" $auto)
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          cp "courses/$slug.json" "$RUNNER_TEMP/course.json"
+          export APPLY='mkdir -p courses && cp "$RUNNER_TEMP/course.json" "courses/'"$slug"'.json"'
+          export MSG="course: plan $slug"
+          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
+          bash "$RUNNER_TEMP/commit.sh"
+          python blogwriter/course.py summary "$slug" >> "$GITHUB_STEP_SUMMARY"
+
+  wave:
+    needs: plan
+    if: always() && (needs.plan.result == 'success' || github.event_name == 'schedule' || inputs.action == 'continue') && inputs.action != 'plan only'
+    runs-on: ubuntu-latest
+    outputs:
+      slug: ${{ steps.next.outputs.slug }}
+      jobs: ${{ steps.next.outputs.jobs }}
+      level: ${{ steps.next.outputs.level }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Pick the next lessons
+        id: next
+        env:
+          PLANNED: ${{ needs.plan.outputs.slug }}
+          SUBJECT: ${{ inputs.subject }}
+          PER_WAVE: ${{ inputs.per_wave }}
+          COURSE_LESSONS_PER_DAY: ${{ vars.COURSE_LESSONS_PER_DAY }}
+          GEMINI_DAILY_CALLS: ${{ vars.GEMINI_DAILY_CALLS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          slug="$PLANNED"
+          if [ -z "$slug" ] && [ -n "$SUBJECT" ]; then slug=$(python3 -c "import sys; sys.path.insert(0, 'blogwriter'); import course; print(course.slugify(sys.argv[1]))" "$SUBJECT"); fi
+          if [ -z "$slug" ]; then slug=$(python3 blogwriter/course.py pending | head -1); fi
+          if [ -z "$slug" ] || [ ! -f "courses/$slug.json" ]; then echo "no course to continue"; echo "jobs=[]" >> "$GITHUB_OUTPUT"; exit 0; fi
+          take=$([ "${PER_WAVE:-auto}" = "auto" ] && echo 0 || echo "$PER_WAVE")
+          export APPLY='python3 blogwriter/course.py next "'"$slug"'" --take '"$take"' > "$RUNNER_TEMP/jobs.json"'
+          export MSG="course: next wave of $slug"
+          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
+          bash "$RUNNER_TEMP/commit.sh"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "jobs=$(cat "$RUNNER_TEMP/jobs.json")" >> "$GITHUB_OUTPUT"
+          echo "level=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['level'])" "courses/$slug.json")" >> "$GITHUB_OUTPUT"
+          echo "### This wave of $slug" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "import json,sys; [print('-', j['id'], j['topic']) for j in json.load(open(sys.argv[1]))]" "$RUNNER_TEMP/jobs.json" >> "$GITHUB_STEP_SUMMARY"
+
+  lessons:
+    needs: wave
+    if: always() && needs.wave.outputs.jobs != '' && needs.wave.outputs.jobs != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 2          # two lessons at once (each renders on several machines; GitHub runs 20 jobs at a time)
+      matrix:
+        job: ${{ fromJSON(needs.wave.outputs.jobs) }}
+    uses: ./.github/workflows/make.yml
+    with:
+      topic: ${{ matrix.job.topic }}
+      source: topic
+      style: education
+      mode: standard
+      level: ${{ needs.wave.outputs.level }}
+      publish: false
+      video: true
+      course: ${{ needs.wave.outputs.slug }}
+      lesson_id: ${{ matrix.job.id }}
+    secrets: inherit

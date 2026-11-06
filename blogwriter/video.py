@@ -5,6 +5,7 @@ files are stored and emailed, and a person reviews and uploads them.
 
     python -m blogwriter.video output/<run folder> [--no-email]     # (re)make the videos of a saved run"""
 import asyncio
+import glob
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
@@ -44,10 +45,14 @@ GAP = 4                   # frames of breath after the narration (clips are trim
 MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
 SHORT_MAX_SECONDS = 58
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
+LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
+MAX_SCENES = 110          # shots in one video
+DIAGRAM_MAX = 18          # bespoke diagrams per video (each costs several vision-model calls)
+CHECK_PAUSE = 3.0         # seconds of silence in a "check" shot for the viewer to think before the answer
 REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
 KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
-         "quote", "equation", "plot", "graph", "derive", "surface")
+         "quote", "equation", "plot", "graph", "derive", "surface", "check")
 MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
 PLOTS = ("scatter", "fit", "residuals", "squares", "descent")
 FIGURE_KINDS = {"compare": (2, 3), "bars": (3, 6), "line": (3, 8), "donut": (2, 4), "kpis": (3, 4)}  # items (min, max)
@@ -87,14 +92,16 @@ Reply with JSON:
   "opening": "how the first 10 seconds hook the viewer",
   "ending": "how the last shot lands (the answer, a twist, a callback to the opening)",
   "tone": "3 to 5 words",
-  "narrator": "who is telling this, in one sentence, invented for this video (e.g. a lab partner thinking out
-    loud while running the experiment with you; a detective reconstructing a case; a coach teaching a rookie;
-    an engineer looking back on a mistake). Not a generic presenter.",
+  "narrator": "the voice of this video in one sentence: HOW it talks to the viewer (its stance, rhythm and
+    humour), e.g. a patient teacher thinking out loud with you; a sceptic testing every claim; a guide who keeps
+    asking 'but why?'. It is the channel's narrator, never a character: no invented name, job, place,
+    possessions or personal experiences.",
   "device": "the storytelling device that carries the whole video (e.g. one running example that grows each
     shot; a question the viewer is asked to guess before each reveal; a wrong answer that gets corrected; a
     countdown; a letter; a then-and-now contrast)",
   "mood": "4 to 6 words about how the video should look and feel",
-  "minutes": a number from 2 to 5,
+  "minutes": a number: 8 to 12 for an education lesson (every idea taught properly, with pictures, a worked
+    example and a check), 3 to 8 otherwise,
   "maths": true if the subject has formulas worth teaching, else false}}"""
 
 SHAPE = """You are the head writer of {persona}. Write the script and direct the visuals of a {minutes} minute
@@ -114,7 +121,29 @@ THE PLAN FOR THIS VIDEO (follow it; it was made for this subject)
 - Tone: {tone}
 - Teach or tell one idea per shot and build each shot on the one before. Analogies are welcome, but every number
   and every factual claim must come from the facts.
-- Show any process as a "steps" shot and any set of numbers as a chart."""
+- Show any process as a "steps" shot and any set of numbers as a chart.
+- Honesty: the narrator never claims personal experiences, credentials, a location or things it did ("I'm in my
+  lab", "in my years as an engineer", "my students"). "We" and "let's" for working something out together are
+  fine, and an analogy is framed as one ("imagine ...")."""
+
+TEACHING = r"""
+- This is a LESSON: it TEACHES, it does not only explain. In this order: (1) open on a question or a problem the
+  viewer cares about; (2) recall, in a shot or two, what the viewer needs from before; (3) intuition first: SHOW
+  the idea with a picture that moves (a diagram, "graph", "surface" or "plot") before any formula; (4) then the
+  formula, naming every symbol; (5) a worked example with small concrete numbers, step by step ("derive" lines
+  such as "\hat{y} = 2 \cdot 3 + 1 = 7"), every number shown on screen and the arithmetic exactly right, then a
+  sanity check of the answer; (6) a common mistake and why it fails; (7) one or two "check" shots, each a
+  question the viewer answers before the reveal, testing the idea just taught (a prediction, a direction, a small
+  calculation), never trivia; (8) a recap "list" of the three things to remember; (9) one line on what is next.
+- Show, do not just tell: most shots are pictures of the idea (diagram, graph, surface, plot, derive, equation);
+  talk over a plain title is rare. Numbers in a worked example or a check are illustrative and allowed when that
+  shot shows them on screen."""
+
+LESSON = """
+- This video is lesson {number} of {total} in the course "{course}"{module}. Its learning goal: {goal}
+  It must cover: {ideas}. Pictures worth showing: {visuals}.
+  The viewer has already learned: {before}. Recall only what this lesson needs; do not teach it again.
+  {after}"""
 
 MATHS_RULES = r"""
 - The MATHS INTUITION is the heart of this video: at least half of all shots are maths shots ("equation", "graph",
@@ -182,6 +211,11 @@ chart: every figure on screen must be in the facts, written the same way.
               slides between these values while the narration says what it does), "mark": "tangent" (a point slides
               along the first curve with its tangent and slope), "area" (the area under it fills in, with its value),
               "point" (a point traces it with its coordinates) or ""}}; plus "xlabel" and "ylabel" (max 3 words).
+- "check":    (lessons) a question for the viewer to answer before the reveal. Needs "question" (max 14
+              words), "options": 2 to 4 short answers (max 6 words each, maths in plain words or short like
+              "w = 3"), "answer": the index of the right option (0 = first), "why": max 10 words. Its narration
+              asks the question (ending with "?"), then gives the answer and why: the video pauses after the "?"
+              for the viewer to think.
 - "derive":   (lessons) a working written out line by line. Needs "steps": [{{"tex": one full KaTeX line,
               "note": what this step did, max 5 words, e.g. "take the derivative"}}], 2 to 5 steps.
 - "plot":     (lessons on fitting data) an animated plot of sample data. Needs "plot": one of "scatter" (the data
@@ -224,6 +258,42 @@ OUTRO = ("That's the short version. The full report has {facts} verified facts, 
 OUTRO_SOURCES = ("Every one of the {facts} facts in this video was checked, and every source is linked in the "
                  "description. If you want more like this, explained properly, subscribe to {channel}.")
 SHORT_OUTRO = "Full story, with every source, on {channel}."
+# a long video is planned as an outline, then written part by part (placeholders are filled with fill())
+OUTLINE = """
+
+THIS IS A LONG VIDEO, so plan it before writing it: about [minutes] minutes, [words] spoken words, [shots] shots.
+Break it into the parts of the plan, in order, and each part into beats. One beat is one thing the viewer SEES and
+learns (it becomes one or two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w
+slides, its lowest point marked" or "check: which way does w move if the slope is negative?". About [shots] beats.
+Reply with JSON: {"title": "YouTube title, max 70 characters, specific and curious, no clickbait words or ALL CAPS",
+ "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
+ "description": "2 or 3 plain sentences on what the video covers", "tags": ["8 to 12 search tags"],
+ "outro": "the closing sentences described above",
+ "parts": [{"title": "2 to 4 words", "beats": ["kind: what this beat shows and teaches", "..."]}]}"""
+ACT = """
+
+THE OUTLINE OF THE WHOLE VIDEO:
+[outline]
+
+Now write ONLY part [k] of [n], "[title]", shot by shot. Its beats:
+[beats]
+Write one or two shots per beat: [lo] to [hi] shots, about [words] spoken words in all. [first]
+[prev]
+Reply with JSON: {"scenes": [{"kind": "...", "narration": "...", "headline": "...", "kicker": "...",
+ "highlight": "...", "act": "", "facts": [], plus every field that shot's kind needs, exactly as described above}]}"""
+SHORT_PICK = """These are the shots of a video (index | kind | narration). Pick 4 or 5 beats for a vertical Short
+under 50 seconds that reuse these shots' pictures: beat 1 stops the scroll in at most 14 words; then the strongest
+moments, at most 20 words each (pictures of the idea make strong beats). Each beat's narration is a new line for
+the Short, saying only what that shot says.
+[rows]
+Reply with JSON: {"short": [{"scene": index, "narration": "..."}]}"""
+
+
+def fill(template: str, **values) -> str:
+    """str.format for prompts that also contain JSON braces: [name] placeholders."""
+    for k, v in values.items():
+        template = template.replace(f"[{k}]", str(v))
+    return template
 EXPAND = """These are the narration lines of an explainer video, one per shot, in order. The video is too short:
 together they should run about {total} spoken words, but they have {have}. Rewrite every line so it explains more:
 say what the viewer is watching, why it matters and what it means, in the same voice. Keep each line's meaning
@@ -294,6 +364,16 @@ def tighten(path: str, words: List[tuple]) -> List[tuple]:
     except RuntimeError:
         return words
     return [(s - a, e - a, w) for s, e, w in words]
+
+
+def join_pause(first: str, second: str, pause: float, dest: str) -> float:
+    """first, then `pause` seconds of silence, then second, as one clip at the voice's own format (so
+    mp3_seconds holds); returns the second the second part starts."""
+    mono = "aresample=24000,aformat=channel_layouts=mono"
+    ffmpeg(["-i", first, "-f", "lavfi", "-t", f"{pause:.2f}", "-i", "anullsrc=r=24000:cl=mono", "-i", second,
+            "-filter_complex", f"[0:a]{mono}[a];[2:a]{mono}[c];[a][1:a][c]concat=n=3:v=0:a=1[out]", "-map", "[out]",
+            "-ac", "1", "-ar", "24000", "-b:a", "48k", dest])
+    return mp3_seconds(first) + pause
 
 
 COMMONS = "https://commons.wikimedia.org/w/api.php"
@@ -467,16 +547,45 @@ LONG_SCALE = "1.3333333333333333"   # 1920x1080 layout rendered at 2560x1440: Yo
                                     # far higher bitrate, so text, formulas and thin lines stay crisp
 
 
+QUALITY = ["--muted", "--crf=16", "--x264-preset=slow", "--jpeg-quality=100"]   # quality over speed
+CHUNK_FRAMES = 2700       # one render machine's share of a long video (90 s of video, ~40 min of rendering)
+SOUNDTRACK = "soundtrack_en.mp3"
+
+
 def render(composition: str, props: str, soundtrack: str, dest: str, log: Callable[[str], None]) -> None:
     """Render the pictures silently, then put the soundtrack on: rendering with audio attached is three to
     four times slower in Remotion. Quality over speed: full-quality frames, low CRF, slow preset."""
     silent = dest + ".silent.mp4"
     scale = [f"--scale={LONG_SCALE}"] if composition == "Long" else []
-    remotion(["render", "src/index.jsx", composition, silent, f"--props={props}", "--muted", "--crf=16",
-              "--x264-preset=slow", "--jpeg-quality=100", *scale], log, timeout=4 * 3600)
+    remotion(["render", "src/index.jsx", composition, silent, f"--props={props}", *QUALITY, *scale], log,
+             timeout=5 * 3600)
     ffmpeg(["-i", silent, "-i", soundtrack, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
             "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest])
     os.remove(silent)
+
+
+def render_parts(total: int) -> List[tuple]:
+    """A long video's frame ranges, one per render machine (inclusive, as Remotion's --frames takes them)."""
+    n = max(1, math.ceil(total / CHUNK_FRAMES))
+    size = math.ceil(total / n)
+    return [(k * size, min(total, (k + 1) * size) - 1) for k in range(n)]
+
+
+def part_args(first: int, last: int, dest: str) -> List[str]:
+    """The Remotion command for one part, run in the video app with the job folder in public/job."""
+    return ["render", "src/index.jsx", "Long", dest, "--props=public/job/long.json", f"--frames={first}-{last}",
+            *QUALITY, f"--scale={LONG_SCALE}", "--log=error", "--timeout=120000"]
+
+
+def join_parts(parts: List[str], soundtrack: str, dest: str) -> None:
+    """The long video from its separately rendered parts (same encoder settings, each starting on a key frame,
+    so they join without re-encoding), with the soundtrack laid on."""
+    listing = dest + ".parts.txt"
+    with open(listing, "w", encoding="utf-8") as f:
+        f.write("".join(f"file '{os.path.abspath(p)}'\n" for p in parts))
+    ffmpeg(["-f", "concat", "-safe", "0", "-i", listing, "-i", soundtrack, "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest], timeout=3600)
+    os.remove(listing)
 
 
 def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]:
@@ -571,6 +680,60 @@ def _figure(text: str, allowed: str) -> str:
 
 def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", re.sub(r"\s+", " ", (text or "").lower())).strip()
+
+
+PERSONA = re.compile(r"\b(I'?m|I am) (in|at|sitting|standing|back in)\b|\bmy (lab|garage|desk|office|kitchen|notebook|"
+                     r"students?|class(room)?|studio|workshop|career|job|years)\b|\bwhen I was\b|\bI remember\b|"
+                     r"\bI'?ve (spent|worked|taught|been teaching)\b|\bin my (years|career|experience|work)\b", re.I)
+
+
+def strip_persona(text: str) -> str:
+    """Drop every sentence in which the narrator claims a life it does not have (a lab, a career, students)."""
+    return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s and not PERSONA.search(s))
+
+
+def maths_shown(scene: dict) -> str:
+    """Everything mathematical a shot shows on screen (its numbers may be spoken in its narration)."""
+    bits = [p["tex"] for p in scene.get("parts", [])] + [st["tex"] for st in scene.get("steps", [])]
+    bits += [c["fn"] + " " + c.get("tex", "") for c in (scene.get("graph") or {}).get("curves", [])]
+    if scene.get("surface"):
+        bits.append(scene["surface"]["fn"] + " " + scene["surface"].get("tex", ""))
+    if scene["kind"] == "check":
+        bits += [scene["question"], scene["why"], *scene["options"]]
+    return " ".join(bits)
+
+
+def _plain(tex: str) -> str:
+    """TeX arithmetic as plain maths (a TeX fraction becomes ((a)/(b)), a TeX dot or times becomes *), for
+    checking worked examples."""
+    t = re.sub(r"\\(left|right|,|;|!|quad|qquad)", " ", tex)
+    t = re.sub(r"\\(cdot|times)", "*", t).replace("\\div", "/").replace("\u2212", "-")
+    for _ in range(4):
+        t = re.sub(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}", r"((\1)/(\2))", t)
+    t = t.replace("{", "(").replace("}", ")")
+    return re.sub(r"(\d|\))\s*\(", r"\1*(", t)
+
+
+def arithmetic_ok(lines: List[str]) -> bool:
+    """False if any purely numeric step of a worked example is wrong ("2 * 3 + 1 = 8"). Steps with symbols
+    are not judged. Allows the rounding a displayed decimal implies."""
+    for line in lines:
+        sides = re.split(r"=|\\approx", _plain(line))
+        approx = "\\approx" in line
+        for a, b in zip(sides, sides[1:]):
+            a, b = a.strip(), b.strip()
+            if not (re.fullmatch(r"[\d.+\-*/^() ]+", a) and re.fullmatch(r"[\d.+\-*/^() ]+", b)
+                    and re.search(r"\d", a) and re.search(r"\d", b)):
+                continue
+            try:
+                x, y = mathexpr.compile_expr(a)(0, 0), mathexpr.compile_expr(b)(0, 0)
+            except (ValueError, ZeroDivisionError, OverflowError, TypeError):
+                continue
+            decimals = max((len(d) for d in re.findall(r"\.(\d+)", b)), default=0)
+            slack = 0.5 * 10 ** -decimals + 1e-9 + (0.02 * abs(y) if approx else 0)
+            if not (isinstance(x, float) and isinstance(y, float)) or abs(x - y) > slack:
+                return False
+    return True
 
 
 def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) -> dict:
@@ -678,8 +841,20 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
             del out["steps"]
         elif not steps:
             out["kind"] = "photo"
+    elif kind == "check":
+        options = [words(o, 7) for o in (sc.get("options") or [])[:4] if words(o, 7)]
+        try:
+            answer = int(sc.get("answer"))
+        except (TypeError, ValueError):
+            answer = -1
+        out.update(question=words(sc.get("question"), 16), options=options, answer=answer, why=words(sc.get("why"), 12))
+        if not out["question"] or len(options) < 2 or not 0 <= answer < len(options):
+            out["kind"] = "photo"
     elif kind == "chapter" and not out["headline"]:
         out["kind"] = "photo"
+    if out["kind"] in ("derive", "equation") and not arithmetic_ok(
+            [st["tex"] for st in out.get("steps", [])] + [" ".join(p["tex"] for p in out.get("parts", []))]):
+        out["kind"] = "photo"             # a worked example with wrong arithmetic is worse than none
     if not _verified(out["headline"], allowed):
         out["headline"] = re.sub(r"\S*\d\S*", "", out["headline"]).strip()   # no unverified figure in a headline
     return out
@@ -750,7 +925,21 @@ def typeset_errors(texs: List[str]) -> set:
         return set()
 
 
-def shape_prompt(brief: dict, style: str, title: str, facts: str) -> tuple:
+def lesson_text(lesson: Optional[dict]) -> str:
+    """Where this video sits in its course (empty for a standalone video)."""
+    if not lesson:
+        return ""
+    before = "; ".join(f"{p['title']} ({', '.join(p.get('key_ideas', [])[:3])})" for p in lesson.get("previous", [])[-3:])
+    nxt = lesson.get("next") or ""
+    return LESSON.format(number=lesson.get("number", 1), total=lesson.get("total", 1), course=lesson.get("course", ""),
+                         module=f", module \"{lesson['module']}\"" if lesson.get("module") else "",
+                         goal=lesson.get("goal", ""), ideas="; ".join(lesson.get("key_ideas", [])) or "-",
+                         visuals="; ".join(lesson.get("visuals", [])) or "-", before=before or "nothing yet, this is the start",
+                         after=f'The last shot before the outro says the next lesson is "{nxt}".' if nxt
+                         else "This is the last lesson: close the whole course.")
+
+
+def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
     """The writer's brief: the style's voice plus the plan made for this subject (braces escaped for the
     script prompt), and the number of shots that fits the planned length."""
     acts = "; ".join(f"{a['title']} ({a['job']})" for a in brief["acts"])
@@ -761,6 +950,9 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str) -> tuple:
                         tone=brief["tone"])
     if brief.get("maths"):
         text += MATHS_RULES
+    if style == "education":
+        text += TEACHING
+    text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots
 
@@ -775,9 +967,9 @@ def check_brief(raw, style: str) -> dict:
         if isinstance(a, dict) and str(a.get("title", "")).strip():
             acts.append({"title": " ".join(str(a["title"]).split()[:4]), "job": str(a.get("job", ""))[:160]})
     try:
-        minutes = min(5.0, max(2.0, float(raw.get("minutes", 3))))
+        minutes = min(12.0, max(2.0, float(raw.get("minutes", 9 if style == "education" else 4))))
     except (TypeError, ValueError):
-        minutes = 3.0
+        minutes = 9.0 if style == "education" else 4.0
 
     def s(k, d):
         return str(raw.get(k) or d)[:300]
@@ -797,6 +989,7 @@ def on_screen(scene: dict) -> List[str]:
             [i["label"] for i in scene.get("items", [])] + [e["label"] for e in scene.get("events", [])] +
             graphics.labels(scene.get("graphic")) + [p["label"] for p in scene.get("parts", [])] +
             [st["note"] for st in scene.get("steps", [])] + diagram.texts(scene.get("diagram")) +
+            ([scene["question"], scene["why"], *scene["options"]] if scene["kind"] == "check" else []) +
             ([scene["xlabel"], scene["ylabel"]] if scene["kind"] in ("plot", "graph", "surface") else []) +
             ([scene["zlabel"]] if scene["kind"] == "surface" else []))
 
@@ -817,6 +1010,9 @@ def with_text(scene: dict, texts: List[str]) -> dict:
         st["note"], rest = rest[0], rest[1:]
     if s.get("diagram"):
         rest = diagram.retext(s["diagram"], rest)
+    if s["kind"] == "check":
+        s["question"], s["why"] = rest[:2]
+        s["options"], rest = rest[2:2 + len(s["options"])], rest[2 + len(s["options"]):]
     if s["kind"] in ("plot", "graph", "surface"):
         s["xlabel"], s["ylabel"] = rest[:2]
         if s["kind"] == "surface":
@@ -833,9 +1029,10 @@ class VideoMaker:
         self.log = log
 
     # ---- script ---------------------------------------------------------------------------------------
-    def brief(self, title: str, facts: List[dict], style: str) -> dict:
-        """Plan this video's own shape (structure, parts, opening, ending, tone, mood) before writing it."""
-        short = "\n".join(f"- {f['claim'][:160]}" for f in facts[:30])
+    def brief(self, title: str, facts: List[dict], style: str, lesson: Optional[dict] = None) -> dict:
+        """Plan this video's own shape (structure, parts, opening, ending, tone, mood) before writing it. A course
+        lesson brings its goal, what it must cover and its planned length."""
+        short = "\n".join(f"- {f['claim'][:160]}" for f in facts[:30]) + lesson_text(lesson)
         rule = "pick the style that suits this subject best" if style not in VIDEO_STYLES else f'keep "{style}"'
         try:
             raw = self.llm.complete_json(BRIEF_PROMPT.format(title=title, style=style, facts=short, style_rule=rule,
@@ -845,25 +1042,97 @@ class VideoMaker:
             self.log(f"[video] no plan from the model ({exc}); writing without one")
             raw = {}
         b = check_brief(raw, style)
+        if lesson and lesson.get("minutes"):
+            b["minutes"] = min(12.0, max(6.0, float(lesson["minutes"])))
+            b["maths"] = b["maths"] or bool(lesson.get("maths"))
         self.log(f"[video] plan ({b['style']}, {b['minutes']:g} min{', maths' if b['maths'] else ''}): "
                  f"{b['structure'][:140]} | {' / '.join(a['title'] for a in b['acts'])}")
         self.log(f"[video] narrator: {b['narrator'][:140]} | device: {b['device'][:140]}")
         return b
 
+    def long_plan(self, rules: str, brief: dict, words_needed: int) -> Optional[dict]:
+        """A long video written part by part: an outline of the whole video first, then each part in its own
+        request (one request for 10 minutes comes back far too short). The Short is picked later, from the
+        finished shots. None if no outline came back."""
+        n_shots = round(brief["minutes"] * 7)
+        try:
+            outline = self.llm.complete_json(rules + fill(OUTLINE, minutes=f"{brief['minutes']:g}", words=words_needed,
+                                                          shots=n_shots), max_tokens=6000, temperature=0.6)
+        except LLMError as exc:
+            self.log(f"[video] no outline ({str(exc)[:80]}); writing in one go")
+            return None
+        parts = [p for p in (outline.get("parts") or [] if isinstance(outline, dict) else [])
+                 if isinstance(p, dict) and isinstance(p.get("beats"), list) and p["beats"]]
+        if not parts:
+            return None
+        total = sum(len(p["beats"]) for p in parts)
+        listing = "\n".join(f"{k + 1}. {p.get('title', '')}: " + " | ".join(str(b) for b in p["beats"])
+                             for k, p in enumerate(parts))
+        scenes = []
+        for k, part in enumerate(parts):
+            beats = [str(b) for b in part["beats"]][:16]
+            name = " ".join(str(part.get("title") or f"Part {k + 1}").split()[:4])
+            ask = rules + fill(ACT, outline=listing, k=k + 1, n=len(parts), title=name,
+                               beats="\n".join(f"- {b}" for b in beats), lo=len(beats), hi=2 * len(beats),
+                               words=round(words_needed * len(beats) / total * 1.1),
+                               first='Its first shot is the opening (see "Opening") and has "act": "".' if k == 0 else
+                               f'Its first shot has "act": "{name}"; every other shot has "act": "".',
+                               prev=f'The part before ended with: "{scenes[-1].get("narration", "")}"' if scenes else "")
+            got = []
+            for _ in range(2):            # a part that comes back empty is asked for once more
+                try:
+                    reply = self.llm.complete_json(ask, max_tokens=8000, temperature=0.7)
+                except LLMError:
+                    continue
+                got = [sc for sc in (reply.get("scenes") if isinstance(reply, dict) else reply) or []
+                       if isinstance(sc, dict) and str(sc.get("narration", "")).strip()]
+                if got:
+                    break
+            if got and k:
+                got[0]["act"] = name
+            scenes += got
+            self.log(f"[video] part {k + 1}/{len(parts)} \"{name}\": {len(got)} shots, "
+                     f"{sum(len(str(s['narration']).split()) for s in got)} words")
+        if len(scenes) < 5:
+            return None
+        return {**{k: outline.get(k) for k in ("title", "thumb_text", "thumb_highlight", "description", "tags", "outro")},
+                "scenes": scenes, "short": None}
+
+    def pick_short(self, scenes: List[dict], allowed: str) -> List[dict]:
+        """The Short's beats, chosen from the finished shots (their index is final, so the pictures match)."""
+        rows = "\n".join(f"{i} | {s['kind']} | {s['narration'][:140]}" for i, s in enumerate(scenes))
+        try:
+            reply = self.llm.complete_json(fill(SHORT_PICK, rows=rows), max_tokens=1500, temperature=0.5)
+        except LLMError:
+            reply = {}
+        beats = []
+        for item in (reply.get("short") if isinstance(reply, dict) else None) or []:
+            idx = item.get("scene") if isinstance(item, dict) else None
+            text = strip_unsupported_numbers(str((item or {}).get("narration", "")).strip(), allowed)
+            if isinstance(idx, int) and 0 <= idx < len(scenes) and text:
+                beats.append({"scene": idx, "narration": text})
+        return beats[:5]
+
     def script(self, title: str, facts: List[dict], sources: List[dict], style: str = "news",
-               brief: Optional[dict] = None, report: bool = False) -> dict:
-        """report: a full report is for sale and linked; otherwise the outro points to the sources only."""
+               brief: Optional[dict] = None, report: bool = False, lesson: Optional[dict] = None) -> dict:
+        """report: a full report is for sale and linked; otherwise the outro points to the sources only.
+        lesson: this video's place in a course (its goal, what it covers, what came before and after)."""
         lines = []
         for i, f in enumerate(facts, 1):
             src = sources[int(f["source"]) - 1] if str(f.get("source", "")).isdigit() else {}
             lines.append(f"{i}. [{domain(src.get('url', ''))}] {f['claim']} | \"{f.get('quote', '')[:240]}\"")
         brief = brief or check_brief({}, style)
-        shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines))
+        shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines), lesson)
         prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots).replace(
             "{outro_ask}", "the full report, with every source, is" if report else "every source is").replace(
             "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
-        plan = self.llm.complete_json(prompt, max_tokens=12000)
+        words_needed = round(brief["minutes"] * 150 * 0.75)      # ~150 spoken words a minute
+        plan = None
+        if brief["minutes"] >= LONG_MINUTES:
+            plan = self.long_plan(prompt.split("\nReturn JSON:")[0], brief, words_needed)
+        written_long = plan is not None
+        plan = plan or self.llm.complete_json(prompt, max_tokens=12000)
         kicker = KICKERS[int(hashlib.md5(title.encode()).hexdigest(), 16) % len(KICKERS)]
         allowed = " ".join(f"{f['claim']} {f.get('quote', '')}" for f in facts)
         quotes = " ".join(_norm(f.get("quote", "")) for f in facts)
@@ -881,8 +1150,7 @@ class VideoMaker:
 
         # a lesson without its maths, or a 4 minute plan narrated in 90 seconds, is not the video; ask once more
         need = max(5, len(plan.get("scenes") or []) * 2 // 5) if brief.get("maths") else 0
-        words_needed = round(brief["minutes"] * 150 * 0.75)      # ~150 spoken words a minute
-        for attempt in range(2):          # the best draft so far, rewritten up to twice while it falls short
+        for attempt in range(0 if written_long else 2):   # a one-go draft is rewritten up to twice while short
             notes = []
             if need and maths(plan) < need:
                 notes.append(f"it had only {maths(plan)} maths shots; this lesson needs at least {need} \"equation\", "
@@ -905,17 +1173,19 @@ class VideoMaker:
         if spoken_words(plan) < words_needed * 0.9:        # still short: the same shots, each explained more
             plan = self.expand(plan, words_needed)
         scenes, act, acts = [], "", 0
-        for sc in plan.get("scenes", [])[:32]:
+        for sc in plan.get("scenes", [])[:MAX_SCENES]:
             if not isinstance(sc, dict):
                 continue
             if sc.get("kind") == "chapter":        # an old-style title shot becomes the next shot's act sting
                 act = str(sc.get("headline") or "")
                 continue
             act = str(sc.get("act") or "").strip() or act
-            narration = strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()), allowed)
+            scene = check_scene(sc, allowed, quotes, countries)
+            # a fact's number must be in the research; a worked example's numbers must be on screen in the shot
+            narration = strip_persona(strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()),
+                                                                f"{allowed} {maths_shown(scene)}"))
             if not narration:
                 continue
-            scene = check_scene(sc, allowed, quotes, countries)
             used = [int(n) for n in sc.get("facts", []) if str(n).isdigit() and 0 < int(n) <= len(facts)]
             src = ""
             if used and str(facts[used[0] - 1].get("source", "")).isdigit():
@@ -944,7 +1214,7 @@ class VideoMaker:
                 sc.pop("graph", None)
                 sc.pop("surface", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
-        outro = strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed)
+        outro = strip_persona(strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed))
         if not 8 <= len(outro.split()) <= 60 or (not report and "report" in outro.lower()):
             outro = (OUTRO if report else OUTRO_SOURCES).format(facts=len(facts), channel=self.s.channel_name)
         scenes.append({"kind": "outro", "narration": outro, "kicker": "Full report below" if report else "Sources below",
@@ -953,6 +1223,8 @@ class VideoMaker:
                        "highlight": "report" if report else "sources",
                        "label": f"{len(facts)} verified facts · {len(sources)} sources", "number": "", "items": [],
                        "events": [], "countries": [], "quote": "", "speaker": "", "source": "", "subjects": []})
+        if plan.get("short") is None:      # a long video's Short is picked from its finished shots
+            plan["short"] = self.pick_short(scenes[:-1], allowed)
         short = []
         for item in plan.get("short", [])[:5]:
             idx = item.get("scene")
@@ -991,7 +1263,7 @@ class VideoMaker:
         return None
 
     # ---- assembly ---------------------------------------------------------------------------------------
-    def make(self, run_dir: str, email: bool = True, style: str = "") -> Dict[str, str]:
+    def make(self, run_dir: str, email: bool = True, style: str = "", lesson: Optional[dict] = None) -> Dict[str, str]:
         t0 = time.time()
         with open(os.path.join(run_dir, "research.json"), encoding="utf-8") as f:
             research = json.load(f)
@@ -1002,9 +1274,10 @@ class VideoMaker:
         self.log("\n=== Video: script, pictures, voices, sound, render ===")
         style = {"explainer": "education"}.get(style, style) or meta.get("style") or \
             ("news" if meta.get("source") != "topic" else "auto")
-        brief = self.brief(title, facts, style)
+        style = "education" if lesson else style
+        brief = self.brief(title, facts, style, lesson)
         plan = self.script(title, facts, sources, brief["style"], brief,
-                           report=bool((meta.get("gumroad") or {}).get("url")))
+                           report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
         scenes, beats = plan["scenes"], plan["short"]
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
                               f"{brief['mood']} {brief['tone']}", self.log)
@@ -1076,12 +1349,32 @@ class VideoMaker:
                 if not line.strip():
                     continue
                 kind, idx = ("long", i) if i < n_long else ("short", i - n_long)
-                jobs.append((line, VOICES[lang], os.path.join(job, f"{lang}_{kind}{idx}.mp3")))
+                path = os.path.join(job, f"{lang}_{kind}{idx}.mp3")
+                ask = line.find("?") + 1 if kind == "long" and scenes[idx]["kind"] == "check" else 0
+                if 0 < ask < len(line.rstrip()):   # a check: question and answer spoken apart, a pause between
+                    jobs += [(line[:ask].strip(), VOICES[lang], path[:-4] + "_q.mp3"),
+                             (line[ask:].strip(), VOICES[lang], path[:-4] + "_a.mp3")]
+                    keys += [(lang, kind, idx, "q"), (lang, kind, idx, "a")]
+                    continue
+                jobs.append((line, VOICES[lang], path))
                 keys.append((lang, kind, idx))
         spoken = {k: v for k, v in zip(keys, speak_all(jobs)) if v is not None}
         with ThreadPoolExecutor(max_workers=6) as pool:
             trimmed = list(pool.map(lambda kv: tighten(jobs[keys.index(kv[0])][2], kv[1]), spoken.items()))
         spoken = dict(zip(spoken, trimmed))
+        thinking = {}                     # (lang, shot) -> (second the question ends, second the answer starts)
+        for key in [k for k in spoken if len(k) == 4 and k[3] == "q"]:
+            lang, kind, idx, _ = key
+            q, a = spoken.pop(key), spoken.pop((lang, kind, idx, "a"), None)
+            if a is None:
+                continue
+            try:
+                off = join_pause(jobs[keys.index(key)][2], jobs[keys.index((lang, kind, idx, "a"))][2], CHECK_PAUSE,
+                                 os.path.join(job, f"{lang}_{kind}{idx}.mp3"))
+            except RuntimeError:
+                continue
+            spoken[(lang, kind, idx)] = q + [(s + off, e + off, w) for s, e, w in a]
+            thinking[(lang, idx)] = (q[-1][1] if q else 0.0, off)
         self.log(f"[video] {len(jobs)} narration clips spoken in {', '.join(texts)}")
 
         def clip(lang, kind, idx):
@@ -1122,7 +1415,10 @@ class VideoMaker:
                                                       FPS, LEAD),
                         "steps": graphics.timed_steps(s.get("steps", []), spoken.get(("en", "long", i), []), frames[i],
                                                       FPS, LEAD),
-                        "diagram": diagram.timed(s.get("diagram"), spoken.get(("en", "long", i), []), frames[i], FPS, LEAD)}
+                        "diagram": diagram.timed(s.get("diagram"), spoken.get(("en", "long", i), []), frames[i], FPS, LEAD),
+                        **({"think": LEAD + round(thinking.get(("en", i), (frames[i] * 0.4 / FPS, 0))[0] * FPS),
+                            "reveal": LEAD + round(thinking.get(("en", i), (0, frames[i] * 0.6 / FPS))[1] * FPS)}
+                           if s["kind"] == "check" else {})}
                        for i, s in enumerate(scenes)]
         # every diagram is rendered, looked at, corrected and kept only if it is good
         self.polish_diagrams(scenes, long_scenes, spoken, theme, job)
@@ -1155,8 +1451,6 @@ class VideoMaker:
                    self.log, [tempo.get((lang, i), 1.0) for i in range(n_long)])
             if lang != "en":
                 files[f"audio_track_{lang}.mp3"] = "audio"
-        self.log(f"[video] rendering the long video ({total / FPS:.0f}s)")
-        render("Long", props, os.path.join(job, "long_en.mp3"), os.path.join(out, "long_video_en.mp4"), self.log)
         files["long_video_en.mp4"] = "video"
         thumb_props = props
         hero = hero_shot(long_scenes, starts)
@@ -1179,15 +1473,6 @@ class VideoMaker:
         remotion(["still", "src/index.jsx", "Thumb", os.path.join(out, "thumbnail.png"), f"--props={thumb_props}",
                   "--jpeg-quality=100"], self.log)
         files["thumbnail.png"] = "thumbnail"
-        self.log("[video] quality check (contact sheet + stillness)")
-        try:
-            verdict = review(self.s, os.path.join(out, "long_video_en.mp4"), total / FPS, os.path.join(out, "contact_sheet.jpg"))
-        except Exception as exc:          # the check must never cost the videos
-            verdict = {}
-            self.log(f"[video] quality check failed: {type(exc).__name__}: {str(exc)[:120]}")
-        if os.path.exists(os.path.join(out, "contact_sheet.jpg")):
-            files["contact_sheet.jpg"] = "review"
-        self.log("[video] " + summary(verdict).replace("\n", "\n[video] "))
 
         # one Short per language: its own timing, on-screen text and karaoke captions in that language
         per_beat = [len(x) for x in shown]
@@ -1227,17 +1512,61 @@ class VideoMaker:
             render("Short", path, track, os.path.join(out, f"short_{lang}.mp4"), self.log)
             files[f"short_{lang}.mp4"] = "short"
 
-        product = (meta.get("gumroad") or {}).get("url", "")
-        n_lines = n_long + n_short + sum(per_beat)
+        # everything the last stage needs, so it can run here or on another machine after a farmed render
+        shutil.copy(os.path.join(job, "long_en.mp3"), os.path.join(out, SOUNDTRACK))
+        state = {"run_dir": os.path.abspath(run_dir), "files": files, "plan": plan, "texts": texts, "credits": credits,
+                 "n_lines": n_long + n_short + sum(per_beat), "product": (meta.get("gumroad") or {}).get("url", ""),
+                 "meta": meta, "sources": sources, "email": email, "total": total, "t0": t0, "lesson": lesson}
+        with open(os.path.join(out, "finish.json"), "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+        parts = render_parts(total)
+        if os.environ.get("RENDER_FARM") and len(parts) > 1:
+            plan_file = {"total": total, "parts": [{"frames": f"{a}-{b}", "args": part_args(a, b, f"parts/part{k:02d}.mp4")}
+                                                   for k, (a, b) in enumerate(parts)]}
+            with open(os.path.join(job, "render_plan.json"), "w", encoding="utf-8") as f:
+                json.dump(plan_file, f)
+            self.log(f"[video] the long video ({total / FPS:.0f}s) renders on {len(parts)} machines in parallel; "
+                     "the rest follows when they finish")
+            return {}
+        self.log(f"[video] rendering the long video ({total / FPS:.0f}s)")
+        render("Long", props, os.path.join(out, SOUNDTRACK), os.path.join(out, "long_video_en.mp4"), self.log)
+        return self.finish(out)
+
+    def finish(self, out: str) -> Dict[str, str]:
+        """The last stage: the long video joined from its parts (when several machines rendered it), the quality
+        check, the posting guide and the delivery."""
+        with open(os.path.join(out, "finish.json"), encoding="utf-8") as f:
+            st = json.load(f)
+        dest = os.path.join(out, "long_video_en.mp4")
+        parts = sorted(glob.glob(os.path.join(out, "parts", "part*.mp4")))
+        if not os.path.exists(dest) and parts:
+            self.log(f"[video] joining the {len(parts)} rendered parts")
+            join_parts(parts, os.path.join(out, SOUNDTRACK), dest)
+        if not os.path.exists(dest):
+            raise RuntimeError("the long video was not rendered")
+        files, plan, texts = st["files"], st["plan"], st["texts"]
+        self.log("[video] quality check (contact sheet + stillness)")
+        try:
+            verdict = review(self.s, dest, st["total"] / FPS, os.path.join(out, "contact_sheet.jpg"))
+        except Exception as exc:          # the check must never cost the videos
+            verdict = {}
+            self.log(f"[video] quality check failed: {type(exc).__name__}: {str(exc)[:120]}")
+        if os.path.exists(os.path.join(out, "contact_sheet.jpg")):
+            files["contact_sheet.jpg"] = "review"
+        self.log("[video] " + summary(verdict).replace("\n", "\n[video] "))
         with open(os.path.join(out, "posting_guide.txt"), "w", encoding="utf-8") as f:
-            f.write(summary(verdict) + "\n\n" + posting_guide(plan, texts, n_lines, credits, product, meta,
-                                                                sources))
+            f.write(summary(verdict) + "\n\n" + posting_guide(plan, texts, st["n_lines"], st["credits"], st["product"],
+                                                                st["meta"], st["sources"], st.get("lesson")))
         with open(os.path.join(out, "video_script.json"), "w", encoding="utf-8") as f:
-            json.dump({"plan": plan, "texts": texts, "credits": credits, "review": verdict}, f, indent=2,
+            json.dump({"plan": plan, "texts": texts, "credits": st["credits"], "review": verdict}, f, indent=2,
                       ensure_ascii=False)
-        shutil.rmtree(job, ignore_errors=True)
-        self.log(f"[video] done in {time.time() - t0:.0f}s: {', '.join(files)}")
-        self.deliver(run_dir, out, files, plan, email, verdict)
+        for leftover in [SOUNDTRACK, "finish.json"]:
+            if os.path.exists(os.path.join(out, leftover)):
+                os.remove(os.path.join(out, leftover))
+        shutil.rmtree(os.path.join(out, "parts"), ignore_errors=True)
+        shutil.rmtree(os.path.join(VIDEO_APP, "public", "job"), ignore_errors=True)
+        self.log(f"[video] done in {time.time() - st['t0']:.0f}s: {', '.join(files)}")
+        self.deliver(st["run_dir"], out, files, plan, st["email"], verdict)
         return {name: os.path.join(out, name) for name in files}
 
     def design_json(self, prompt: str, **kw):
@@ -1277,6 +1606,8 @@ class VideoMaker:
                and (explain or not s.get("graphic") or s["graphic"]["type"] == "kinetic")]
         if not idx:
             return
+        if len(idx) > DIAGRAM_MAX:        # spread the bespoke diagrams over the video (each costs vision calls)
+            idx = [idx[int(k * len(idx) / DIAGRAM_MAX)] for k in range(DIAGRAM_MAX)]
         made = diagram.design(self.design_json, scenes, idx, title, f"{brief['mood']} {brief['tone']}", _verified,
                               tex_complete, self.log)
         bad = typeset_errors([el["tex"] for s in scenes for el in (s.get("diagram") or {}).get("elements", [])
@@ -1407,14 +1738,17 @@ SR_SILENCE = sound.SR // 2
 
 
 def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
-                  meta: dict, sources: Optional[List[dict]] = None) -> str:
+                  meta: dict, sources: Optional[List[dict]] = None, lesson: Optional[dict] = None) -> str:
     credit_lines = "\n".join(f"- {c['subject']}: {c['author'] or 'see file page'}, {c['license']}, {c['file']}"
                              for c in credits) or "- none (no photos used)"
     report = f"Full report: {product}\n" if product else ""
     links = list(dict.fromkeys(s.get("url", "") for s in sources or [] if str(s.get("url", "")).startswith("http")))
     listed = "".join(f"- {u}\n" for u in links[:15]) + (f"- and {len(links) - 15} more\n" if len(links) > 15 else "")
     dubbed = [lang for lang in texts if lang != "en"]
-    parts = [f"POSTING GUIDE - {plan['title']}\n", "Nothing was posted automatically. Review the videos first.\n",
+    course = (f"COURSE: {lesson['course']} - lesson {lesson['number']} of {lesson['total']}"
+              f"{' (module: ' + lesson['module'] + ')' if lesson.get('module') else ''}. Add it to the playlist "
+              f"\"{lesson['course']}\" in this position.\n" if lesson else "")
+    parts = [f"POSTING GUIDE - {plan['title']}\n", course, "Nothing was posted automatically. Review the videos first.\n",
              "LONG VIDEO (YouTube)",
              "1. YouTube Studio > Create > Upload videos > long_video_en.mp4. Use the English title and description "
              "below and thumbnail.png. English captions are already in the picture; subtitles_en.srt is optional (CC).",
@@ -1438,6 +1772,9 @@ def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "finish":       # after a farmed render: python -m blogwriter.video finish <out>
+        VideoMaker(Settings.from_env()).finish(sys.argv[2])
+        sys.exit(0)
     if len(sys.argv) < 2:
         sys.exit("usage: python -m blogwriter.video output/<run folder> [--no-email] [--style=auto|news|story|education|concept]")
     VideoMaker(Settings.from_env()).make(sys.argv[1], email="--no-email" not in sys.argv,

@@ -1,7 +1,7 @@
 name: Make a video
 
-# Actions -> Make a video -> Run workflow: type any topic, a story, a lesson or a concept. "Now" makes it straight
-# away (several topics, separated by ;, run in parallel); "Queue" saves it and the daily run makes it.
+# Actions -> Make a video -> Run workflow: type any topic, a story, a lesson or a concept; several topics,
+# separated by ;, are made in parallel. (A whole course: use "Make a course".)
 # The video is emailed to MAIL_TO for review and never posted. The repo is public: do not type private details.
 on:
   workflow_dispatch:
@@ -14,11 +14,6 @@ on:
         type: choice
         options: [auto, education, story, concept, news]
         default: auto
-      when:
-        description: "now = start straight away | queue = made in the next daily run"
-        type: choice
-        options: [now, queue]
-        default: now
       level:
         description: "Audience level"
         type: choice
@@ -37,33 +32,10 @@ on:
 permissions:
   contents: write
   models: read
+  actions: write
 
 jobs:
-  enqueue:
-    if: inputs.when == 'queue'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: daily-news    # never edits the queue while a daily batch is picking from it
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Add to the queue
-        env:
-          TOPICS: ${{ inputs.topic }}
-          STYLE: ${{ inputs.style }}
-          LEVEL: ${{ inputs.level }}
-          DEPTH: ${{ inputs.depth }}
-          PUBLISH: ${{ inputs.publish && '--publish' || '' }}
-          BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          export APPLY='python3 blogwriter/videoqueue.py add "$TOPICS" --style "$STYLE" --level "$LEVEL" --mode "$DEPTH" $PUBLISH'
-          export MSG="queue: add $(date -u +%F)"
-          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
-          bash "$RUNNER_TEMP/commit.sh"
-          python3 blogwriter/videoqueue.py plan --take 100 | python3 -c "import json,sys; q=json.load(sys.stdin); print(f'{len(q)} topic(s) waiting:'); [print('-', j['topic'], '(' + j['style'] + ')') for j in q]" >> "$GITHUB_STEP_SUMMARY"
-
   plan:
-    if: inputs.when == 'now'
     runs-on: ubuntu-latest
     outputs:
       jobs: ${{ steps.plan.outputs.jobs }}

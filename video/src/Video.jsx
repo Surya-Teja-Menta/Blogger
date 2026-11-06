@@ -80,7 +80,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
           const scene = (x) => <Scene s={x} i={i} vertical={vertical}/>;
           // a shot that opens an act starts its own animation once the sting has passed; its cues move with it
           const late = (f) => (f == null ? f : Math.max(0, f - STING));
-          const shot = s.chapter ? {...s, cue: late(s.cue), hcue: late(s.hcue), graphic: s.graphic && {
+          const shot = s.chapter ? {...s, cue: late(s.cue), hcue: late(s.hcue), think: late(s.think), reveal: late(s.reveal), graphic: s.graphic && {
             ...s.graphic, at: late(s.graphic.at), words: (s.graphic.words || []).map(late),
             center: s.graphic.center && {...s.graphic.center, at: late(s.graphic.center.at)},
             nodes: (s.graphic.nodes || []).map((nd) => ({...nd, at: late(nd.at)}))},

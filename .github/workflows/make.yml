@@ -1,7 +1,8 @@
 name: Make one topic
 
-# The shared job behind "Daily news" and "Make a video": research one topic, write the report, make the videos
-# (emailed for review, never posted) and save the story history / queue state. Called once per topic, in parallel.
+# The shared job behind "Make a video" and "Make a course": research one topic, write the report and make the
+# videos (emailed for review, never posted). A long video is rendered on several machines at once (one part
+# each), then joined, checked and delivered. Called once per topic or lesson, in parallel.
 on:
   workflow_call:
     inputs:
@@ -13,18 +14,26 @@ on:
       publish: {type: boolean, default: false}       # list the report on Gumroad and post to the blogs
       video: {type: boolean, default: true}
       queue_id: {type: string, default: ""}          # set when the topic came from the queue
+      course: {type: string, default: ""}            # set for a course lesson: the course's slug ...
+      lesson_id: {type: string, default: ""}         # ... and the lesson's id in courses/<slug>.json
 
 permissions:
-  contents: write          # saves output/history.jsonl and queue/ back to the repo
+  contents: write          # saves output/history.jsonl, queue/ and courses/ back to the repo
   models: read             # GitHub Models (free LLM) through the built-in GITHUB_TOKEN
+  actions: write           # deletes this run's hand-over files once the video is delivered
 
 jobs:
   make:
     name: ${{ inputs.topic }}
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    outputs:
+      key: ${{ steps.farm.outputs.key }}
+      parts: ${{ steps.farm.outputs.parts }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}     # a course file planned moments ago is there
 
       - uses: actions/setup-python@v5
         with:
@@ -32,9 +41,6 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
-
-      - name: Fonts for Indian scripts
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-core
 
       - uses: actions/setup-node@v4
         if: inputs.video
@@ -77,7 +83,9 @@ jobs:
           RUN_LEVEL: ${{ inputs.level }}
           RUN_PUBLISH: ${{ inputs.publish }}
           RUN_VIDEO: ${{ inputs.video }}
+          RUN_LESSON: ${{ inputs.course != '' && format('{0}:{1}', inputs.course, inputs.lesson_id) || '' }}
           ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_FARM: "1"           # a long video is rendered by the parallel "render" jobs below
         run: |
           export LLM_PROVIDERS="${LLM_PROVIDERS:-cerebras,groq,gemini,nvidia,openrouter,github}"  # no Ollama here
           export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
@@ -86,11 +94,41 @@ jobs:
           [ -z "$RUN_STYLE" ] || args+=(--style "$RUN_STYLE")
           [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)
           [ "$RUN_VIDEO" != "true" ] || args+=(--video)
+          [ -z "$RUN_LESSON" ] || args+=(--lesson "$RUN_LESSON")
           python -u main.py "$RUN_TOPIC" "${args[@]}" 2>&1 | tee run.log
           status=${PIPESTATUS[0]}
           # the report can succeed while the video fails; a queued topic only counts as made with its video
           if [ "$RUN_VIDEO" = "true" ] && grep -q '^\[video\] FAILED' run.log; then status=1; fi
           exit $status
+
+      - name: Hand the long video to the render machines
+        id: farm
+        if: inputs.video && steps.run.outcome == 'success'
+        run: |
+          plan=video/public/job/render_plan.json
+          if [ -f "$plan" ]; then
+            out=$(dirname "$(ls -d output/*/video/finish.json | head -1)")
+            key=$(basename "$(dirname "$out")")
+            echo "key=$key" >> "$GITHUB_OUTPUT"
+            echo "parts=$(jq -c '[range(0; .parts | length)]' "$plan")" >> "$GITHUB_OUTPUT"
+            echo "out=$out" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep the job folder for the render machines
+        if: steps.farm.outputs.key != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-${{ steps.farm.outputs.key }}
+          path: video/public/job
+          retention-days: 1
+
+      - name: Keep the finished files for the last stage
+        if: steps.farm.outputs.key != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: out-${{ steps.farm.outputs.key }}
+          path: ${{ steps.farm.outputs.out }}
+          retention-days: 1
 
       - name: Save story history and queue
         if: always() && (steps.run.outcome == 'success' || inputs.queue_id != '')
@@ -106,4 +144,115 @@ jobs:
           fi
           export MSG="$( [ -n "$QUEUE_ID" ] && echo queue || echo history ): $RUN_TOPIC $(date -u +%F)"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"     # the checkout is reset while it runs
+          bash "$RUNNER_TEMP/commit.sh"
+
+  # one machine per part of the long video, all at once
+  render:
+    needs: make
+    if: needs.make.outputs.key != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: true
+      matrix:
+        part: ${{ fromJSON(needs.make.outputs.parts) }}
+    name: render part ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: video/package-lock.json
+      - name: Video renderer
+        working-directory: video
+        run: npm ci --no-audit --no-fund && npx remotion browser ensure
+      - uses: actions/download-artifact@v4
+        with:
+          name: job-${{ needs.make.outputs.key }}
+          path: video/public/job
+      - name: Render this part
+        working-directory: video
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          mapfile -t args < <(jq -r ".parts[$PART].args[]" public/job/render_plan.json)
+          mkdir -p parts
+          npx remotion "${args[@]}" || npx remotion "${args[@]}"       # once more if the browser stumbled
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ needs.make.outputs.key }}-${{ matrix.part }}
+          path: video/parts
+          retention-days: 1
+
+  # join the parts, check the video, write the posting guide and email it
+  finish:
+    needs: [make, render]
+    if: needs.make.outputs.key != '' && needs.render.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+      - uses: actions/download-artifact@v4
+        with:
+          name: out-${{ needs.make.outputs.key }}
+          path: output/${{ needs.make.outputs.key }}/video
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-${{ needs.make.outputs.key }}-*
+          path: output/${{ needs.make.outputs.key }}/video/parts
+          merge-multiple: true
+      - name: Join, check and deliver
+        env:
+          KEY: ${{ needs.make.outputs.key }}
+        run: python -u -m blogwriter.video finish "output/$KEY/video"
+      - name: Delete the hand-over files
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ needs.make.outputs.key }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+        run: |
+          gh api "repos/$REPO/actions/runs/$RUN/artifacts?per_page=100" --jq ".artifacts[] | select(.name | contains(\"$KEY\")) | .id" |
+            while read -r id; do gh api -X DELETE "repos/$REPO/actions/artifacts/$id" || true; done
+
+  # a course lesson reports back whether its video was made
+  record:
+    needs: [make, render, finish]
+    if: always() && inputs.course != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mark the lesson done or failed
+        env:
+          SLUG: ${{ inputs.course }}
+          LESSON: ${{ inputs.lesson_id }}
+          OK: ${{ needs.make.result == 'success' && needs.render.result != 'failure' && needs.render.result != 'cancelled' && needs.finish.result != 'failure' && needs.finish.result != 'cancelled' }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          flag=$([ "$OK" = "true" ] && echo --ok || echo --failed)
+          export APPLY='python3 blogwriter/course.py done "$SLUG" "$LESSON" '"$flag"
+          export MSG="course: $SLUG $LESSON $flag"
+          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
           bash "$RUNNER_TEMP/commit.sh"
