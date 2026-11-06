@@ -633,7 +633,7 @@ export const OutroScene = ({s, i, vertical}) => {
   const press = frame > 64 ? spring({frame: frame - 64, fps: 30, config: {damping: 10}}) : 0;
   return (
     <AbsoluteFill style={{alignItems: "center", justifyContent: "center"}}>
-      <Backdrop word="REPORT" i={i}/>
+      <Backdrop word={s.card ? "" : "REPORT"} i={i}/>
       <div style={{display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: vertical ? 70 : 120}}>
         <div style={{perspective: 1400}}>
           <div style={{width: vertical ? 560 : 520, height: vertical ? 740 : 690, borderRadius: 18,
@@ -641,7 +641,8 @@ export const OutroScene = ({s, i, vertical}) => {
                        padding: 50, boxSizing: "border-box", position: "relative",
                        transform: `rotateY(${-22 + 8 * Math.sin(frame / 50)}deg) rotateX(6deg) translateY(${(1 - p) * 80}px)`,
                        boxShadow: `30px 40px 80px ${alpha("#000000", 0.45)}, 0 0 80px ${alpha(C.accent, 0.2)}`, opacity: p}}>
-            <div style={{fontFamily: FONT.body, fontWeight: 800, letterSpacing: 6, fontSize: 22, color: C.accent}}>DOCUMENTARY REPORT</div>
+            <div style={{fontFamily: FONT.body, fontWeight: 800, letterSpacing: 6, fontSize: 22, color: C.accent,
+                         textTransform: "uppercase"}}>{s.card || "Documentary report"}</div>
             <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: Math.min(70, 760 / Math.max(6, ...String(s.headline || "").split(" ").map((w) => w.length))),
                          lineHeight: 1.05, color: C.text, marginTop: 30, overflowWrap: "anywhere"}}>{s.headline}</div>
             <div style={{position: "absolute", left: 50, right: 50, bottom: 50, fontFamily: FONT.body, fontSize: 26, color: C.muted,

@@ -141,8 +141,8 @@ SCRIPT_PROMPT = """{shape}
 - Spoken style: short sentences, plain words, contrast and stakes. Name sources naturally ("Reuters reports").
   No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
-- "outro": 1 or 2 closing sentences in this video's own voice that say the full report, with every source,
-  is linked in the description, and invite the viewer to subscribe. Not a slogan; make it fit the story.
+- "outro": 1 or 2 closing sentences in this video's own voice that say {outro_ask} linked in the description,
+  and invite the viewer to subscribe. Not a slogan; make it fit the story.
 
 VISUALS: pick a "kind" per shot, never the same kind twice in a row, at least 7 different kinds overall.
 About a third of shots are "photo" shots; the rest are graphics. Whenever the facts hold several comparable
@@ -208,6 +208,8 @@ scroll in at most 14 words; then the strongest facts, at most 20 words each. Cha
 
 OUTRO = ("That's the short version. The full report has {facts} verified facts, and every source is linked. "
          "It's in the description. And if you want one story like this, researched properly, every day, subscribe.")
+OUTRO_SOURCES = ("Every one of the {facts} facts in this video was checked, and every source is linked in the "
+                 "description. If you want more like this, explained properly, subscribe.")
 SHORT_OUTRO = "Full story, with every source, on the channel."
 ATLAS = os.path.join(VIDEO_APP, "node_modules", "world-atlas", "countries-50m.json")
 COUNTRY_ALIASES = {"united states": "United States of America", "usa": "United States of America",
@@ -807,14 +809,16 @@ class VideoMaker:
         return b
 
     def script(self, title: str, facts: List[dict], sources: List[dict], style: str = "news",
-               brief: Optional[dict] = None) -> dict:
+               brief: Optional[dict] = None, report: bool = False) -> dict:
+        """report: a full report is for sale and linked; otherwise the outro points to the sources only."""
         lines = []
         for i, f in enumerate(facts, 1):
             src = sources[int(f["source"]) - 1] if str(f.get("source", "")).isdigit() else {}
             lines.append(f"{i}. [{domain(src.get('url', ''))}] {f['claim']} | \"{f.get('quote', '')[:240]}\"")
         brief = brief or check_brief({}, style)
         shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines))
-        prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots)
+        prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots).replace(
+            "{outro_ask}", "the full report, with every source, is" if report else "every source is")
         prompt = prompt.replace("{{", "{").replace("}}", "}")
         plan = self.llm.complete_json(prompt, max_tokens=12000)
         kicker = KICKERS[int(hashlib.md5(title.encode()).hexdigest(), 16) % len(KICKERS)]
@@ -895,10 +899,12 @@ class VideoMaker:
                 sc.pop("graph", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
         outro = strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed)
-        if not 8 <= len(outro.split()) <= 60:
-            outro = OUTRO.format(facts=len(facts))
-        scenes.append({"kind": "outro", "narration": outro, "kicker": "Full report below",
-                       "headline": str(plan.get("thumb_text") or title)[:40], "highlight": "report",
+        if not 8 <= len(outro.split()) <= 60 or (not report and "report" in outro.lower()):
+            outro = (OUTRO if report else OUTRO_SOURCES).format(facts=len(facts))
+        scenes.append({"kind": "outro", "narration": outro, "kicker": "Full report below" if report else "Sources below",
+                       "card": "Documentary report" if report else "Checked facts",
+                       "headline": str(plan.get("thumb_text") or title)[:40],
+                       "highlight": "report" if report else "sources",
                        "label": f"{len(facts)} verified facts · {len(sources)} sources", "number": "", "items": [],
                        "events": [], "countries": [], "quote": "", "speaker": "", "source": "", "subjects": []})
         short = []
@@ -951,7 +957,8 @@ class VideoMaker:
         style = {"explainer": "education"}.get(style, style) or meta.get("style") or \
             ("news" if meta.get("source") != "topic" else "auto")
         brief = self.brief(title, facts, style)
-        plan = self.script(title, facts, sources, brief["style"], brief)
+        plan = self.script(title, facts, sources, brief["style"], brief,
+                           report=bool((meta.get("gumroad") or {}).get("url")))
         scenes, beats = plan["scenes"], plan["short"]
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
                               f"{brief['mood']} {brief['tone']}", self.log)
@@ -1174,7 +1181,8 @@ class VideoMaker:
         product = (meta.get("gumroad") or {}).get("url", "")
         n_lines = n_long + n_short + sum(per_beat)
         with open(os.path.join(out, "posting_guide.txt"), "w", encoding="utf-8") as f:
-            f.write(summary(verdict) + "\n\n" + posting_guide(plan, texts, n_lines, credits, product, meta))
+            f.write(summary(verdict) + "\n\n" + posting_guide(plan, texts, n_lines, credits, product, meta,
+                                                                sources))
         with open(os.path.join(out, "video_script.json"), "w", encoding="utf-8") as f:
             json.dump({"plan": plan, "texts": texts, "credits": credits, "review": verdict}, f, indent=2,
                       ensure_ascii=False)
@@ -1323,25 +1331,31 @@ SR_SILENCE = sound.SR // 2
 
 
 def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
-                  meta: dict) -> str:
+                  meta: dict, sources: Optional[List[dict]] = None) -> str:
     credit_lines = "\n".join(f"- {c['subject']}: {c['author'] or 'see file page'}, {c['license']}, {c['file']}"
                              for c in credits) or "- none (no photos used)"
     report = f"Full report: {product}\n" if product else ""
+    links = list(dict.fromkeys(s.get("url", "") for s in sources or [] if str(s.get("url", "")).startswith("http")))
+    listed = "".join(f"- {u}\n" for u in links[:15]) + (f"- and {len(links) - 15} more\n" if len(links) > 15 else "")
+    dubbed = [lang for lang in texts if lang != "en"]
     parts = [f"POSTING GUIDE - {plan['title']}\n", "Nothing was posted automatically. Review the videos first.\n",
              "LONG VIDEO (YouTube)",
              "1. YouTube Studio > Create > Upload videos > long_video_en.mp4. Use the English title and description "
              "below and thumbnail.png. English captions are already in the picture; subtitles_en.srt is optional (CC).",
-             "2. After it is processed: Studio > Subtitles > Add language (Hindi, Telugu, ...). For each language: "
-             "Audio > Add > upload audio_track_<lang>.mp3; Subtitles > Upload file > subtitles_<lang>.srt; "
-             "Title & description > add the translated text below.",
-             "3. Viewers then hear the video in their own language from one video and one view count.\n",
-             "SHORTS: upload short_<lang>.mp4 as separate Shorts with that language's title.\n",
+             *(["2. After it is processed: Studio > Subtitles > Add language. For each language: "
+                "Audio > Add > upload audio_track_<lang>.mp3; Subtitles > Upload file > subtitles_<lang>.srt; "
+                "Title & description > add the translated text below.",
+                "3. Viewers then hear the video in their own language from one video and one view count.\n"]
+               if dubbed else [""]),
+             "SHORTS: upload short_<lang>.mp4 as separate Shorts with that language's title.\n" if dubbed else
+             "SHORT: upload short_en.mp4 as a YouTube Short with the title below.\n",
              "Music and sound effects are generated by the pipeline itself: no licence or credit needed.\n"
              "Credits below cover the photos and video clips (Wikimedia Commons, NASA, Pixabay).\n"]
     for lang, lines in texts.items():
         title, desc = lines[n_lines], lines[n_lines + 1]
         parts.append(f"===== {LANGS[lang].upper()} =====\nTitle: {title}\nDescription:\n{desc}\n\n{report}"
                      f"Sources: {meta.get('sources', '?')} sources, {meta.get('verified_facts', '?')} verified facts.\n"
+                     f"{listed}"
                      f"Photo and footage credits (required by the licences):\n{credit_lines}\n")
     parts.append("Tags: " + ", ".join(plan["tags"]))
     return "\n".join(parts) + "\n"

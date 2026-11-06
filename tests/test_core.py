@@ -1063,8 +1063,20 @@ def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
     assert plan["scenes"][0]["number"] == "$115B" and plan["scenes"][0]["source"] == "reuters.com"
     assert plan["scenes"][1]["number"] == "" and narr[1] == "It was big."      # 7 is not a verified number
     assert "Talks began in 2024." not in narr                                   # nor is 2024
-    assert plan["scenes"][-1]["kind"] == "outro" and "1 verified facts" in narr[-1]
+    assert plan["scenes"][-1]["kind"] == "outro" and "every source is linked" in narr[-1]
+    assert plan["scenes"][-1]["kicker"] == "Sources below" and "report" not in narr[-1]     # no report to promise
     assert [b["scene"] for b in plan["short"]] == [0, len(plan["scenes"]) - 1]   # bad index dropped, ending added
+    sold = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", facts, sources, report=True)
+    assert "1 verified facts" in sold["scenes"][-1]["narration"] and sold["scenes"][-1]["kicker"] == "Full report below"
+
+
+def test_posting_guide_lists_the_sources_and_only_the_languages_made():
+    from blogwriter.video import posting_guide
+    plan = {"title": "T", "tags": ["a"]}
+    guide = posting_guide(plan, {"en": ["line", "Title", "Desc"]}, 1, [], "", {"sources": 2, "verified_facts": 3},
+                          [{"url": "https://a.org/x"}, {"url": "https://b.com/y"}, {"url": "https://a.org/x"}, {"url": ""}])
+    assert "Add language" not in guide and "short_en.mp4" in guide
+    assert guide.count("- https://a.org/x") == 1 and "- https://b.com/y" in guide
 
 
 def test_video_translation_must_keep_the_line_count_or_the_language_is_skipped():
@@ -1157,7 +1169,7 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
             assert "MATHS INTUITION" in prompt and r"\frac{1}{n}" in prompt and "28 to 40 scenes" in prompt
             assert "{shape}" not in prompt and "{shots}" not in prompt and "{{" not in prompt
             return {"title": "T", "thumb_text": "x", "description": "D", "tags": [],
-                    "outro": "So the ship was never lost. The full report and every source are in the description.",
+                    "outro": "So the ship was never lost. Every source is in the description, so check it yourself.",
                     "scenes": [{"kind": "hook", "narration": "Why does light win?"},
                                {"kind": "chapter", "narration": "Part one.", "headline": "The idea"},
                                {"kind": "photo", "narration": "Light is fast."},
