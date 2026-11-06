@@ -2,6 +2,7 @@
 // the act sting, the transitions and the film finish. Colours and fonts come from the theme (theme.js).
 import React from "react";
 import {AbsoluteFill, Img, OffthreadVideo, interpolate, random, spring, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
+import {noise2D} from "@remotion/noise";
 import {pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
@@ -114,17 +115,22 @@ export const Glass = ({children, style = {}, p = 1, glow}) => (
   </div>
 );
 
-// The scene's content drifts in 3D very slowly, like a camera on a slider: nothing is ever perfectly still.
+// The scene's content moves in 3D like a camera held by an operator: a slow push across the shot plus an organic
+// sway (simplex noise, @remotion/noise), never a mechanical back-and-forth. Nothing is ever perfectly still.
 export const Camera = ({children, i = 0, amount: base = 1}) => {
   const amount = base * (((C.fx || {}).camera) ?? 1);
   const frame = useCurrentFrame();
   const {durationInFrames} = useVideoConfig();
   const t = frame / Math.max(1, durationInFrames);
   const dir = i % 2 ? 1 : -1;
+  const sway = (key, period) => noise2D(`${key}-${i}`, frame / period, 0);
+  const ry = dir * (1.6 - 3.2 * t) * amount + sway("ry", 150) * 1.7 * amount;
+  const rx = (0.8 - 1.6 * t) * amount + sway("rx", 170) * 1.1 * amount;
+  const tx = dir * t * 24 * amount + sway("tx", 120) * 12 * amount, ty = sway("ty", 140) * 8 * amount;
   return (
     <AbsoluteFill style={{perspective: 1800}}>
-      <AbsoluteFill style={{transform: `rotateY(${dir * (2.6 - 5.2 * t) * amount}deg) rotateX(${(1.2 - 2.4 * t) * amount}deg) `
-                                       + `scale(${1 + 0.06 * t * amount}) translateX(${dir * t * 30 * amount}px)`}}>
+      <AbsoluteFill style={{transform: `rotateY(${ry}deg) rotateX(${rx}deg) scale(${1 + 0.05 * t * amount}) `
+                                       + `translate(${tx}px, ${ty}px)`}}>
         {children}
       </AbsoluteFill>
     </AbsoluteFill>

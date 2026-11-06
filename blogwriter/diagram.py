@@ -1,6 +1,7 @@
-"""Bespoke animated diagrams: for each shot a language model draws what the sentence explains, from a small
-drawing vocabulary (points, point clouds, lines, arrows, curves, boxes, bars, labels, icons, formulas), and says on
-which spoken word each piece appears, moves, glows or leaves. video/src/diagram.jsx draws it. Nothing here is a
+"""Bespoke animated diagrams: for each shot a language model draws what the sentence explains, from a drawing
+vocabulary (points, point clouds, lines, arrows, curves, boxes, bars, labels, icons, formulas, morphing shapes, crowds
+of icons, counters, live random samples and real physics), and says on which spoken word each piece appears, moves,
+glows, is marked by a hand-drawn pen, or leaves. video/src/diagram.jsx draws it. Nothing here is a
 layout template: the model composes every picture for its sentence. The guard rails are in the checking: known
 pieces only, everything on the canvas, short labels taken from the narration, numbers only if they are spoken,
 formulas KaTeX can typeset, labels that do not collide; and after rendering a vision model scores each diagram
@@ -10,7 +11,13 @@ from typing import Callable, Dict, List, Optional
 
 from . import graphics
 
-TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex")
+TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex",
+         "samples", "physics", "counter", "shape", "crowd")
+REGIONS = ("samples", "physics", "crowd")          # parts that fill a box of the canvas
+SOURCES = ("uniform", "skewed", "exponential", "bimodal", "normal", "dice", "coin")
+SHAPES = ("circle", "square", "triangle", "diamond", "hexagon", "star", "heart")
+MARKS = ("circle", "underline", "box", "cross")
+MOTIONS = ("move", "glow", "hide", "mark", "fit")
 COLOURS = ("accent", "hot", "cool", "violet", "text", "muted")
 ANIMS = ("pop", "draw", "fade", "grow")
 SIZES = ("s", "m", "l")
@@ -35,6 +42,23 @@ narration at which it appears, copied exactly from the narration, or "" for the 
 - "bar": x (left), y (baseline, bottom), w, h (height upwards), optional "text" under it (max 3 words)
 - "icon": x, y, "name" (one of: {icons}), size
 - "tex": x, y, "tex" (KaTeX, short), "size": s, m or l
+- "shape": x, y, size, "shape": circle, square, triangle, diamond, hexagon, star or heart, "fill": true/false
+- "counter": x, y, "from", "to" (numbers the narration says), optional "text" after the number (max 3 words), "size":
+  the number counts from "from" to "to" when it appears (a total climbing, a price falling)
+- "crowd": x, y (top-left), w, h, "name" (an icon from the list, e.g. user), "count": 4 to 100 icons in a grid,
+  "highlight": how many of them light up (on the crowd's "glow" word): shares, odds, "1 in 10", a sample of people
+- "samples": x, y (top-left), w, h (a big region: w at least 40, h at least 50): random values falling one by one
+  into a histogram that builds while the narration runs (the first few slowly, then a time-lapse; a counter shows
+  how many). "source": where one value comes from: uniform, skewed, exponential, bimodal, normal, dice or coin;
+  "n": how many values each dot averages (1 = single values, 30 = every dot is the average of 30); "count": dots
+  (30 to 600); "lo", "hi": the axis range in the example's own units (e.g. 10 and 70); "unit": the axis unit (max 2
+  words, e.g. "minutes"); "text": what one dot is (max 5 words); "mean": true marks the average. Use it whenever the
+  sentence is about chance, averages, spread, sampling, noise, risk or a distribution: the viewer SEES it happen.
+- "physics": x, y (top-left), w, h (a tall region: h at least 60): balls dropped into a real physics simulation.
+  "balls": 20 to 160; "pegs": rows of pegs they bounce through (0 to 12; 10 makes a Galton board); "bins": bins at
+  the bottom (0 = none; with pegs there is one bin per landing spot); "drop": "center" (one stream) or "spread"
+  (rain over the width); "text": what is counted (max 4 words). Use it for many small random pushes adding up,
+  things piling up, filling, overflowing or sorting by chance.
 MOTION (optional on any element, each with its own "on" word, which must come after the element's own "on" word):
 - "move": {{"on": word, then the new x, y (or x1, y1, x2, y2 for a line or arrow; h for a bar; r for a circle)}}
   A "curve" or "dots" can RESHAPE: give the new "points" (same count) and the shape morphs into them (a straight
@@ -42,6 +66,13 @@ MOTION (optional on any element, each with its own "on" word, which must come af
   A "dot" can TRAVEL along a curve: give "along": the curve's "id" (give that curve an "id"), plus the x, y it
   stops at; it rides the curve exactly (a ball rolling down a cost curve, a point sliding along a path).
 - "glow": {{"on": word}} (it pulses to draw the eye)      - "hide": {{"on": word}} (it fades away)
+- "mark": {{"on": word, "style": circle, underline, box or cross}}: a hand-drawn pen mark on it, like a teacher on a
+  board (cross = this is wrong)
+- "fit": {{"on": word}} (samples and physics only): the pile melts into the smooth bell curve that fits it
+- A "shape" can MORPH: "move" with a new "shape" (and size) turns it into that shape (an idea becoming another).
+CAMERA: the camera pushes in on each piece as its word is spoken and pulls back to the whole picture at the end, so
+give each new idea its own piece and its own word; samples and physics run for the rest of the shot, so they start
+on an early word.
 
 RULES: labels use words from the narration, placed right next to what they name; never write a number that is not
 in the narration; text never overlaps other text or shapes; one idea per diagram; the eye follows the sentence."""
@@ -79,7 +110,7 @@ Two examples of the standard expected (do not copy them; draw what YOUR sentence
  {{"type": "line", "color": "accent", "x1": 38, "y1": 82, "x2": 62, "y2": 82, "on": "flat", "glow": {{"on": "flat"}}}},
  {{"type": "label", "color": "hot", "x": 50, "y": 93, "text": "the slope is flat", "size": "m", "on": "flat"}}]
 
-Shots (index | headline | narration):
+Shots (index | headline | narration | WANTED: the picture the writer asked for, when given; build that):
 {shots}
 
 Reply with a JSON list: [{{"scene": index, "elements": [...]}}]"""
@@ -87,6 +118,7 @@ Reply with a JSON list: [{{"scene": index, "elements": [...]}}]"""
 REFINE = """You designed this animated diagram for one shot of an educational YouTube video.
 Narration: "{narration}"
 Headline (drawn above the canvas): "{headline}"
+The picture the writer asked for: "{picture}"
 The image is the shot's last frame as rendered. Its JSON:
 {diagram}
 
@@ -111,15 +143,17 @@ def refine_prompt(scene: dict, d: dict, icons: str) -> str:
     import json as _json
     plain = [{k: v for k, v in el.items() if k not in ("at",)} for el in d["elements"]]
     for el in plain:
-        for m in ("move", "glow", "hide"):
+        for m in MOTIONS:
             if isinstance(el.get(m), dict):
                 el[m] = {k: v for k, v in el[m].items() if k != "at"}
     return REFINE.format(narration=scene.get("narration", ""), headline=scene.get("headline", ""),
+                         picture=scene.get("picture") or "(none: show what the narration says)",
                          diagram=_json.dumps(plain), icons=icons)
 
 
 def prompt(scenes: List[dict], idx: List[int], title: str, mood: str) -> str:
-    rows = "\n".join(f"{i} | {scenes[i].get('headline', '')} | {scenes[i].get('narration', '')}" for i in idx)
+    rows = "\n".join(f"{i} | {scenes[i].get('headline', '')} | {scenes[i].get('narration', '')}"
+                     + (f" | WANTED: {scenes[i]['picture']}" if scenes[i].get("picture") else "") for i in idx)
     return PROMPT.format(title=title, mood=mood or "-", icons=" ".join(sorted(graphics.ICONS)), shots=rows)
 
 
@@ -151,9 +185,14 @@ def _boxes(el: dict) -> List[tuple]:
     """Rough text extents (x0, y0, x1, y1 in canvas units; x is 2.5x wider) for collision checks."""
     out = []
     size = {"s": 4.5, "m": 6.5, "l": 9}.get(el.get("size", "m"), 6.5)
+    if el["type"] == "counter":
+        size = {"s": 4.5, "m": 6.5, "l": 9}.get(el.get("size", "l"), 9) * 1.6
+        t = f'{el["to"]} {el.get("text", "")}'.strip()
+        w = len(t) * size * 0.55 / 2.5
+        return [(el["x"] - w / 2, el["y"] - size / 2, el["x"] + w / 2, el["y"] + size / 2)]
     for key in ("text",):
         t = el.get(key)
-        if not t:
+        if not t or el["type"] in REGIONS:          # a region's caption is drawn inside its own box
             continue
         w = len(t) * size * 0.55 / 2.5          # characters to x-units on a 2.5:1 canvas
         if el["type"] == "label":
@@ -175,6 +214,10 @@ def _solids(el: dict) -> List[tuple]:
     if t == "icon":
         h = el["size"] / 2
         return [(el["x"] - h / 2.5, el["y"] - h, el["x"] + h / 2.5, el["y"] + h)]
+    if t in REGIONS:
+        return [(el["x"], el["y"], el["x"] + el["w"], el["y"] + el["h"])]
+    if t == "shape":
+        return [(el["x"] - el["size"] / 2.5, el["y"] - el["size"], el["x"] + el["size"] / 2.5, el["y"] + el["size"])]
     if t == "tex":
         h = {"s": 5, "m": 7, "l": 10}[el["size"]]
         w = len(re.sub(r"\\[a-zA-Z]+|[{}_^ ]", "", el["tex"])) * h * 0.6 / 2.5 + 2
@@ -241,8 +284,47 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
         el = {"type": t, "color": e.get("color") if e.get("color") in COLOURS else ("accent" if t != "label" else "text"),
               "on": _on(e.get("on"), narration), "anim": e.get("anim") if e.get("anim") in ANIMS else ""}
         xy = lambda k, d=50: _num(e.get(k), 3, 97, d)          # noqa: E731
-        if t in ("dot", "circle", "label", "icon", "tex"):
+        if t in ("dot", "circle", "label", "icon", "tex", "shape", "counter"):
             el.update(x=xy("x"), y=xy("y"))
+        if t in REGIONS:
+            lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10)}[t]
+            el.update(x=_num(e.get("x"), 3, 97 - lo_w, 10), y=_num(e.get("y"), 3, 97 - lo_h, 10))
+            el.update(w=_num(e.get("w"), lo_w, 97 - el["x"], max(lo_w, 60)), h=_num(e.get("h"), lo_h, 97 - el["y"], max(lo_h, 70)))
+        if t == "samples":
+            src = str(e.get("source") or "").lower()
+            el.update(source=src if src in SOURCES else "skewed", n=int(_num(e.get("n"), 1, 100, 1)),
+                      count=int(_num(e.get("count"), 30, 600, 300)), unit=_words(e.get("unit"), 2),
+                      text=_words(e.get("text"), 5), mean=bool(e.get("mean")))
+            lo, hi = _num(e.get("lo"), -1e6, 1e6, 0), _num(e.get("hi"), -1e6, 1e6, 100)
+            if hi <= lo:
+                lo, hi = 0, 100
+            if el["source"] == "coin" and "lo" not in e and "hi" not in e:
+                lo, hi = 0, 1
+            el.update(lo=lo, hi=hi)
+        if t == "physics":
+            bins = e.get("bins")
+            el.update(balls=int(_num(e.get("balls"), 20, 160, 110)), pegs=int(_num(e.get("pegs"), 0, 12, 10)),
+                      bins=0 if bins in (0, False, "0") else int(_num(bins, 3, 15, 9)),
+                      drop="spread" if e.get("drop") == "spread" else "center", text=_words(e.get("text"), 4))
+        if t == "counter":
+            try:
+                el.update(to=float(e.get("to")), **{"from": float(e.get("from") or 0)})
+            except (TypeError, ValueError):
+                why.append("a counter needs numbers in \"from\" and \"to\"")
+                continue
+            el["to"] = int(el["to"]) if el["to"] == int(el["to"]) else el["to"]
+            el["from"] = int(el["from"]) if el["from"] == int(el["from"]) else el["from"]
+            if not verified(str(el["to"]), allowed):
+                why.append(f'counter "{el["to"]}" is a number the narration never says')
+                continue
+            el.update(text=_words(e.get("text"), 3), size=e.get("size") if e.get("size") in SIZES else "l")
+        if t == "shape":
+            sh = str(e.get("shape") or "").lower()
+            el.update(shape=sh if sh in SHAPES else "circle", size=_num(e.get("size"), 3, 40, 10), fill=bool(e.get("fill")))
+        if t == "crowd":
+            n = int(_num(e.get("count"), 4, 100, 20))
+            el.update(name=graphics.icon(e.get("name") or "user", e.get("text") or ""), count=n,
+                      highlight=int(_num(e.get("highlight"), 0, n, 0)))
         if t in ("dot", "dots"):
             el["r"] = _num(e.get("r"), 0.8, 6, 2.2)
         if t == "dots" or t == "curve":
@@ -287,10 +369,14 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
         if not _text_ok(el.get("text", ""), allowed, verified):
             why.append(f'{t} "{el["text"]}" uses words or numbers the narration never says')
             continue
-        for motion in ("move", "glow", "hide"):
+        for motion in MOTIONS:
             m = e.get(motion)
+            if motion == "fit" and t not in ("samples", "physics"):
+                continue
             if isinstance(m, dict) and _on(m.get("on"), narration):
                 mv = {"on": _on(m.get("on"), narration)}
+                if motion == "mark":
+                    mv["style"] = m.get("style") if m.get("style") in MARKS else "circle"
                 if motion == "move":
                     for k in ("x", "y", "x1", "y1", "x2", "y2"):
                         if k in m:
@@ -299,6 +385,10 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
                         mv["h"] = _num(m["h"], 1, 85, 30)
                     if "r" in m:
                         mv["r"] = _num(m["r"], 0.8, 40, 5)
+                    if t == "shape" and str(m.get("shape") or "").lower() in SHAPES:
+                        mv["shape"] = str(m["shape"]).lower()
+                    if t == "shape" and "size" in m:
+                        mv["size"] = _num(m["size"], 3, 40, 10)
                     if t in ("curve", "dots") and isinstance(m.get("points"), list):
                         pts = [[_num(p[0], 3, 97, 50), _num(p[1], 3, 97, 50)] for p in m["points"]
                                if isinstance(p, (list, tuple)) and len(p) == 2][:40]
@@ -391,11 +481,13 @@ def timed(d: Optional[dict], words: List[tuple], frames: int, fps: int, lead: in
         turn = lead + 4 + round(span * k / max(1, len(els)))
         hit = frame_of(el["on"])
         el["at"] = min(hit, turn + (20 if k else 0)) if hit is not None else turn      # the first lands at once
-        for motion in ("move", "glow", "hide"):
+        for motion in MOTIONS:
             if el.get(motion):
                 m = dict(el[motion])
                 f = frame_of(m["on"])
                 m["at"] = max(el["at"] + 10, f if f is not None else el["at"] + 30)
+                if motion == "fit":              # the bell comes once the pile is (nearly) complete
+                    m["at"] = max(m["at"], el["at"] + int(0.75 * (frames - el["at"])))
                 if m["at"] > frames - 12:
                     m["at"] = max(el["at"] + 6, frames - 30)
                 el[motion] = m

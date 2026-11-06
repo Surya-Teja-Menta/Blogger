@@ -10,7 +10,7 @@ from typing import Callable, Dict, List, Optional
 # type -> (fewest, most) nodes
 TYPES = {"flow": (2, 4), "hub": (3, 6), "spotlight": (2, 3), "versus": (2, 2), "stack": (3, 5), "kinetic": (0, 2),
          "grid": (0, 0)}
-ELIGIBLE = {"hook", "photo", "list", "steps", "stat"}   # a quote keeps its words
+ELIGIBLE = {"hook", "photo", "list", "steps", "stat", "diagram"}   # a quote keeps its words
 
 # Lucide icon names (checked against lucide 0.468)
 ICONS = set("""smartphone wallet credit-card banknote landmark building-2 building globe globe-2 earth map map-pin users

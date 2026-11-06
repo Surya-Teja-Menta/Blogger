@@ -64,12 +64,31 @@ const Caption = ({captions, vertical, aside = 0}) => {
   );
 };
 
+// film bars for the big moments (the cold open, each new act): they slide in, hold, and slide away
+const Letterbox = ({spans, vertical}) => {
+  const frame = useCurrentFrame();
+  const {height} = useVideoConfig();
+  if (vertical || C.clean) return null;
+  const k = spans.reduce((m, [a, b]) => Math.max(m, Math.min(clamp((frame - a) / 12), clamp((b - frame) / 16))), 0);
+  if (k <= 0) return null;
+  const h = height * 0.1 * (1 - Math.pow(1 - k, 3));
+  return (
+    <>
+      <div style={{position: "absolute", left: 0, right: 0, top: 0, height: h, background: "#000"}}/>
+      <div style={{position: "absolute", left: 0, right: 0, bottom: 0, height: h, background: "#000"}}/>
+    </>
+  );
+};
+
 export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null}) => {
   useTheme(theme);
   C.clean = clean;              // a frame for the thumbnail: the visual alone
   const frame = useCurrentFrame();
   const {width, height, durationInFrames} = useVideoConfig();
   const vertical = height > width;
+  const starts = scenes.reduce((acc, s, k) => [...acc, k ? acc[k - 1] + scenes[k - 1].frames - TRANSITION : 0], []);
+  const bars = scenes.map((s, k) => (k === 0 ? [0, Math.min(s.frames, 150)] : s.chapter ? [starts[k], starts[k] + STING + 45] : null))
+    .filter(Boolean);
   return (
     <AbsoluteFill style={{background: clean ? "transparent" : C.bg, fontVariantNumeric: "lining-nums"}}>
       <TransitionSeries>
@@ -88,7 +107,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
             steps: s.steps && s.steps.map((p) => ({...p, at: late(p.at)})),
             diagram: s.diagram && {elements: s.diagram.elements.map((e) => {
               const m = (x) => x && {...x, at: late(x.at)};
-              return {...e, at: late(e.at), move: m(e.move), glow: m(e.glow), hide: m(e.hide)};
+              return {...e, at: late(e.at), move: m(e.move), glow: m(e.glow), hide: m(e.hide), mark: m(e.mark), fit: m(e.fit)};
             })}} : s;
           return (
             <React.Fragment key={i}>
@@ -108,6 +127,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       </TransitionSeries>
       <Finish/>
       {!clean && <Texture/>}
+      <Letterbox spans={bars} vertical={vertical}/>
       {!clean && <Badge channel={channel} vertical={vertical}/>}
       {/* while the subscribe card is up, the captions step aside so the two never overlap */}
       <Caption captions={captions} vertical={vertical} aside={subscribe && !clean && !vertical

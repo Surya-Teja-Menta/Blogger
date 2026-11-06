@@ -1531,6 +1531,93 @@ def test_diagram_curves_reshape_and_dots_ride_curves():
     assert t["elements"][1]["move"]["along"] == 0 and t["elements"][1]["move"]["at"] > t["elements"][1]["at"]
 
 
+def test_diagram_parts_for_any_topic_samples_physics_counters_crowds_shapes_and_marks():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    scene = {"headline": "Averages pile into a bell",
+             "narration": "Grab 30 random orders, average them, repeat 400 times, and the averages pile into a bell."}
+    raw = {"elements": [
+        {"type": "samples", "x": 4, "y": 6, "w": 60, "h": 99, "source": "volcano", "n": 300, "count": 9999, "lo": 70,
+         "hi": 10, "unit": "minutes", "text": "averages of 30 orders", "on": "average", "fit": {"on": "bell"}},
+        {"type": "counter", "x": 84, "y": 20, "from": 0, "to": 400, "text": "times", "on": "repeat"},
+        {"type": "shape", "x": 84, "y": 50, "size": 12, "shape": "blob", "move": {"on": "bell", "shape": "heart", "size": 99}},
+        {"type": "crowd", "x": 72, "y": 70, "w": 22, "h": 22, "name": "pizza", "count": 30, "highlight": 300,
+         "glow": {"on": "average"}, "fit": {"on": "bell"}},
+        {"type": "label", "x": 84, "y": 36, "text": "random orders", "mark": {"on": "random", "style": "zigzag"}}]}
+    why = []
+    d = diagram.check(raw, scene, _verified, tex_complete, why)
+    assert d, why
+    s, c, sh, cr, lab = d["elements"]
+    # bad values are pulled into range, an unknown source or shape becomes a known one, an upside-down axis resets
+    assert (s["source"], s["n"], s["count"], s["h"], s["lo"], s["hi"]) == ("skewed", 100, 600, 91, 0, 100)
+    assert s["fit"] == {"on": "bell"} and c["to"] == 400 and c["from"] == 0
+    assert sh["shape"] == "circle" and sh["move"] == {"on": "bell", "shape": "heart", "size": 40}
+    assert cr["highlight"] == 30 and "fit" not in cr                 # only samples and physics fit a bell
+    assert lab["mark"] == {"on": "random", "style": "circle"}
+    # a counter may only count to a number the narration says
+    why = []
+    bad = {"elements": raw["elements"][:1] + [{**raw["elements"][1], "to": 999}] + raw["elements"][2:]}
+    assert len(diagram.check(bad, scene, _verified, tex_complete, why)["elements"]) == 4
+    assert any("999" in w for w in why)
+    # a label on top of a live region is refused
+    why = []
+    over = {"elements": [raw["elements"][0], {"type": "label", "x": 30, "y": 50, "text": "random orders"},
+                         raw["elements"][1]]}
+    assert diagram.check(over, scene, _verified, tex_complete, why) is None and any("overlap" in w for w in why)
+    # the bell only comes once the pile is nearly complete, whenever its word is said
+    words = [(0.1 * k, 0.1 * k + 0.08, w) for k, w in enumerate(scene["narration"].split())]
+    t = diagram.timed(d, words, 300, 30, 6)
+    ts = t["elements"][0]
+    assert ts["fit"]["at"] >= ts["at"] + int(0.75 * (300 - ts["at"])) and t["elements"][4]["mark"]["at"] >= t["elements"][4]["at"]
+    physics = diagram.check({"elements": [{"type": "physics", "x": 30, "y": 4, "w": 40, "h": 92, "pegs": 99, "balls": 5,
+                                           "bins": "0", "drop": "sideways"},
+                                          {"type": "dot", "x": 10, "y": 10}, {"type": "dot", "x": 90, "y": 10}]},
+                            scene, _verified, tex_complete)
+    p = physics["elements"][0]
+    assert (p["pegs"], p["balls"], p["bins"], p["drop"]) == (12, 20, 0, "center")
+
+
+def test_the_writer_asks_for_pictures_and_lessons_get_the_voice():
+    from blogwriter import diagram, video
+    sc = video.check_scene({"kind": "diagram", "headline": "Averages pile up", "narration": "x",
+                            "picture": "single delivery times fall into a lopsided histogram, then averages pile into a bell"},
+                           "", "", {})
+    assert sc["kind"] == "diagram" and sc["picture"].startswith("single delivery times")
+    rows = diagram.prompt([{"headline": "h", "narration": "n"}, {**sc, "narration": "the averages pile up"}], [1], "t", "m")
+    assert "WANTED: single delivery times" in rows
+    brief = video.check_brief({"minutes": 10, "examples": "pizza delivery times; cricket scores", "acts": [{"title": "A"}]},
+                              "education")
+    rules, _ = video.shape_prompt(brief, "education", "Central Limit Theorem", "(none)")
+    assert "pizza delivery times; cricket scores" in rules and "sarcastic" in rules and "12-year-old" in rules
+    news, _ = video.shape_prompt(video.check_brief({}, "news"), "news", "t", "(none)")
+    assert "sarcastic" not in news and video.check_brief({}, "education")["examples"]
+
+
+def test_long_videos_draw_more_diagrams_and_the_pictures_asked_for_come_first():
+    from blogwriter import video
+    scenes = [{"kind": "hook", "headline": "h", "narration": "n"}] + \
+             [{"kind": "diagram" if k % 3 == 0 else "photo", "headline": f"h{k}", "narration": f"n{k}"} for k in range(60)]
+    seen = []
+
+    class Maker(video.VideoMaker):
+        def __init__(self):
+            self.log = lambda m: None
+            self.design_json = None
+
+    import blogwriter.diagram as dg
+    real = dg.design
+    dg.design = lambda complete, scs, idx, *a, **k: seen.append(list(idx)) or 0
+    try:
+        Maker().draw_diagrams(scenes, {"style": "education", "minutes": 10, "mood": "", "tone": ""}, "t")
+        Maker().draw_diagrams(scenes, {"style": "education", "minutes": 4, "mood": "", "tone": ""}, "t")
+    finally:
+        dg.design = real
+    long, short = seen
+    asked = [i for i, s in enumerate(scenes) if s["kind"] == "diagram"]
+    assert len(long) == video.DIAGRAM_MAX_LONG and set(asked) <= set(long)
+    assert len(short) == video.DIAGRAM_MAX and set(short) <= set(range(1, 61))
+
+
 def test_subscribe_card_lands_on_a_settled_shot_about_a_third_in():
     from blogwriter.video import subscribe_at
     starts = [0, 400, 900, 1500, 2100, 2700]

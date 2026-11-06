@@ -1,11 +1,14 @@
 // A diagram drawn for one sentence (blogwriter/diagram.py): points, point clouds, lines, arrows, curves, boxes,
 // bars, labels, icons and formulas, each appearing on its spoken word, then moving, glowing or leaving on others.
 // The composition is the model's; this file only draws it, in the video's own colours and motion language.
-import React from "react";
+import React, {useMemo} from "react";
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from "remotion";
 import {getLength, getPointAtLength} from "@remotion/paths";
+import {interpolate as morphPath} from "flubber";
 import {Backdrop, Camera, Title, clamp, ease} from "./fx";
+import {Focus, Pen, focusPlan, headlineShown, useFocus} from "./direct";
 import {Icon} from "./graphics";
+import {Physics, Samples, seedOf} from "./stats";
 import {Tex, useMathFonts} from "./math";
 import {delay, glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
@@ -29,6 +32,62 @@ const morph = (from, to, q) => {
   if (!to || q <= 0) return from;
   const n = Math.max(from.length, to.length), A = resample(from, n), B = resample(to, n);
   return A.map((p, j) => [p[0] + (B[j][0] - p[0]) * q, p[1] + (B[j][1] - p[1]) * q]);
+};
+
+// outlines for "shape" elements, as point rings around (0, 0) with radius 1; flubber morphs any one into any other
+const ring = (n, r = (k) => 1, turn = -Math.PI / 2) => Array.from({length: n}, (_, k) => {
+  const a = turn + (2 * Math.PI * k) / n;
+  return [Math.cos(a) * r(k), Math.sin(a) * r(k)];
+});
+const OUTLINES = {
+  circle: () => ring(64),
+  square: () => ring(4, () => Math.SQRT2, -Math.PI / 4).map(([x, y]) => [x * 0.86, y * 0.86]),
+  triangle: () => ring(3, () => 1.15).map(([x, y]) => [x, y + 0.2]),
+  diamond: () => ring(4, () => 1.1),
+  hexagon: () => ring(6, () => 1.02, 0),
+  star: () => ring(10, (k) => (k % 2 ? 0.45 : 1.12)),
+  heart: () => Array.from({length: 64}, (_, k) => {
+    const t = (2 * Math.PI * k) / 64;
+    return [(16 * Math.sin(t) ** 3) / 16, -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16];
+  }),
+};
+const outline = (name, cx, cy, r) => (OUTLINES[name] || OUTLINES.circle)().map(([x, y]) => [cx + x * r, cy + y * r]);
+const pathOf = (pts) => `M${pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join("L")}Z`;
+
+const MorphShape = ({from, to, cx, cy, r, q, color, fill, op, glow, draw}) => {
+  const unit = useMemo(() => (to && to !== from ? morphPath(outline(from, 0, 0, 100), outline(to, 0, 0, 100), {maxSegmentLength: 6}) : null),
+    [from, to]);
+  const d = unit && q > 0 ? unit(Math.min(1, q)) : pathOf(outline(from, 0, 0, 100));
+  return (
+    <path d={d} transform={`translate(${cx},${cy}) scale(${r / 100})`} fill={fill ? alpha(color, 0.22) : "none"} stroke={color}
+          strokeWidth={(5 * 100) / Math.max(1, r)} strokeLinejoin="round" pathLength={1} strokeDasharray={1}
+          strokeDashoffset={1 - draw} opacity={op} style={{filter: glow}}/>
+  );
+};
+
+// a crowd of icons in a grid; `highlight` of them light up (spread out, not in a block) when the moment comes
+const Crowd = ({e, w, h, frame, color, size}) => {
+  const n = e.count, cols = Math.max(1, Math.round(Math.sqrt((n * w) / h))), rows = Math.ceil(n / cols);
+  const cell = Math.min(w / cols, h / rows);
+  const lit = useMemo(() => {
+    const order = Array.from({length: n}, (_, k) => k).sort((a, b) => seedOf(`${a}|${n}`) - seedOf(`${b}|${n}`));
+    return new Set(order.slice(0, e.highlight || 0));
+  }, [n, e.highlight]);
+  const on = e.glow ? e.glow.at : (e.at ?? 0) + 40;
+  return (
+    <div style={{display: "grid", gridTemplateColumns: `repeat(${cols}, ${cell}px)`, width: cols * cell}}>
+      {Array.from({length: n}, (_, k) => {
+        const p = clamp((frame - (e.at ?? 0) - k * (30 / n)) / 8);
+        const hit = lit.has(k) ? clamp((frame - on - (k % 7)) / 8) : 0;
+        return (
+          <div key={k} style={{width: cell, height: cell, display: "flex", alignItems: "center", justifyContent: "center",
+                               opacity: p, transform: `scale(${0.6 + 0.4 * p + 0.25 * hit * (1 - hit) * 4})`}}>
+            <Icon name={e.name} size={cell * 0.78} color={hit > 0.5 ? color : alpha(C.muted, 0.7)} width={2}/>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 export const DiagramScene = ({s, i, vertical}) => {
@@ -72,6 +131,75 @@ export const DiagramScene = ({s, i, vertical}) => {
     return [pt.x, pt.y];
   };
   const shadow = (c, g) => (g ? `drop-shadow(0 0 ${10 + 16 * g}px ${alpha(c, 0.9)})` : `drop-shadow(0 0 8px ${alpha(c, 0.35)})`);
+
+  // where a piece sits on screen ([x0, y0, x1, y1]), as placed or once moved: the camera frames it, the pen rings it
+  const texLen = (t) => String(t || "").replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length;
+  const boxOf = (e) => {
+    const pts = (ps) => [Math.min(...ps.map((p) => p[0])), Math.min(...ps.map((p) => p[1])),
+                         Math.max(...ps.map((p) => p[0])), Math.max(...ps.map((p) => p[1]))];
+    const around = (x, y, rx, ry = rx) => [x - rx, y - ry, x + rx, y + ry];
+    const t = e.type;
+    if (t === "dot") return around(X(e.x), Y(e.y), (e.r || 2) * u);
+    if (t === "circle") return around(X(e.x), Y(e.y), (e.r || 5) * u);
+    if (t === "dots" || t === "curve") return e.points && e.points.length ? pts(e.points.map((p) => [X(p[0]), Y(p[1])])) : null;
+    if (t === "box") return [X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)];
+    if (t === "line" || t === "arrow") return pts([[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]]);
+    if (t === "bar") return [X(e.x), Y(e.y) - (e.h * (box.y1 - box.y0)) / 100, X(e.x + e.w), Y(e.y)];
+    if (t === "icon") return around(X(e.x), Y(e.y), ((e.size || 8) * u) / 2);
+    if (t === "samples" || t === "physics" || t === "crowd") return [X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)];
+    if (t === "shape") return around(X(e.x), Y(e.y), (e.size || 10) * u);
+    if (t === "label" || t === "tex" || t === "counter") {
+      const size = (fs[e.size] || fs.m) * fScale * (t === "tex" ? 1.25 : t === "counter" ? 1.6 : 1);
+      const chars = t === "tex" ? texLen(e.tex) : t === "counter" ? String(e.to).length + 1 + String(e.text || "").length : String(e.text || "").length;
+      const w = chars * size * 0.56, x = X(e.x);
+      const x0 = t !== "label" || e.align === "center" ? x - w / 2 : e.align === "right" ? x - w : x;
+      return [x0, Y(e.y) - size * 0.6, x0 + w, Y(e.y) + size * 0.6];
+    }
+    return null;
+  };
+  const moved = (e) => {
+    if (!e.move) return e;
+    const m = {...e, ...Object.fromEntries(Object.entries(e.move).filter(([k]) => k !== "at" && k !== "along"))};
+    if (e.move.along !== undefined && els[e.move.along]) {
+      const c = els[e.move.along];
+      return {...m, type: "curve", points: c.points};             // a dot riding a curve: frame the whole ride
+    }
+    return m;
+  };
+  const keys = [], pens = [];
+  els.forEach((e, k) => {
+    const b0 = boxOf(e);
+    if (!b0) return;
+    keys.push({at: e.at ?? 0, box: b0});
+    if (e.move && e.move.at != null) {
+      const b1 = boxOf(moved(e));
+      if (b1) keys.push({at: e.move.at, box: [Math.min(b0[0], b1[0]), Math.min(b0[1], b1[1]), Math.max(b0[2], b1[2]), Math.max(b0[3], b1[3])]});
+    }
+    if (e.glow && e.glow.at != null) {
+      const g = e.move && e.move.at != null && e.move.at <= e.glow.at ? boxOf(moved(e)) || b0 : b0;
+      keys.push({at: e.glow.at, box: g});
+      const gone = e.hide && e.hide.at != null ? clamp((frame - e.hide.at) / 12) : 0;
+      if (e.type !== "crowd") {
+        pens.push(<g key={`pen${k}`} opacity={1 - gone}><Pen box={g} at={e.glow.at} seed={k * 31 + (i || 0)}
+                                                        color={e.color === "hot" ? C.accent : C.hot}/></g>);
+      }
+    }
+    // a teacher's mark on its word: ringed, underlined, boxed or struck out
+    if (e.mark && e.mark.at != null) {
+      const g = e.move && e.move.at != null && e.move.at <= e.mark.at ? boxOf(moved(e)) || b0 : b0;
+      keys.push({at: e.mark.at, box: g});
+      const gone = e.hide && e.hide.at != null ? clamp((frame - e.hide.at) / 12) : 0;
+      pens.push(<g key={`mark${k}`} opacity={1 - gone}><Pen box={g} at={e.mark.at} seed={k * 37 + (i || 0)} kind={e.mark.style}
+                                                       color={e.color === "hot" ? C.accent : C.hot}/></g>);
+    }
+    if (e.fit && e.fit.at != null) keys.push({at: e.fit.at, box: b0});           // in close as the bell appears
+  });
+  // while a live part (samples, physics) is running it is the main event: every framing keeps it in view
+  const live = els.filter((e) => e.type === "samples" || e.type === "physics").map((e) => ({at: e.at ?? 0, box: boxOf(e)}));
+  const framed = keys.map((key) => live.reduce((kk, l) => (key.at >= l.at
+    ? {at: kk.at, box: [Math.min(kk.box[0], l.box[0]), Math.min(kk.box[1], l.box[1]), Math.max(kk.box[2], l.box[2]), Math.max(kk.box[3], l.box[3])]}
+    : kk), key));
+  const view = useFocus(focusPlan(framed, {width, height, frames: s.frames || 300}));
 
   const shapes = [], texts = [];
   els.forEach((e, k) => {
@@ -142,6 +270,23 @@ export const DiagramScene = ({s, i, vertical}) => {
     } else if (e.type === "tex") {
       texts.push({k, x: X(st.v("x")), y: Y(st.v("y")), node: <Tex tex={e.tex} color={c}/>, size: (fs[e.size] || fs.m) * 1.25,
                   p: st.p, op, center: true, glow: st.glow, color: c});
+    } else if (e.type === "samples" || e.type === "physics") {
+      const Part = e.type === "samples" ? Samples : Physics;
+      shapes.push(<g key={k} opacity={op}><Part e={e} rect={[X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)]} frame={frame}
+                                                end={s.frames || 300} seed={k * 101 + (i || 0)} vertical={vertical}/></g>);
+    } else if (e.type === "counter") {
+      const q = ease((frame - (e.at ?? 0)) / 45);
+      const dec = (String(e.to).split(".")[1] || "").length;
+      const v = e.from + (e.to - e.from) * q;
+      texts.push({k, x: X(st.v("x")), y: Y(st.v("y")), text: `${v.toFixed(dec)}${e.text ? ` ${e.text}` : ""}`,
+                  size: (fs[e.size] || fs.l) * 1.6, color: c, p: st.p, op, center: true, display: true, glow: st.glow});
+    } else if (e.type === "shape") {
+      shapes.push(<MorphShape key={k} from={e.shape} to={e.move && e.move.shape} cx={X(st.v("x"))} cy={Y(st.v("y"))}
+                              r={st.v("size") * u * (e.anim === "fade" ? 1 : 0.5 + 0.5 * st.p)} q={st.q} color={c} fill={e.fill}
+                              op={op} glow={shadow(c, st.glow)} draw={st.draw}/>);
+    } else if (e.type === "crowd") {
+      texts.push({k, x: X(e.x), y: Y(e.y), corner: true, p: 1, op,
+                  node: <Crowd e={e} w={X(e.x + e.w) - X(e.x)} h={Y(e.y + e.h) - Y(e.y)} frame={frame} color={c}/>});
     }
   });
 
@@ -150,13 +295,14 @@ export const DiagramScene = ({s, i, vertical}) => {
       {hasTex && <TexFonts/>}
       <Backdrop word="" i={i}/>
       <Camera i={i} amount={0.35}>
-        <Title s={s} vertical={vertical}/>
-        <svg width={width} height={height} style={{position: "absolute", overflow: "visible"}}>{shapes}</svg>
+        <AbsoluteFill style={{opacity: headlineShown(view)}}><Title s={s} vertical={vertical}/></AbsoluteFill>
+        <Focus view={view}>
+        <svg width={width} height={height} style={{position: "absolute", overflow: "visible"}}>{shapes}{pens}</svg>
         {texts.map((t) => {
-          const shift = t.center || t.align === "center" ? "-50%" : t.align === "right" ? "-100%" : "0%";
+          const shift = t.corner ? "0%" : t.center || t.align === "center" ? "-50%" : t.align === "right" ? "-100%" : "0%";
           return (
             <div key={`t${t.k}`} style={{position: "absolute", left: t.x, top: t.y,
-                                          transform: `translate(${shift}, -50%) translateY(${(1 - clamp(t.p)) * 24}px) scale(${0.85 + 0.15 * clamp(t.p)})`,
+                                          transform: `translate(${shift}, ${t.corner ? "0%" : "-50%"}) translateY(${(1 - clamp(t.p)) * 24}px) scale(${0.85 + 0.15 * clamp(t.p)})`,
                                           opacity: clamp(t.p * 1.5) * t.op, whiteSpace: "nowrap",
                                           fontFamily: t.display ? FONT.display : FONT.body, fontWeight: t.display ? C.weight : 800,
                                           fontSize: (t.size || fs.m) * fScale, color: t.color, lineHeight: 1.1,
@@ -168,6 +314,7 @@ export const DiagramScene = ({s, i, vertical}) => {
             </div>
           );
         })}
+        </Focus>
       </Camera>
     </AbsoluteFill>
   );

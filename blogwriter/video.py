@@ -36,7 +36,7 @@ from .web import UA
 from .writer import LANGS, strip_unsupported_numbers
 
 VIDEO_APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "video")
-VOICES = {"en": "en-US-AndrewNeural", "hi": "hi-IN-MadhurNeural", "te": "te-IN-MohanNeural",
+VOICES = {"en": "en-US-BrianMultilingualNeural", "hi": "hi-IN-MadhurNeural", "te": "te-IN-MohanNeural",
           "kn": "kn-IN-GaganNeural", "ta": "ta-IN-ValluvarNeural"}
 FPS = 30
 TRANSITION = 15           # frames two scenes overlap; must equal TRANSITION in video/src/theme.js
@@ -47,12 +47,13 @@ SHORT_MAX_SECONDS = 58
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
 MAX_SCENES = 110          # shots in one video
-DIAGRAM_MAX = 18          # bespoke diagrams per video (each costs several vision-model calls)
+DIAGRAM_MAX = 18          # bespoke diagrams per video (each costs several vision-model calls) ...
+DIAGRAM_MAX_LONG = 30     # ... and in a long video, where most shots are pictures of the idea
 CHECK_PAUSE = 3.0         # seconds of silence in a "check" shot for the viewer to think before the answer
 REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
 KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
-         "quote", "equation", "plot", "graph", "derive", "surface", "check")
+         "quote", "equation", "plot", "graph", "derive", "surface", "check", "diagram")
 MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
 PLOTS = ("scatter", "fit", "residuals", "squares", "descent")
 FIGURE_KINDS = {"compare": (2, 3), "bars": (3, 6), "line": (3, 8), "donut": (2, 4), "kpis": (3, 4)}  # items (min, max)
@@ -69,8 +70,9 @@ STYLES = {
             "claim sourced",
     "story": "a narrative storytelling channel (Lemmino, Real Stories, Barely Sociable): a true story told in "
              "scenes, with people, stakes, suspense and a turn, never a list of facts",
-    "education": "an educational channel (3Blue1Brown, StatQuest, Veritasium): builds real understanding step by "
-                 "step, intuition first, then precision, never dumbed down",
+    "education": "an educational channel with the pictures of 3Blue1Brown, the hooks of Veritasium and the timing of "
+                 "a film, narrated with dry, deadpan wit: builds real understanding step by step in simple everyday "
+                 "words, every idea grounded in real life, intuition first, then precision, never dumbed down",
     "concept": "a concept explainer channel (Kurzgesagt, Wendover, Vox explainers): one big idea made vivid with "
                "analogies and visual metaphors",
 }
@@ -94,12 +96,16 @@ Reply with JSON:
   "tone": "3 to 5 words",
   "narrator": "the voice of this video in one sentence: HOW it talks to the viewer (its stance, rhythm and
     humour), e.g. a patient teacher thinking out loud with you; a sceptic testing every claim; a guide who keeps
-    asking 'but why?'. It is the channel's narrator, never a character: no invented name, job, place,
+    asking 'but why?'; a deadpan, sarcastic guide who teases the obvious wrong answer (for a lesson: dry, sarcastic
+    and warm). It is the channel's narrator, never a character: no invented name, job, place,
     possessions or personal experiences.",
   "device": "the storytelling device that carries the whole video (e.g. one running example that grows each
     shot; a question the viewer is asked to guess before each reveal; a wrong answer that gets corrected; a
     countdown; a letter; a then-and-now contrast)",
   "mood": "4 to 6 words about how the video should look and feel",
+  "examples": "2 to 4 everyday real-life situations the viewer has lived that make this subject concrete (from food,
+    phones, traffic, sport, exams, shopping, queues, weather...), the first one strong enough to run through the
+    whole video",
   "minutes": a number: 8 to 12 for an education lesson (every idea taught properly, with pictures, a worked
     example and a check), 3 to 8 otherwise,
   "maths": true if the subject has formulas worth teaching, else false}}"""
@@ -138,6 +144,24 @@ TEACHING = r"""
 - Show, do not just tell: most shots are pictures of the idea (diagram, graph, surface, plot, derive, equation);
   talk over a plain title is rare. Numbers in a worked example or a check are illustrative and allowed when that
   shot shows them on screen."""
+
+VOICE = r"""
+- VOICE: dry, deadpan, sarcastic wit, like a teacher who has heard every wrong answer and still finds them funny.
+  About every third or fourth line carries a playful jab: at the obvious-but-wrong intuition, at jargon, at the
+  subject's scary reputation, at everyday absurdities. Never at the viewer, never mean, never about real people or
+  groups, and a joke never replaces the explanation: the line still teaches.
+- WORDS: simple everyday words a 12-year-old knows, short sentences. A technical term only once the idea is already
+  clear, and explained in the same sentence ("this is called the standard error: how much the average wobbles").
+- REAL LIFE: show every idea first in a real-life situation the viewer has lived, then generalise it. Use these, and
+  keep the first one running through the whole video, coming back to it as the ideas grow: [examples].
+- CINEMA: open cold on a real-life moment, never on a definition; raise a question, hold it, then reveal; vary the
+  rhythm (a few quick punchy lines, then one slow reveal shot); end every part on a hook into the next.
+- PICTURES: most shots are "diagram" shots or maths shots (graph, surface, derive, equation, check). A "diagram"
+  shot is an animated picture of the idea built for that sentence, described in its "picture". Simulate whatever
+  can be simulated instead of describing it: chance, averages and spread as live random samples falling into a
+  histogram; many small random pushes adding up as balls bouncing through pegs into bins; shares and odds as a crowd
+  of icons with some lit up; totals as counters; one idea turning into another as a shape that morphs. In a lesson,
+  "photo" shots are rare (at most 1 shot in 10), whatever the general rule above says."""
 
 LESSON = """
 - This video is lesson {number} of {total} in the course "{course}"{module}. Its learning goal: {goal}
@@ -211,6 +235,12 @@ chart: every figure on screen must be in the facts, written the same way.
               slides between these values while the narration says what it does), "mark": "tangent" (a point slides
               along the first curve with its tangent and slope), "area" (the area under it fills in, with its value),
               "point" (a point traces it with its coordinates) or ""}}; plus "xlabel" and "ylabel" (max 3 words).
+- "diagram":  an animated picture drawn for this sentence from moving parts (shapes that morph, arrows, curves,
+              labelled boxes, icons, crowds of icons, counters, live random samples falling into a histogram, real
+              physics with balls bouncing through pegs into bins, short formulas); the camera follows each part as
+              it is said and a hand-drawn pen rings or underlines the key one. Needs "picture": what it shows and
+              what moves, in one sentence (max 35 words), e.g. "single delivery times fall into a lopsided
+              histogram, then averages of 30 orders pile into a narrow bell".
 - "check":    (lessons) a question for the viewer to answer before the reveal. Needs "question" (max 14
               words), "options": 2 to 4 short answers (max 6 words each, maths in plain words or short like
               "w = 3"), "answer": the index of the right option (0 = first), "why": max 10 words. Its narration
@@ -776,6 +806,8 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         out["countries"] = names[:3]
         if not names:
             out["kind"] = "photo"
+    elif kind == "diagram":
+        out["picture"] = words(sc.get("picture"), 40)
     elif kind == "steps":
         out["items"] = [{"label": words((it or {}).get("label") if isinstance(it, dict) else it, 6)}
                         for it in sc.get("items") or []][:5]
@@ -951,7 +983,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
     if brief.get("maths"):
         text += MATHS_RULES
     if style == "education":
-        text += TEACHING
+        text += TEACHING + VOICE.replace("[examples]", brief.get("examples") or "everyday situations the viewer knows")
     text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots
@@ -980,6 +1012,7 @@ def check_brief(raw, style: str) -> dict:
             "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "minutes": minutes,
             "narrator": s("narrator", "a curious guide who works things out alongside the viewer."),
             "device": s("device", "one running example that grows with every shot."),
+            "examples": s("examples", "an everyday situation the viewer has lived, chosen for this subject"),
             "maths": bool(raw.get("maths"))}
 
 
@@ -1606,8 +1639,12 @@ class VideoMaker:
                and (explain or not s.get("graphic") or s["graphic"]["type"] == "kinetic")]
         if not idx:
             return
-        if len(idx) > DIAGRAM_MAX:        # spread the bespoke diagrams over the video (each costs vision calls)
-            idx = [idx[int(k * len(idx) / DIAGRAM_MAX)] for k in range(DIAGRAM_MAX)]
+        cap = DIAGRAM_MAX_LONG if brief["minutes"] >= LONG_MINUTES else DIAGRAM_MAX
+        if len(idx) > cap:                # the shots the writer asked a picture for first, the rest spread over the video
+            asked = [i for i in idx if scenes[i]["kind"] == "diagram"][:cap]
+            rest = [i for i in idx if i not in asked]
+            room = cap - len(asked)
+            idx = sorted(asked + [rest[int(k * len(rest) / room)] for k in range(room)] if room > 0 else asked)
         made = diagram.design(self.design_json, scenes, idx, title, f"{brief['mood']} {brief['tone']}", _verified,
                               tex_complete, self.log)
         bad = typeset_errors([el["tex"] for s in scenes for el in (s.get("diagram") or {}).get("elements", [])

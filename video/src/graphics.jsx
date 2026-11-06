@@ -5,6 +5,7 @@ import React from "react";
 import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {icons} from "lucide";
 import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease} from "./fx";
+import {Focus, focusPlan, headlineShown, useFocus} from "./direct";
 import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 
@@ -89,16 +90,22 @@ const Link = ({a, b, at, bend = 0.12, color, dashed}) => {
 
 const Header = ({s, vertical}) => <Title s={s} vertical={vertical} maxWidth={vertical ? 940 : 1500}/>;
 
-const Frame = ({s, i, vertical, children, header = true, hue}) => (
-  <AbsoluteFill>
-    <Backdrop word={s.kicker} i={i} hue={hue}/>
-    <Particles n={30} seed={`g${i}`}/>
-    <Camera i={i} amount={0.5}>
-      {children}
-      {header && <Header s={s} vertical={vertical}/>}
-    </Camera>
-  </AbsoluteFill>
-);
+// `focus`: each piece's spoken frame and place on screen ({at, box}); the camera visits them in turn (direct.jsx)
+const Frame = ({s, i, vertical, children, header = true, hue, focus = []}) => {
+  const {width, height} = useVideoConfig();
+  const view = useFocus(focusPlan(focus, {width, height, frames: s.frames || 300}));
+  return (
+    <AbsoluteFill>
+      <Backdrop word={s.kicker} i={i} hue={hue}/>
+      <Particles n={30} seed={`g${i}`}/>
+      <Camera i={i} amount={0.5}>
+        <Focus view={view}>{children}</Focus>
+        {header && <AbsoluteFill style={{opacity: headlineShown(view)}}><Header s={s} vertical={vertical}/></AbsoluteFill>}
+      </Camera>
+    </AbsoluteFill>
+  );
+};
+const around = ([x, y], w, h = w) => [x - w / 2, y - h / 2, x + w / 2, y + h / 2];
 
 // ---- flow: A -> B -> C, the path drawn as each step is named, data running along it -------------------------
 const Flow = ({s, i, vertical}) => {
@@ -109,8 +116,16 @@ const Flow = ({s, i, vertical}) => {
   const pos = nodes.map((_, k) => vertical
     ? [width / 2, 720 + (k + 0.5) * (1050 / n)]
     : [width * (0.14 + 0.72 * (n === 1 ? 0.5 : k / (n - 1))), height * 0.62]);
+  // the camera follows the flow: each step with the link that leads into it
+  const focus = nodes.map((nd, k) => {
+    const b = vertical ? [pos[k][0] - 120, pos[k][1] - size / 2, pos[k][0] + 420, pos[k][1] + size / 2]
+      : [pos[k][0] - size * 0.8, pos[k][1] - size / 2 - 20, pos[k][0] + size * 0.8, pos[k][1] + size / 2 + 90];
+    if (!k) return {at: nd.at, box: b};
+    const a = vertical ? [pos[k - 1][0] - 120, pos[k - 1][1] - size / 2] : [pos[k - 1][0] - size * 0.8, pos[k - 1][1] - size / 2 - 20];
+    return {at: nd.at, box: [Math.min(b[0], a[0]), Math.min(b[1], a[1]), Math.max(b[2], a[0]), Math.max(b[3], a[1])]};
+  });
   return (
-    <Frame s={s} i={i} vertical={vertical}>
+    <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <svg width={width} height={height} style={{position: "absolute"}}>
         {pos.slice(1).map((b, k) => <Link key={k} a={pos[k]} b={b} at={nodes[k + 1].at - 10}
                                           bend={vertical ? 0.25 * (k % 2 ? 1 : -1) : 0.18 * (k % 2 ? 1 : -1)}
@@ -146,8 +161,14 @@ const Hub = ({s, i, vertical}) => {
   const up = nodes.map((_, k) => Math.sin(start + (2 * Math.PI * k) / n) < -0.5);
   const half = (vertical ? 150 : 120) / 2;
   const centerAt = g.center.at;
+  // the centre first, then each player with its spoke back to the centre
+  const focus = [{at: centerAt, box: around([cx, cy + 40], vertical ? 420 : 420, vertical ? 420 : 380)},
+                 ...nodes.map((nd, k) => {
+                   const b = around([pos[k][0], pos[k][1] + (up[k] ? -40 : 40)], vertical ? 360 : 300, vertical ? 300 : 220);
+                   return {at: nd.at, box: [Math.min(b[0], cx), Math.min(b[1], cy), Math.max(b[2], cx), Math.max(b[3], cy)]};
+                 })];
   return (
-    <Frame s={s} i={i} vertical={vertical}>
+    <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <svg width={width} height={height} style={{position: "absolute"}}>
         {[1, 1.45, 1.9].map((r, k) => (
           <ellipse key={k} cx={cx} cy={cy} rx={rx * r * 0.55} ry={ry * r * 0.55} fill="none" stroke={alpha(C.text, 0.1)}
@@ -296,8 +317,11 @@ const Spotlight = ({s, i, vertical}) => {
   const R = vertical ? 260 : 230;
   const at = g.center.at;
   const p = pop(frame - at);
+  // the tags are read in close; the camera then returns to the whole
+  const tags = vertical ? [70, cy + R * 1.5, width - 70, cy + R * 1.5 + 360] : [width * 0.56, cy - 190, width - 100, cy + 230];
+  const focus = (g.nodes || []).map((nd) => ({at: nd.at, box: tags}));
   return (
-    <Frame s={s} i={i} vertical={vertical}>
+    <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <div style={{position: "absolute", left: cx - R * 1.9, top: cy - R * 1.9, width: R * 3.8, height: R * 3.8, borderRadius: "50%",
                    background: `conic-gradient(from ${frame * 3}deg, ${alpha(C.accent, 0.35)}, transparent 25%, transparent)`,
                    opacity: p, maskImage: "radial-gradient(circle, black 30%, transparent 70%)",
@@ -345,6 +369,11 @@ const Versus = ({s, i, vertical}) => {
   const pb = pop(frame - b.at);
   const vsAt = Math.max(a.at, b.at) + 4;
   const pv = pop(frame - vsAt);
+  // one side, then the other, then both with the VS between them
+  const half = (k) => (vertical ? [width / 2 - 300, k ? 1330 : 600, width / 2 + 300, k ? 1720 : 990]
+    : [width * (k ? 0.75 : 0.25) - 300, 380, width * (k ? 0.75 : 0.25) + 300, 860]);
+  const focus = [{at: a.at, box: half(0)}, {at: b.at, box: half(1)},
+                 {at: vsAt + 30, box: [0, 0, width, height]}];
   const side = (nd, k, p) => (
     <div style={{position: "absolute", display: "flex", justifyContent: "center", alignItems: "center",
                  ...(vertical ? {left: 0, right: 0, top: k ? 1300 : 560, height: 420} : {top: 300, bottom: 60, left: k ? width / 2 : 0, width: width / 2}),
@@ -354,7 +383,7 @@ const Versus = ({s, i, vertical}) => {
     </div>
   );
   return (
-    <Frame s={s} i={i} vertical={vertical}>
+    <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <svg width={width} height={height} style={{position: "absolute"}}>
         <polygon points={vertical ? `0,${height * 0.62} ${width},${height * 0.55} ${width},${height} 0,${height}`
                                   : `${width * 0.55},0 ${width},0 ${width},${height} ${width * 0.45},${height}`}
@@ -386,8 +415,14 @@ const Stack = ({s, i, vertical}) => {
   const h = vertical ? 170 : Math.min(130, 560 / n);
   const w = vertical ? 900 : 1100;
   const base = vertical ? 1600 : height - 90;
+  // the camera rises with the stack, framing each new layer with the one it rests on
+  const layer = (k) => [(width - w) / 2, base - (k + 1) * (h + 18), (width + w) / 2, base - k * (h + 18) - 18];
+  const focus = nodes.map((nd, k) => {
+    const b = layer(k), under = layer(Math.max(0, k - 1));
+    return {at: nd.at, box: [b[0], b[1], b[2], under[3]]};
+  });
   return (
-    <Frame s={s} i={i} vertical={vertical}>
+    <Frame s={s} i={i} vertical={vertical} focus={focus}>
       {nodes.map((nd, k) => {
         const p = pop(frame - nd.at);
         const col = SERIES[k % SERIES.length];
