@@ -420,6 +420,25 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
                 mv["along"] = k
             elif len(mv) == 1:
                 el.pop("move")
+    # a box with no words and nothing placed inside it is an empty placeholder on screen: it is left out
+    def anchor(el: dict) -> tuple:
+        if "points" in el:
+            return (sum(p[0] for p in el["points"]) / len(el["points"]), sum(p[1] for p in el["points"]) / len(el["points"]))
+        if "x1" in el:
+            return ((el["x1"] + el["x2"]) / 2, (el["y1"] + el["y2"]) / 2)
+        if el["type"] in REGIONS:
+            return (el["x"] + el["w"] / 2, el["y"] + el["h"] / 2)
+        return (el.get("x", -1), el.get("y", -1))
+    empty = {k for k, el in enumerate(out) if el["type"] == "box" and not el.get("text") and not any(
+        j != k and el["x"] <= anchor(o)[0] <= el["x"] + el["w"] and el["y"] <= anchor(o)[1] <= el["y"] + el["h"]
+        for j, o in enumerate(out))}
+    if empty:
+        why.append(f"{len(empty)} empty box(es) with no text and nothing inside were left out")
+        new_at = {k: n for n, k in enumerate(k for k in range(len(out)) if k not in empty)}
+        out = [el for k, el in enumerate(out) if k not in empty]
+        for el in out:
+            if el.get("move") and "along" in el["move"]:
+                el["move"]["along"] = new_at[el["move"]["along"]]
     if len(out) < 3:
         why.append(f"only {len(out)} usable element(s); a diagram needs at least 3")
         return None

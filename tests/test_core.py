@@ -1883,6 +1883,28 @@ def test_the_reviewer_sees_three_moments_and_fair_or_corrected_diagrams_stay(mon
     assert any("kept 2 of 3" in m and "1:5*" in m for m in logs)
 
 
+def test_no_empty_boxes_words_in_formulas_keep_spaces_and_the_level_reaches_the_writer():
+    from blogwriter import diagram, video
+    scene = {"headline": "The sum", "narration": "Add them all up and divide by the count."}
+    raw = {"elements": [{"type": "box", "x": 10, "y": 30, "w": 30, "h": 30},                     # empty: dropped
+                        {"type": "curve", "id": "c", "points": [[50, 80], [60, 40], [70, 80]]},
+                        {"type": "dot", "x": 50, "y": 80, "move": {"on": "divide", "along": "c", "x": 70, "y": 80}},
+                        {"type": "box", "x": 75, "y": 10, "w": 20, "h": 30},                     # holds the label
+                        {"type": "label", "x": 85, "y": 25, "text": "the count", "size": "s"}]}
+    why = []
+    d = diagram.check(raw, scene, video._verified, video.tex_complete, why)
+    assert [e["type"] for e in d["elements"]] == ["curve", "dot", "box", "label"]
+    assert d["elements"][1]["move"]["along"] == 0 and any("empty box" in w for w in why)
+    assert video.words_tex("Normal density") == r"\text{Normal density}"
+    assert video.words_tex(r"\bar{X}_n \to N(0,1)") == r"\bar{X}_n \to N(0,1)"
+    assert video.words_tex("mean of n draws = 5") == r"\text{mean of n draws} = 5"
+    brief = video.check_brief({"minutes": 10, "maths": True, "acts": [{"title": "A"}]}, "education")
+    basic, _ = video.shape_prompt({**brief, "level": "basic"}, "education", "CLT", "(none)")
+    advanced, _ = video.shape_prompt({**brief, "level": "advanced"}, "education", "CLT", "(none)")
+    assert "complete beginners" in basic and "complete beginners" not in advanced and "full picture" in advanced
+    assert "never symbol by symbol" in basic
+
+
 def test_numbers_said_in_words_count_and_a_formula_inside_a_box_is_its_content():
     from blogwriter import diagram
     from blogwriter.video import _verified, check_brief, spelled_numbers, tex_complete

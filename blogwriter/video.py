@@ -184,7 +184,9 @@ MATHS_RULES = r"""
   w \leftarrow w - \alpha \frac{\partial J}{\partial w}).
 - Narration of a maths shot (20 to 40 words) describes what the viewer is watching move ("watch the line tilt
   until...") and names each symbol in the order it appears, in plain words ("w, the slope, says how steep the
-  line is"). Never use a technical word (affine, conditional mean, regressor) without saying what it means in the
+  line is"). Say what a formula MEANS, the way a teacher would, never symbol by symbol and never "open bracket":
+  "Z counts how many standard errors the average sits from the true mean", not "Z equals open bracket X bar
+  minus mu close bracket". Never use a technical word (affine, conditional mean, regressor) without saying what it means in the
   same sentence. Standard formulas and their symbols are allowed even if not in the facts."""
 
 SCRIPT_PROMPT = """{shape}
@@ -958,6 +960,17 @@ def speakable(text: str) -> str:
     return unicodedata.normalize("NFC", re.sub(r"\s+", " ", text)).strip()
 
 
+WORDS_IN_TEX = re.compile(r"(?<![\\A-Za-z{])([A-Za-z]{3,}(?:[ ]+[A-Za-z]+)+)(?![A-Za-z}])")
+
+
+def words_tex(tex: str) -> str:
+    r"""Plain words inside a formula keep their spaces: "Normal density" becomes \text{Normal density} (in maths mode
+    KaTeX drops the spaces and italicises them: "Normaldensity"). Symbols and commands are left alone."""
+    if not tex or "\\text" in tex:
+        return tex
+    return WORDS_IN_TEX.sub(lambda m: f"\\text{{{m.group(1)}}}", tex)
+
+
 def tex_complete(tex: str) -> bool:
     r"""False for a formula a model left unfinished: unbalanced braces, an empty group, a derivative with nothing
     to differentiate (\frac{\partial}{\partial}), or a line that ends on an operator."""
@@ -1001,6 +1014,17 @@ def lesson_text(lesson: Optional[dict]) -> str:
                          else "This is the last lesson: close the whole course.")
 
 
+LEVEL_RULES = {
+    "basic": "\n- AUDIENCE: complete beginners. Everyday words only, no proofs, history in one line at most. Leave out "
+             "advanced generalisations, technical conditions and the names of later theorems unless the idea cannot "
+             "be understood without them: depth comes from pictures and examples, not jargon.",
+    "intermediate": "\n- AUDIENCE: viewers who know the basics. Name the key conditions and at most one generalisation "
+                    "that matters; proofs only as intuition.",
+    "advanced": "\n- AUDIENCE: viewers who want the full picture: the conditions, the generalisations and a sketch of "
+                "why it is true are all welcome.",
+}
+
+
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
     """The writer's brief: the style's voice plus the plan made for this subject (braces escaped for the
     script prompt), and the number of shots that fits the planned length."""
@@ -1014,6 +1038,8 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
         text += MATHS_RULES
     if style == "education":
         text += TEACHING + VOICE.replace("[examples]", brief.get("examples") or "everyday situations the viewer knows")
+    if style in ("education", "concept"):
+        text += LEVEL_RULES.get(brief.get("level") or "intermediate", "")
     text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots
@@ -1281,6 +1307,11 @@ class VideoMaker:
             scenes.append(scene)
         if len(scenes) < 5:
             raise LLMError("the video script came back too short")
+        for sc in scenes:             # plain words in a formula keep their spaces
+            for p in sc.get("parts", []) + sc.get("steps", []) + (sc.get("graph") or {}).get("curves", []) + \
+                    ([sc["surface"]] if sc.get("surface") else []):
+                if p.get("tex"):
+                    p["tex"] = words_tex(p["tex"])
         def texs(sc):
             return [p["tex"] for p in sc.get("parts", []) + sc.get("steps", []) +
                     (sc.get("graph") or {}).get("curves", []) + [sc.get("surface") or {"tex": ""}] if p["tex"]]
@@ -1354,6 +1385,7 @@ class VideoMaker:
             ("news" if meta.get("source") != "topic" else "auto")
         style = "education" if lesson else style
         brief = self.brief(title, facts, style, lesson)
+        brief["level"] = meta.get("level") or "intermediate"         # who the lesson is for (the run's --level)
         plan = self.script(title, facts, sources, brief["style"], brief,
                            report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
         scenes, beats = plan["scenes"], plan["short"]
