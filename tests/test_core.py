@@ -1386,3 +1386,14 @@ def test_motion_language_is_clamped_and_never_a_preset():
     looks = {str(design.check_fx(None, f"title {k}")) for k in range(30)}
     assert len(looks) == 30                                   # every video its own recipe
     assert design.check_fx(None, "same") == design.check_fx(None, "same")   # and each render of one video identical
+
+
+def test_thumbnail_uses_the_strongest_visual():
+    from blogwriter.video import TRANSITION, hero_shot
+    scenes = [{"kind": "hook", "frames": 100, "graphic": {"type": "kinetic"}}, {"kind": "plot", "frames": 150},
+              {"kind": "photo", "frames": 120, "graphic": {"type": "hub"}}, {"kind": "graph", "frames": 200}]
+    starts = [0, 85, 220, 325]
+    assert hero_shot(scenes, starts) == 325 + 200 - TRANSITION - 12           # the graph, fully drawn
+    assert hero_shot(scenes[:3], starts) == 85 + 150 - TRANSITION - 12        # else the plot
+    assert hero_shot([scenes[0], scenes[2]], [0, 85]) == 85 + 120 - TRANSITION - 12   # else a real graphic
+    assert hero_shot([scenes[0]], [0]) is None                                # kinetic type is not a picture

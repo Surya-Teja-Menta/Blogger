@@ -4,9 +4,10 @@ import {C, FONT, alpha, useTheme} from "./theme";
 
 // YouTube thumbnail in the video's theme: the strongest photo, three or four huge words with one in the accent,
 // and the headline figure
-export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null}) => {
+export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null, hero = ""}) => {
   useTheme(theme);
-  const photo = scenes.flatMap((s) => s.images || [])[0];
+  // the video's strongest visual (a graph, formula or chart frame) beats a stock photo
+  const photo = hero || scenes.flatMap((s) => s.images || [])[0];
   const figure = (scenes.find((s) => s.number) || {}).number;
   const words = thumbText.split(/\s+/).filter(Boolean);
   const mark = thumbHighlight.toLowerCase();
@@ -15,7 +16,8 @@ export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null
       <div style={{position: "absolute", width: 900, height: 900, borderRadius: "50%", left: -300, top: -300,
                    background: `radial-gradient(circle, ${alpha(C.accent, 0.35)}, transparent 65%)`}}/>
       {photo && <Img src={staticFile(photo)} style={{position: "absolute", right: 0, width: "68%", height: "100%", objectFit: "cover",
-                                                    filter: "contrast(1.2) saturate(1.15) brightness(.95)"}}/>}
+                                                    objectPosition: hero ? "86% 50%" : "50% 50%",   // keep a frame's labels in view
+                                                    filter: hero ? "contrast(1.08) saturate(1.2)" : "contrast(1.2) saturate(1.15) brightness(.95)"}}/>}
       <AbsoluteFill style={{background: `linear-gradient(90deg, ${C.bg} 32%, ${alpha(C.bg, 0.6)} 56%, transparent 80%)`}}/>
       <div style={{position: "absolute", left: 56, top: 64, width: 780}}>
         {figure && (

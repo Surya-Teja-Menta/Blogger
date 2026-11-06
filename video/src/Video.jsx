@@ -62,8 +62,9 @@ const Caption = ({captions, vertical}) => {
   );
 };
 
-export const Video = ({scenes, captions = [], channel = "", theme = null}) => {
+export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false}) => {
   useTheme(theme);
+  C.clean = clean;              // a frame for the thumbnail: the visual alone
   const frame = useCurrentFrame();
   const {width, height, durationInFrames} = useVideoConfig();
   const vertical = height > width;
@@ -100,9 +101,9 @@ export const Video = ({scenes, captions = [], channel = "", theme = null}) => {
       </TransitionSeries>
       <Finish/>
       <Texture/>
-      <Badge channel={channel} vertical={vertical}/>
+      {!clean && <Badge channel={channel} vertical={vertical}/>}
       <Caption captions={captions} vertical={vertical}/>
-      <div style={{position: "absolute", left: 0, top: 0, height: 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
+      <div style={{position: "absolute", left: 0, top: 0, height: clean ? 0 : 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
                    width: `${(100 * frame) / Math.max(1, durationInFrames - 1)}%`, boxShadow: `0 0 12px ${C.accent}`}}/>
     </AbsoluteFill>
   );

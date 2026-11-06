@@ -88,6 +88,7 @@ export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
 
 // the headline block at the top of a shot; the design decides left or centred
 export const Title = ({s, vertical, top, size, maxWidth}) => {
+  if (C.clean) return null;
   const center = C.title === "center";
   return (
     <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: top ?? (vertical ? 250 : 112),

@@ -52,11 +52,18 @@ Reply with a JSON list: [{{"scene": index, "type": "...", "center": {{"icon": ".
 "nodes": [{{"icon": "...", "label": "..."}}], "icon": "..."}}] (center only for hub and spotlight, icon only for grid)."""
 
 
-def prompt(scenes: List[dict]) -> str:
+def prompt(scenes: List[dict], only: Optional[set] = None) -> str:
     rows = "\n".join(f"{i} | {s['kind']} | {s.get('headline', '')} | {s.get('number', '')} | {s.get('narration', '')}"
-                     for i, s in enumerate(scenes) if s["kind"] in ELIGIBLE and not s.get("video"))
-    return PROMPT.replace("{icons}", " ".join(sorted(ICONS))).replace("{shots}", rows) \
+                     for i, s in enumerate(scenes) if s["kind"] in ELIGIBLE and not s.get("video")
+                     and (only is None or i in only))
+    text = PROMPT.replace("{icons}", " ".join(sorted(ICONS))).replace("{shots}", rows) \
         .replace("{{", "{").replace("}}", "}")
+    if only is not None:
+        text = text.replace("For as many shots as possible (aim for at least 3 in 4)",
+                            "For EVERY shot listed (these are lessons: each idea needs a picture, not only words)") \
+            .replace("- Leave out a shot that no graphic fits.",
+                     "- Every shot must get a graphic; use flow, hub, spotlight, versus or stack before kinetic.")
+    return text
 
 
 def _label(text, allowed: str, verified: Callable[[str, str], bool]) -> Optional[str]:

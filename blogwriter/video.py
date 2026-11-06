@@ -441,15 +441,39 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
             "-b:a", "192k", dest])
 
 
+LONG_SCALE = "1.3333333333333333"   # 1920x1080 layout rendered at 2560x1440: YouTube streams 1440p uploads at a
+                                    # far higher bitrate, so text, formulas and thin lines stay crisp
+
+
 def render(composition: str, props: str, soundtrack: str, dest: str, log: Callable[[str], None]) -> None:
     """Render the pictures silently, then put the soundtrack on: rendering with audio attached is three to
-    four times slower in Remotion."""
+    four times slower in Remotion. Quality over speed: full-quality frames, low CRF, slow preset."""
     silent = dest + ".silent.mp4"
-    remotion(["render", "src/index.jsx", composition, silent, f"--props={props}", "--muted", "--crf=19",
-              "--x264-preset=medium"], log)
+    scale = [f"--scale={LONG_SCALE}"] if composition == "Long" else []
+    remotion(["render", "src/index.jsx", composition, silent, f"--props={props}", "--muted", "--crf=16",
+              "--x264-preset=slow", "--jpeg-quality=100", *scale], log, timeout=4 * 3600)
     ffmpeg(["-i", silent, "-i", soundtrack, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
             "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest])
     os.remove(silent)
+
+
+HERO_ORDER = ("graph", "equation", "derive", "plot", "bars", "line", "donut", "compare", "kpis", "stat", "map")
+
+
+def hero_shot(scenes: List[dict], starts: List[int]) -> Optional[int]:
+    """The frame of the video's strongest visual for the thumbnail: a graph, formula or chart fully built (just
+    before the shot ends), or a motion graphic; None if the video has neither."""
+    best = None
+    for i, s in enumerate(scenes):
+        kind = s["kind"]
+        rank = HERO_ORDER.index(kind) if kind in HERO_ORDER else (len(HERO_ORDER) if s.get("graphic") and
+                                                                  s["graphic"]["type"] != "kinetic" else None)
+        if rank is not None and (best is None or rank < best[0]):
+            best = (rank, i)
+    if best is None:
+        return None
+    i = best[1]
+    return starts[i] + max(1, scenes[i]["frames"] - TRANSITION - 12)
 
 
 def country_names() -> Dict[str, str]:
@@ -895,6 +919,10 @@ class VideoMaker:
                               f"{brief['mood']} {brief['tone']}", self.log)
         self.log(f"[video] {len(scenes)} scenes ({', '.join(s['kind'] for s in scenes)}), Short of {len(beats)} beats")
         self.art_direct(scenes)
+        bare = {i for i, s in enumerate(scenes) if s["kind"] in graphics.ELIGIBLE and not s.get("graphic")
+                and not s.get("video") and i > 0}
+        if brief["style"] in ("education", "concept") and bare:
+            self.art_direct(scenes, only=bare)      # in a lesson every idea gets a picture, not just its words
         if brief["style"] in ("education", "concept"):
             n = graphics.no_stock_photos(scenes)
             if n:
@@ -1032,7 +1060,24 @@ class VideoMaker:
         self.log(f"[video] rendering the long video ({total / FPS:.0f}s)")
         render("Long", props, os.path.join(job, "long_en.mp3"), os.path.join(out, "long_video_en.mp4"), self.log)
         files["long_video_en.mp4"] = "video"
-        remotion(["still", "src/index.jsx", "Thumb", os.path.join(out, "thumbnail.png"), f"--props={props}"], self.log)
+        thumb_props = props
+        hero = hero_shot(long_scenes, starts)
+        if hero is not None:              # a clean frame (no headline, captions or badge) of the best visual
+            clean = os.path.join(job, "hero.json")
+            with open(props, encoding="utf-8") as f:
+                p = json.load(f)
+            with open(clean, "w", encoding="utf-8") as f:
+                json.dump({**p, "captions": [], "clean": True}, f, ensure_ascii=False)
+            try:
+                remotion(["still", "src/index.jsx", "Long", os.path.join(VIDEO_APP, "public", "job", "hero.png"),
+                          f"--props={clean}", f"--frame={hero}", "--jpeg-quality=100"], self.log)
+                thumb_props = os.path.join(job, "thumb.json")
+                with open(thumb_props, "w", encoding="utf-8") as f:
+                    json.dump({**p, "hero": "job/hero.png"}, f, ensure_ascii=False)
+            except RuntimeError:
+                pass
+        remotion(["still", "src/index.jsx", "Thumb", os.path.join(out, "thumbnail.png"), f"--props={thumb_props}",
+                  "--jpeg-quality=100"], self.log)
         files["thumbnail.png"] = "thumbnail"
         self.log("[video] quality check (contact sheet + stillness)")
         try:
@@ -1094,10 +1139,11 @@ class VideoMaker:
         self.deliver(run_dir, out, files, plan, email, verdict)
         return {name: os.path.join(out, name) for name in files}
 
-    def art_direct(self, scenes: List[dict]) -> None:
-        """Motion graphics for the shots without a strong picture; any failure leaves the templates in place."""
+    def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
+        """Motion graphics for the shots without a strong picture; any failure leaves the templates in place.
+        only: just these shots, each of which must get a graphic (the second pass for lessons)."""
         try:
-            reply = self.llm.complete_json(graphics.prompt(scenes), max_tokens=4000, temperature=0.6)
+            reply = self.llm.complete_json(graphics.prompt(scenes, only), max_tokens=4000, temperature=0.6)
         except LLMError as exc:
             self.log(f"[graphics] no art direction: {str(exc)[:120]}")
             return
