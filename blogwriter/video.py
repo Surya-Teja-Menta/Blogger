@@ -51,6 +51,7 @@ DIAGRAM_MAX = 18          # bespoke diagrams per video (each costs several visio
 DIAGRAM_MAX_LONG = 30     # ... and in a long video, where most shots are pictures of the idea
 CHECK_PAUSE = 3.0         # seconds of silence in a "check" shot for the viewer to think before the answer
 REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
+KEEP_SCORE = 5            # a diagram scoring this (of 10) stays: a fair picture of the idea beats words alone
 KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
          "quote", "equation", "plot", "graph", "derive", "surface", "check", "diagram")
@@ -1722,8 +1723,9 @@ class VideoMaker:
                 if os.path.exists(os.path.join(job, f"look_{key}.jpg"))}
 
     def polish_diagrams(self, scenes: List[dict], long_scenes: List[dict], spoken: dict, theme: dict, job: str,
-                        rounds: int = 3) -> None:
-        """Render each diagram's last frame, let the vision model judge it against its sentence and correct it
+                        rounds: int = 2) -> None:
+        """Render three moments of each diagram (a third in, two thirds in, the end), let the vision model judge it
+        against its sentence and correct it
         (up to `rounds` times; a correction the checks reject goes back once with the reason), and keep the best
         version only if it scores 7 or more; otherwise the shot falls back to its library graphic or animated type."""
         idx = [i for i, s in enumerate(long_scenes) if s.get("diagram")]
@@ -1731,23 +1733,32 @@ class VideoMaker:
             return
         best: Dict[int, tuple] = {}
         settled, unrendered = set(), set()
+        fresh: Dict[int, dict] = {}
         problems: Dict[int, str] = {}
         words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
         for rnd in range(rounds + 1):
             todo = [i for i in idx if i not in settled]
             if not todo:
                 break
-            looks = self.stills([(i, {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}],
-                                      "captions": [], "theme": theme}, long_scenes[i]["frames"] - 20) for i in todo], job)
+            shots = []
+            for i in todo:                    # three moments of the shot, so the reviewer can see what moves
+                props = {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}], "captions": [],
+                         "theme": theme}
+                n = long_scenes[i]["frames"]
+                shots += [(f"{i}a", props, round(n * 0.35)), (f"{i}b", props, round(n * 0.65)), (i, props, n - 20)]
+            looks = self.stills(shots, job)
             def review(i: int) -> None:       # one shot's critique and correction; shots run side by side
                 if i not in looks:            # it did not draw: it could break the video's render too
                     unrendered.add(i)
                     settled.add(i)
                     return
-                with open(looks[i], "rb") as f:
-                    image = f.read()
+                images = []
+                for key in (f"{i}a", f"{i}b", i):
+                    if key in looks:
+                        with open(looks[key], "rb") as f:
+                            images.append(f.read())
                 ask = diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST)
-                reply = gemini_json(self.s, ask, [image], effort="medium", temperature=0.5, log=self.log)
+                reply = gemini_json(self.s, ask, images, effort="medium", temperature=0.5, log=self.log)
                 try:
                     score = float(reply.get("score")) if isinstance(reply, dict) else None
                 except (TypeError, ValueError):
@@ -1755,6 +1766,7 @@ class VideoMaker:
                 if score is None:             # no verdict: the version that passed the checks stands
                     settled.add(i)
                     return
+                fresh.pop(i, None)            # this version has its verdict
                 if score > best.get(i, (-1.0, None))[0]:
                     best[i] = (score, scenes[i]["diagram"])
                     problems[i] = str((reply or {}).get("problem") or "")[:110] if isinstance(reply, dict) else ""
@@ -1764,12 +1776,13 @@ class VideoMaker:
                 why: List[str] = []
                 d = diagram.check({"elements": reply.get("elements") or []}, scenes[i], _verified, tex_complete, why)
                 if not d and reply.get("elements"):         # one more try, told exactly what the checks refused
-                    again = gemini_json(self.s, ask + diagram.RETRY.format(why="; ".join(why[:4])), [image],
-                                        effort="medium", temperature=0.4)
+                    again = gemini_json(self.s, ask + diagram.RETRY.format(why="; ".join(why[:4])), images,
+                                        effort="medium", temperature=0.4, log=self.log)
                     d = diagram.check({"elements": (again or {}).get("elements") or []} if isinstance(again, dict)
                                       else None, scenes[i], _verified, tex_complete)
                 if d and not typeset_errors([el["tex"] for el in d["elements"] if el["type"] == "tex"]):
                     unrendered.discard(i)
+                    fresh[i] = d                  # a correction made from the critique, awaiting its own verdict
                     scenes[i]["diagram"] = d
                     long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
                 else:
@@ -1783,10 +1796,13 @@ class VideoMaker:
                 unreviewed.append(str(i))     # no vision model answered: it passed every check, so it stays
                 continue
             score, d = best.get(i, (0.0, None))
-            if d is not None and score >= 7:
+            if i in fresh and i not in unrendered and score >= KEEP_SCORE - 1:
+                d, score = fresh[i], max(score, KEEP_SCORE)      # its correction, made from the critique, stands
+                problems[i] = "corrected, not re-checked"
+            if d is not None and score >= KEEP_SCORE:
                 scenes[i]["diagram"] = d
                 long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
-                kept.append(f"{i}:{score:g}")
+                kept.append(f"{i}:{score:g}" + ("*" if problems.get(i) == "corrected, not re-checked" else ""))
                 continue
             self.log(f"[diagram] shot {i} dropped " + ("(its preview did not render)" if i in unrendered
                                                         else f"at {score:g}/10: {problems.get(i) or 'weak'}"))

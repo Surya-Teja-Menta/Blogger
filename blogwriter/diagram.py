@@ -119,18 +119,19 @@ REFINE = """You designed this animated diagram for one shot of an educational Yo
 Narration: "{narration}"
 Headline (drawn above the canvas): "{headline}"
 The picture the writer asked for: "{picture}"
-The image is the shot's last frame as rendered. Its JSON:
+The images are three moments of the shot as rendered, in order: a third of the way in, two thirds in, and its
+last frame, so you can see what appears, moves, fills or morphs while the sentence is said. Its JSON:
 {diagram}
 
 """ + SPEC + """
 
-Judge the image like the art director of 3Blue1Brown, strictly: does it SHOW the idea of the sentence (not merely
+Judge the shot like the art director of 3Blue1Brown, strictly (across all three moments): does it SHOW the idea of the sentence (not merely
 name it)? Is it clean: nothing overlapping or cut off, labels readable and right next to what they name, the canvas
 used well (not sparse, not crammed into one area), one clear focal point, and something that changes while the
 sentence is said? Score 9-10 only for a picture a top channel would publish; any overlap or a cramped or sparse
 layout is at most 6; a picture that only names the idea instead of showing it is at most 5. Then give an improved
 version that fixes every problem you saw.
-Reply: {{"score": 1-10 for the image as it is, "problem": "the main problem in one line, or empty",
+Reply: {{"score": 1-10 for the shot as it is, "problem": "the main problem in one line, or empty",
 "elements": [the complete improved element list in the same format, or [] if it is already excellent]}}"""
 
 RETRY = """

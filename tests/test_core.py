@@ -1845,6 +1845,44 @@ def test_a_diagram_no_vision_model_could_review_is_kept_and_one_that_cannot_draw
     assert any("kept unreviewed" in m and "0" in m for m in logs) and any("preview did not render" in m for m in logs)
 
 
+def test_the_reviewer_sees_three_moments_and_fair_or_corrected_diagrams_stay(monkeypatch, tmp_path):
+    from blogwriter import video
+    from blogwriter.config import Settings
+    els = [{"type": "dot", "x": x, "y": 50, "r": 2, "color": "accent", "on": "", "anim": ""} for x in (20, 50, 80)]
+    scenes = [{"kind": "diagram", "headline": f"h{k}", "narration": "n", "diagram": {"elements": [dict(e) for e in els]}}
+              for k in range(3)]
+    long = [{**s, "frames": 120, "diagram": video.diagram.timed(s["diagram"], [], 120, 30, 6)} for s in scenes]
+    look = tmp_path / "look.jpg"
+    look.write_bytes(b"jpeg")
+    frames_asked, images_seen, logs = [], [], []
+    maker = video.VideoMaker(Settings(), None, log=logs.append)
+
+    def stills(shots, job):
+        frames_asked.extend((k, f) for k, _, f in shots)
+        return {k: str(look) for k, _, _ in shots}
+    calls = {0: 0, 1: 0, 2: 0}
+    better = [{"type": "dot", "x": x, "y": 40, "r": 3, "color": "hot"} for x in (15, 50, 85)]
+
+    def judge(settings, ask, images, **kw):
+        i = int(ask.split('Headline (drawn above the canvas): "h')[1][0])
+        images_seen.append(len(images))
+        calls[i] += 1
+        if i == 0:
+            return {"score": 5, "problem": "fair", "elements": []}       # fair: stays as it is
+        if i == 1:                                                       # weak, corrected, then nobody answers
+            return {"score": 4, "problem": "weak", "elements": better} if calls[i] == 1 else None
+        return {"score": 3, "problem": "names, does not show", "elements": []}
+    monkeypatch.setattr(maker, "stills", stills)
+    monkeypatch.setattr(video, "gemini_json", judge)
+    maker.polish_diagrams(scenes, long, {}, {}, str(tmp_path))
+    assert ("0a", 42) in frames_asked and ("0b", 78) in frames_asked and (0, 100) in frames_asked
+    assert set(images_seen) == {3}
+    assert scenes[0]["diagram"]["elements"][0]["x"] == 20                # kept at 5/10
+    assert scenes[1]["diagram"]["elements"][0]["x"] == 15                # its correction stands
+    assert not scenes[2].get("diagram") and long[2]["diagram"] is None   # 3/10 is dropped
+    assert any("kept 2 of 3" in m and "1:5*" in m for m in logs)
+
+
 def test_numbers_said_in_words_count_and_a_formula_inside_a_box_is_its_content():
     from blogwriter import diagram
     from blogwriter.video import _verified, check_brief, spelled_numbers, tex_complete
