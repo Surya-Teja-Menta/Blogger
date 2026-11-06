@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from typing import Callable, List, Optional
 from urllib.parse import quote
 
@@ -60,6 +61,40 @@ def post_json(url: str, key: str, body: dict, timeout: int = 90) -> dict:
             return json.loads(r.stdout or "{}")
         except ValueError:
             return {"error": (r.stdout or r.stderr)[:200]}
+
+
+def gemini_json(settings: Settings, prompt: str, jpegs: Optional[List[bytes]] = None, model: str = "",
+                effort: str = "medium", temperature: float = 0.6, timeout: int = 180):
+    """A strong Gemini model (text and optional images in, JSON out) for the work that needs it most: designing
+    and correcting diagrams. Tries every key, waits out a rate limit once; None when nothing answers."""
+    content = [{"type": "text", "text": prompt + "\nReply with JSON only."}]
+    content += [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(j).decode()}}
+                for j in jpegs or []]
+    # newest first; a busy model (503) or an exhausted one (429) fails fast and the next one is tried
+    models = [model] if model else [m.strip() for m in (os.environ.get("DIAGRAM_MODELS", "") or
+                                                        "gemini-3.8-flash,gemini-3-flash-preview,gemini-flash-latest").split(",")
+                                    if m.strip()]
+    for attempt in range(2):
+        limited = False
+        for name in models:
+            body = {"model": name, "reasoning_effort": effort, "temperature": temperature,
+                    "messages": [{"role": "user", "content": content}]}
+            for key in settings.gemini_keys:
+                data = post_json(GEMINI, key, body, timeout=timeout)
+                if isinstance(data, list):              # Gemini sends errors as a one-item list
+                    data = data[0] if data and isinstance(data[0], dict) else {}
+                try:
+                    text = data["choices"][0]["message"]["content"]
+                    return json.loads(re.search(r"[\[{].*[\]}]", text, re.S).group())
+                except (KeyError, IndexError, TypeError, AttributeError, ValueError):
+                    err = str(data.get("error", "")) if isinstance(data, dict) else ""
+                    if "503" in err or "high demand" in err or "404" in err or err == "timeout":
+                        break                        # this model is busy or gone: next model, not next key
+                    limited = limited or "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err
+        if not limited:
+            break
+        time.sleep(35)                          # free-tier requests-per-minute limit: wait it out once
+    return None
 
 
 def vision(settings: Settings, prompt: str, jpegs: List[bytes]) -> Optional[dict]:

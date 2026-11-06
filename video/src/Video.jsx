@@ -12,6 +12,7 @@ import {CUTS, ChapterSting, Finish, clamp} from "./fx";
 import {SCENES} from "./scenes";
 import {GRAPHICS} from "./graphics";
 import {Texture, genCut} from "./gen";
+import {DiagramScene} from "./diagram";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
@@ -73,7 +74,8 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       <TransitionSeries>
         {scenes.map((s, i) => {
           // a shot the art director gave a motion graphic plays that instead of its template
-          const Scene = (s.graphic && GRAPHICS[s.graphic.type]) || SCENES[s.kind] || SCENES.photo;
+          // a diagram drawn for this sentence beats both
+          const Scene = (s.diagram && DiagramScene) || (s.graphic && GRAPHICS[s.graphic.type]) || SCENES[s.kind] || SCENES.photo;
           const scene = (x) => <Scene s={x} i={i} vertical={vertical}/>;
           // a shot that opens an act starts its own animation once the sting has passed; its cues move with it
           const late = (f) => (f == null ? f : Math.max(0, f - STING));
@@ -82,7 +84,11 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
             center: s.graphic.center && {...s.graphic.center, at: late(s.graphic.center.at)},
             nodes: (s.graphic.nodes || []).map((nd) => ({...nd, at: late(nd.at)}))},
             parts: s.parts && s.parts.map((p) => ({...p, at: late(p.at)})),
-            steps: s.steps && s.steps.map((p) => ({...p, at: late(p.at)}))} : s;
+            steps: s.steps && s.steps.map((p) => ({...p, at: late(p.at)})),
+            diagram: s.diagram && {elements: s.diagram.elements.map((e) => {
+              const m = (x) => x && {...x, at: late(x.at)};
+              return {...e, at: late(e.at), move: m(e.move), glow: m(e.glow), hide: m(e.hide)};
+            })}} : s;
           return (
             <React.Fragment key={i}>
               {i > 0 && <TransitionSeries.Transition presentation={cut(C.cuts[i % C.cuts.length], width, height)}
@@ -100,7 +106,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
         })}
       </TransitionSeries>
       <Finish/>
-      <Texture/>
+      {!clean && <Texture/>}
       {!clean && <Badge channel={channel} vertical={vertical}/>}
       <Caption captions={captions} vertical={vertical}/>
       <div style={{position: "absolute", left: 0, top: 0, height: clean ? 0 : 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,

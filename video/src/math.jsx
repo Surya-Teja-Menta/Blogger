@@ -10,7 +10,7 @@ import {C, FONT, SERIES, alpha} from "./theme";
 import {compile} from "./expr";
 
 // KaTeX loads its fonts lazily; hold the frame until they are in, or the first frames show a fallback serif
-function useMathFonts() {
+export function useMathFonts() {
   const [handle] = useState(() => delayRender("KaTeX fonts"));
   useEffect(() => {
     Promise.all(["48px KaTeX_Main", "italic 48px KaTeX_Math", "48px KaTeX_Size1", "48px KaTeX_Size2"]
@@ -18,7 +18,7 @@ function useMathFonts() {
   }, []);
 }
 
-const Tex = ({tex, color}) => (
+export const Tex = ({tex, color}) => (
   <span style={{color}} dangerouslySetInnerHTML={{__html: katex.renderToString(tex, {throwOnError: false})}}/>
 );
 
@@ -144,7 +144,7 @@ export const PlotScene = ({s, i, vertical}) => {
   const mode = s.plot || "fit";
   const two = mode === "descent";
   const box = vertical ? {x0: 130, y0: 560, x1: 980, y1: two ? 1180 : 1500}
-                       : {x0: two ? 170 : 300, y0: 330, x1: two ? 900 : 1500, y1: 960};
+                       : {x0: two ? 170 : 300, y0: 330, x1: two ? 900 : 1500, y1: 905};   // labels clear of captions
   const X = (x) => box.x0 + (x / 10) * (box.x1 - box.x0);
   const Y = (y) => box.y1 - (y / 9) * (box.y1 - box.y0);
   const ky = (box.y1 - box.y0) / 9;
@@ -169,7 +169,7 @@ export const PlotScene = ({s, i, vertical}) => {
   const worst = pts.reduce((a, p) => a + (p[1] - my) ** 2, 0);
 
   // loss panel for the descent
-  const lbox = vertical ? {x0: 130, y0: 1300, x1: 980, y1: 1760} : {x0: 1060, y0: 330, x1: 1780, y1: 960};
+  const lbox = vertical ? {x0: 130, y0: 1300, x1: 980, y1: 1760} : {x0: 1060, y0: 330, x1: 1780, y1: 905};
   const mRange = [-0.45, 1.65];
   const lMax = Math.max(loss(mRange[0]), loss(mRange[1]));
   const LX = (mm) => lbox.x0 + ((mm - mRange[0]) / (mRange[1] - mRange[0])) * (lbox.x1 - lbox.x0);
@@ -288,7 +288,7 @@ export const GraphScene = ({s, i, vertical}) => {
   if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
   const padY = (hi - lo) * 0.1;
   lo -= padY; hi += padY;
-  const box = vertical ? {x0: 140, x1: 980, y0: 640, y1: 1440} : {x0: 230, x1: 1360, y0: 330, y1: 960};
+  const box = vertical ? {x0: 140, x1: 980, y0: 640, y1: 1440} : {x0: 230, x1: 1360, y0: 330, y1: 905};
   const mark = SERIES[1] || C.cool;                        // the tangent and readings: a colour unlike the first curve
   const X = (x) => box.x0 + ((x - x0) / (x1 - x0)) * (box.x1 - box.x0);
   const Y = (y) => box.y1 - ((y - lo) / (hi - lo)) * (box.y1 - box.y0);

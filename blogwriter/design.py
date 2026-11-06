@@ -117,7 +117,7 @@ ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "t
 CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
 
 
-def check_fx(raw, seed: str) -> dict:
+def check_fx(raw, seed: str, light: bool = False) -> dict:
     """The motion language as the video can draw it: every number clamped to a safe range, every name checked;
     anything missing or wrong is drawn at random (seeded by the title), never taken from a preset."""
     rnd = random.Random(int(hashlib.sha256(("fx" + seed).encode()).hexdigest(), 16))
@@ -170,14 +170,14 @@ def check_fx(raw, seed: str) -> dict:
                       "fill": pick(cards.get("fill"), ("glass", "solid", "outline")),
                       "shadow": num(cards.get("shadow"), 0, 1.5, rnd.uniform(0.3, 1.2))},
             "texture": {"grain": num(tex.get("grain"), 0, 0.2, rnd.uniform(0, 0.12)),
-                        "vignette": num(tex.get("vignette"), 0, 0.6, rnd.uniform(0, 0.45))},
+                        "vignette": num(tex.get("vignette"), 0, 0.6, rnd.uniform(0, 0.45)) * (0.3 if light else 1)},
             "bigWord": bool(raw.get("bigWord")) if "bigWord" in raw else rnd.random() < 0.5}
 
 
 def _finish(palette: dict, display: str, body: str, upper: bool, back: str, cuts: List[str], pace: str,
             source: str, title: str = "left", kicker: str = "pill", fx: Optional[dict] = None) -> dict:
     speed, damping, stagger = PACES[pace]
-    fx = fx or check_fx(None, palette["bg"] + display)
+    fx = fx or check_fx(None, palette["bg"] + display, luminance(palette["bg"]) > 0.4)
     return {**palette, "fx": fx, "cuts": fx["transitions"], "named_cuts": cuts, "title": title if title in ("left", "center") else "left",
             "kicker": kicker if kicker in ("pill", "rule") else "pill", "light": luminance(palette["bg"]) > 0.4, "display": display, "body": body,
             "weight": _weight(display, 900), "upper": upper, "back": back, "pace": pace,
@@ -207,7 +207,7 @@ def check(raw) -> Optional[dict]:
     if luminance(bg) > 0.4 and back in DARK_ONLY:     # a glowing grid or bold orbs wash a light design out
         back = "dots"
     return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed",
-                   raw.get("title"), raw.get("kicker"), check_fx(raw.get("fx"), pal["bg"] + display + pal["accent"]))
+                   raw.get("title"), raw.get("kicker"), check_fx(raw.get("fx"), pal["bg"] + display + pal["accent"], luminance(pal["bg"]) > 0.4))
 
 
 def generate(seed: str) -> dict:
@@ -248,7 +248,7 @@ def generate(seed: str) -> dict:
     back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("dots", "waves", "rays")])
     return _finish(pal, display, rnd.choice([b for b in bodies if b != display]), upper, back,
                    rnd.sample(CUTS, 4), rnd.choice(list(PACES)), "generated",
-                   rnd.choice(("left", "center")), rnd.choice(("pill", "rule")), check_fx(None, seed))
+                   rnd.choice(("left", "center")), rnd.choice(("pill", "rule")), check_fx(None, seed, light))
 
 
 def prompt(title: str, style: str, mood: str) -> str:

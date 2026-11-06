@@ -24,10 +24,10 @@ import requests
 from . import sound
 from .config import Settings
 from .critic import review, summary
-from .footage import CLIP_SECONDS, find_clip, photo_fits
+from .footage import CLIP_SECONDS, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
-from . import design, graphics, mathexpr
+from . import design, diagram, graphics, mathexpr
 from .research import domain
 from .storage import prune_prefix, upload_run
 from .web import UA
@@ -457,6 +457,30 @@ def render(composition: str, props: str, soundtrack: str, dest: str, log: Callab
     os.remove(silent)
 
 
+def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]:
+    """Cut a clean frame down to what is drawn on it (everything that differs clearly from the background)."""
+    try:
+        from PIL import Image
+        import numpy as np
+        im = Image.open(path).convert("RGB")
+        a = np.asarray(im).astype(int)
+        ref = np.array([int(bg[i:i + 2], 16) for i in (1, 3, 5)])
+        mask = np.abs(a - ref).max(axis=2) > 48
+        ys, xs = np.nonzero(mask)
+        if len(xs) < 50:
+            return None
+        h, w = mask.shape
+        x0, x1 = np.percentile(xs, [0.5, 99.5]).astype(int)
+        y0, y1 = np.percentile(ys, [0.5, 99.5]).astype(int)
+        mx, my = int((x1 - x0) * margin) + 10, int((y1 - y0) * margin) + 10
+        box = (max(0, x0 - mx), max(0, y0 - my), min(w, x1 + mx), min(h, y1 + my))
+        im.crop(box).save(path)
+        return (box[2] - box[0]) / max(1, box[3] - box[1])
+    except (OSError, ValueError, ImportError):
+        pass
+    return None
+
+
 HERO_ORDER = ("graph", "equation", "derive", "plot", "bars", "line", "donut", "compare", "kpis", "stat", "map")
 
 
@@ -722,7 +746,7 @@ def on_screen(scene: dict) -> List[str]:
     return ([scene["headline"], scene["kicker"], scene["label"], scene.get("quote", "")] +
             [i["label"] for i in scene.get("items", [])] + [e["label"] for e in scene.get("events", [])] +
             graphics.labels(scene.get("graphic")) + [p["label"] for p in scene.get("parts", [])] +
-            [st["note"] for st in scene.get("steps", [])] +
+            [st["note"] for st in scene.get("steps", [])] + diagram.texts(scene.get("diagram")) +
             ([scene["xlabel"], scene["ylabel"]] if scene["kind"] in ("plot", "graph") else []))
 
 
@@ -740,6 +764,8 @@ def with_text(scene: dict, texts: List[str]) -> dict:
         p["label"], rest = rest[0], rest[1:]
     for st in s.get("steps", []):
         st["note"], rest = rest[0], rest[1:]
+    if s.get("diagram"):
+        rest = diagram.retext(s["diagram"], rest)
     if s["kind"] in ("plot", "graph"):
         s["xlabel"], s["ylabel"] = rest[:2]
     s["highlight"] = ""          # the marked word cannot be matched across languages
@@ -923,6 +949,7 @@ class VideoMaker:
                 and not s.get("video") and i > 0}
         if brief["style"] in ("education", "concept") and bare:
             self.art_direct(scenes, only=bare)      # in a lesson every idea gets a picture, not just its words
+        self.draw_diagrams(scenes, brief, plan["title"])
         if brief["style"] in ("education", "concept"):
             n = graphics.no_stock_photos(scenes)
             if n:
@@ -939,7 +966,7 @@ class VideoMaker:
         credits, pictures = [], {}
         for k, sc in enumerate(scenes):
             sc["images"] = []
-            if sc.get("graphic") or sc["kind"] in MATH_KINDS:
+            if sc.get("graphic") or sc.get("diagram") or sc["kind"] in MATH_KINDS:
                 sc.pop("subjects", None)
                 sc.pop("footage", None)
             for subject in sc.pop("subjects", []):
@@ -1029,8 +1056,11 @@ class VideoMaker:
                         "parts": graphics.timed_parts(s.get("parts", []), spoken.get(("en", "long", i), []), frames[i],
                                                       FPS, LEAD),
                         "steps": graphics.timed_steps(s.get("steps", []), spoken.get(("en", "long", i), []), frames[i],
-                                                      FPS, LEAD)}
+                                                      FPS, LEAD),
+                        "diagram": diagram.timed(s.get("diagram"), spoken.get(("en", "long", i), []), frames[i], FPS, LEAD)}
                        for i, s in enumerate(scenes)]
+        # every diagram is rendered, looked at, corrected and kept only if it is good
+        self.polish_diagrams(scenes, long_scenes, spoken, theme, job)
         # the English captions are part of the picture: short lines, timed to the spoken words
         long_captions = []
         for i in range(n_long):
@@ -1069,11 +1099,13 @@ class VideoMaker:
             with open(clean, "w", encoding="utf-8") as f:
                 json.dump({**p, "captions": [], "clean": True}, f, ensure_ascii=False)
             try:
-                remotion(["still", "src/index.jsx", "Long", os.path.join(VIDEO_APP, "public", "job", "hero.png"),
-                          f"--props={clean}", f"--frame={hero}", "--jpeg-quality=100"], self.log)
+                hero_png = os.path.join(VIDEO_APP, "public", "job", "hero.png")
+                remotion(["still", "src/index.jsx", "Long", hero_png, f"--props={clean}", f"--frame={hero}",
+                          f"--scale={LONG_SCALE}", "--jpeg-quality=100"], self.log)
+                aspect = crop_to_content(hero_png, theme["bg"]) or 1.8
                 thumb_props = os.path.join(job, "thumb.json")
                 with open(thumb_props, "w", encoding="utf-8") as f:
-                    json.dump({**p, "hero": "job/hero.png"}, f, ensure_ascii=False)
+                    json.dump({**p, "hero": "job/hero.png", "heroAspect": round(aspect, 3)}, f, ensure_ascii=False)
             except RuntimeError:
                 pass
         remotion(["still", "src/index.jsx", "Thumb", os.path.join(out, "thumbnail.png"), f"--props={thumb_props}",
@@ -1106,7 +1138,7 @@ class VideoMaker:
                 offset = sum(per_beat[:b])
                 visual = with_text(scenes[beats[b]["scene"]], screen[offset:offset + per_beat[b]]) if lang != "en" \
                     else scenes[beats[b]["scene"]]
-                short_scenes.append({**visual, "frames": fr[j]})
+                short_scenes.append({**{k: v for k, v in visual.items() if k != "diagram"}, "frames": fr[j]})
                 words = spoken[(lang, "short", b)]
                 short_scenes[-1].update(cue=cue(words, visual.get("number", "")),
                                         hcue=cue(words, visual.get("highlight", "")),
@@ -1138,6 +1170,101 @@ class VideoMaker:
         self.log(f"[video] done in {time.time() - t0:.0f}s: {', '.join(files)}")
         self.deliver(run_dir, out, files, plan, email, verdict)
         return {name: os.path.join(out, name) for name in files}
+
+    def design_json(self, prompt: str, **kw):
+        """Diagrams need the strongest model: Gemini Flash first, then the usual providers."""
+        reply = gemini_json(self.s, prompt, effort="medium", temperature=0.8)
+        return reply if reply is not None else self.llm.complete_json(prompt, max_tokens=8000, temperature=0.8)
+
+    def draw_diagrams(self, scenes: List[dict], brief: dict, title: str) -> None:
+        """A bespoke animated diagram for every shot that explains an idea (in news, the shots without a photo or
+        a real graphic). Formulas inside are checked with KaTeX."""
+        explain = brief["style"] in ("education", "concept", "story")
+        idx = [i for i, s in enumerate(scenes) if i > 0 and s["kind"] in graphics.ELIGIBLE and not s.get("video")
+               and (explain or not s.get("graphic") or s["graphic"]["type"] == "kinetic")]
+        if not idx:
+            return
+        made = diagram.design(self.design_json, scenes, idx, title, f"{brief['mood']} {brief['tone']}", _verified,
+                              tex_complete, self.log)
+        bad = typeset_errors([el["tex"] for s in scenes for el in (s.get("diagram") or {}).get("elements", [])
+                              if el["type"] == "tex"])
+        for s in scenes:
+            if s.get("diagram") and bad:
+                s["diagram"]["elements"] = [el for el in s["diagram"]["elements"] if el.get("tex") not in bad]
+                if len(s["diagram"]["elements"]) < 3:
+                    s.pop("diagram")
+        self.log(f"[diagram] {made} diagram(s) designed for {len(idx)} idea shot(s)")
+
+    def stills(self, shots: List[tuple], job: str) -> Dict[int, str]:
+        """shots: (key, props, frame) -> {key: jpeg path}, all from one bundle and one browser."""
+        jobs = [{"props": props, "frame": max(0, frame), "out": os.path.join(job, f"look_{key}.jpg"), "scale": 0.5}
+                for key, props, frame in shots]
+        path = os.path.join(job, "looks.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(jobs, f, ensure_ascii=False)
+        node = shutil.which("node") or shutil.which("node.exe")
+        try:
+            subprocess.run([node, "stills.mjs", path], cwd=VIDEO_APP, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=1800)
+        except (OSError, subprocess.SubprocessError, TypeError) as exc:
+            self.log(f"[diagram] could not render previews: {type(exc).__name__}")
+        return {key: os.path.join(job, f"look_{key}.jpg") for key, _, _ in shots
+                if os.path.exists(os.path.join(job, f"look_{key}.jpg"))}
+
+    def polish_diagrams(self, scenes: List[dict], long_scenes: List[dict], spoken: dict, theme: dict, job: str,
+                        rounds: int = 2) -> None:
+        """Render each diagram's last frame, let the vision model judge it against its sentence and correct it
+        (up to `rounds` times), and keep the best version only if it scores 7 or more; otherwise the shot falls
+        back to its library graphic or animated type."""
+        idx = [i for i, s in enumerate(long_scenes) if s.get("diagram")]
+        if not idx:
+            return
+        best: Dict[int, tuple] = {}
+        settled = set()
+        words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
+        for rnd in range(rounds + 1):
+            todo = [i for i in idx if i not in settled]
+            if not todo:
+                break
+            looks = self.stills([(i, {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}],
+                                      "captions": [], "theme": theme}, long_scenes[i]["frames"] - 20) for i in todo], job)
+            for i in todo:
+                if i not in looks:
+                    settled.add(i)
+                    continue
+                with open(looks[i], "rb") as f:
+                    reply = gemini_json(self.s, diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST),
+                                        [f.read()], effort="medium", temperature=0.5)
+                try:
+                    score = float((reply or {}).get("score") or 0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                if score > best.get(i, (-1.0, None))[0]:
+                    best[i] = (score, scenes[i]["diagram"])
+                if not isinstance(reply, dict) or score >= 9 or rnd == rounds:
+                    settled.add(i)
+                    continue
+                d = diagram.check({"elements": reply.get("elements") or []}, scenes[i], _verified, tex_complete)
+                if d and not typeset_errors([el["tex"] for el in d["elements"] if el["type"] == "tex"]):
+                    scenes[i]["diagram"] = d
+                    long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
+                else:
+                    settled.add(i)
+        kept = []
+        for i in idx:
+            score, d = best.get(i, (0.0, None))
+            if d is not None and score >= 7:
+                scenes[i]["diagram"] = d
+                long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
+                kept.append(f"{i}:{score:g}")
+                continue
+            scenes[i].pop("diagram", None)
+            long_scenes[i]["diagram"] = None
+            if not scenes[i].get("graphic") and not scenes[i].get("images") and not scenes[i].get("video"):
+                scenes[i]["graphic"] = {"type": "kinetic", "nodes": []}
+                long_scenes[i]["graphic"] = graphics.timed(scenes[i]["graphic"], scenes[i].get("headline", ""), words(i),
+                                                           long_scenes[i]["frames"], FPS, LEAD)
+        self.log(f"[diagram] kept {len(kept)} of {len(idx)} after review (shot:score {' '.join(kept)})")
 
     def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
         """Motion graphics for the shots without a strong picture; any failure leaves the templates in place.

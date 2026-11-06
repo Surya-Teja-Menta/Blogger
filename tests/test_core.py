@@ -1397,3 +1397,50 @@ def test_thumbnail_uses_the_strongest_visual():
     assert hero_shot(scenes[:3], starts) == 85 + 150 - TRANSITION - 12        # else the plot
     assert hero_shot([scenes[0], scenes[2]], [0, 85]) == 85 + 120 - TRANSITION - 12   # else a real graphic
     assert hero_shot([scenes[0]], [0]) is None                                # kinetic type is not a picture
+
+
+def test_diagrams_are_checked_and_timed_to_their_words():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    scene = {"headline": "One outlier drags the line",
+             "narration": "When a single outlier appears far above the rest, it drags the whole line toward itself."}
+    raw = {"elements": [
+        {"type": "dots", "color": "cool", "r": 2.4, "points": [[12, 78], [20, 70], [27, 73], "bad"]},
+        {"type": "line", "x1": 8, "y1": 80, "x2": 80, "y2": 40, "move": {"on": "drags", "y2": 26}},
+        {"type": "dot", "color": "hot", "x": 188, "y": 12, "r": 3.6, "on": "Outlier,", "glow": {"on": "drags"}},
+        {"type": "label", "x": 40, "y": 92, "text": "costs 400 dollars"},          # a number the narration never says
+        {"type": "teleport", "x": 1}, {"type": "tex", "x": 50, "y": 50, "tex": r"\frac{1}{"},
+        {"type": "icon", "x": 50, "y": 20, "name": "chart line", "size": 99}]}
+    d = diagram.check(raw, scene, _verified, tex_complete)
+    types = [e["type"] for e in d["elements"]]
+    assert types == ["dots", "line", "dot", "icon"]
+    dot = d["elements"][2]
+    assert dot["x"] == 97 and dot["on"] == "outlier" and dot["glow"] == {"on": "drags"}
+    assert d["elements"][1]["move"] == {"on": "drags", "y2": 26.0} and d["elements"][3]["name"] == "chart-line"
+    assert d["elements"][3]["size"] == 30 and len(d["elements"][0]["points"]) == 3
+    assert diagram.check({"elements": raw["elements"][:2]}, scene, _verified, tex_complete) is None     # too thin
+    crowded = {"elements": [{"type": "label", "x": 50, "y": 50, "text": "the whole line"},
+                            {"type": "label", "x": 51, "y": 51, "text": "toward itself"}, {"type": "dot", "x": 9, "y": 9}]}
+    assert diagram.check(crowded, scene, _verified, tex_complete) is None                         # labels collide
+    words = [(0.1 * k, 0.1 * k + 0.08, w) for k, w in enumerate(scene["narration"].split())]
+    t = diagram.timed(d, words, 300, 30, 6)
+    at = {e["type"]: e["at"] for e in t["elements"]}
+    outlier = next(k for k, (_, _, w) in enumerate(words) if w == "outlier")
+    assert at["dot"] == min(round(0.1 * outlier * 30) + 6, at["dot"])
+    assert t["elements"][1]["move"]["at"] > t["elements"][1]["at"] and "at" not in d["elements"][1]
+    assert diagram.texts({"elements": [{"text": "a"}, {"type": "dot"}, {"text": "b"}]}) == ["a", "b"]
+
+
+def test_diagram_boxes_fit_their_words_and_pieces_never_pile_up():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    sc = {"narration": "we show the model an example and the answer", "headline": ""}
+    box = {"type": "box", "x": 40, "y": 30, "w": 12, "h": 10, "text": "example"}
+    on_top = [box, {"type": "icon", "x": 53, "y": 35, "name": "brain", "size": 12}, {"type": "dot", "x": 10, "y": 10}]
+    assert diagram.check({"elements": on_top}, sc, _verified, tex_complete) is None
+    apart = [{**box, "x": 10}, {"type": "icon", "x": 53, "y": 35, "name": "brain", "size": 12}, {"type": "dot", "x": 80, "y": 10}]
+    d = diagram.check({"elements": apart}, sc, _verified, tex_complete)
+    assert d and d["elements"][0]["w"] >= len("example") * 1.45 + 4
+    edge = diagram.check({"elements": [{**box, "x": 90, "text": "the answer"}, {"type": "dot", "x": 10, "y": 80},
+                                       {"type": "dot", "x": 20, "y": 80}]}, sc, _verified, tex_complete)
+    assert edge["elements"][0]["x"] + edge["elements"][0]["w"] <= 97
