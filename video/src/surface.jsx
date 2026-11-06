@@ -7,7 +7,7 @@ import React, {useMemo} from "react";
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from "remotion";
 import {Backdrop, Camera, Title, clamp, ease} from "./fx";
 import {compile} from "./expr";
-import {Tex, useMathFonts} from "./math";
+import {FitTex, useMathFonts} from "./math";
 import {delay, glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 
@@ -47,7 +47,11 @@ export const SurfaceScene = ({s, i, vertical}) => {
       grid.push(row);
     }
     zs.sort((p, q) => p - q);
-    const lo = zs[Math.floor(zs.length * 0.02)] ?? -1, hi = zs[Math.max(0, Math.ceil(zs.length * 0.98) - 1)] ?? 1;
+    // a smooth surface keeps its whole height (trimming a bowl's corners leaves flat shelves at the rim); only a
+    // real spike, whose last 2% of samples climb over a quarter of the range, is cut back to the 2nd/98th percentile
+    const zmin = zs[0] ?? -1, zmax = zs[zs.length - 1] ?? 1, range = zmax - zmin;
+    const p02 = zs[Math.floor(zs.length * 0.02)] ?? zmin, p98 = zs[Math.max(0, Math.ceil(zs.length * 0.98) - 1)] ?? zmax;
+    const lo = p02 - zmin > 0.25 * range ? p02 : zmin, hi = zmax - p98 > 0.25 * range ? p98 : zmax;
     const span = hi - lo > 1e-9 ? hi - lo : 1;
     const W = (z) => (Number.isNaN(z) ? -H : ((Math.max(lo, Math.min(hi, z)) - lo) / span) * 2 * H - H);
     // gradient descent from the start, in the data's own units (steps shrink as the slope flattens)
@@ -233,10 +237,8 @@ export const SurfaceScene = ({s, i, vertical}) => {
           <div style={{position: "absolute", ...(vertical ? {left: 60, right: 60, top: 1300, justifyContent: "center"}
                                                           : {left: 1440, right: 50, top: 340, justifyContent: "flex-start"}),
                        display: "flex"}}>
-            <div style={{...panel, fontSize: Math.min(vertical ? 46 : 40, (vertical ? 820 : 420) / Math.max(1,
-                           g.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length) * 1.7),
-                         opacity: ease((frame - 24) / 14)}}>
-              <Tex tex={g.tex} color={C.accent}/>
+            <div style={{...panel, opacity: ease((frame - 24) / 14)}}>
+              <FitTex tex={g.tex} color={C.accent} max={vertical ? 900 : 370} size={vertical ? 46 : 40} wrap/>
             </div>
           </div>
         )}

@@ -1,7 +1,7 @@
 // Maths for lessons: an equation that builds term by term as each symbol is explained, and a data plot that shows
 // the idea behind fitting a line (points, best fit, residuals, squared errors, gradient descent). The plot's data
 // is generated here (seeded), and the fit and the descent are computed from it, so the picture is mathematically true.
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useLayoutEffect, useRef, useState} from "react";
 import {AbsoluteFill, continueRender, delayRender, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -11,17 +11,58 @@ import {C, FONT, SERIES, alpha} from "./theme";
 import {compile} from "./expr";
 
 // KaTeX loads its fonts lazily; hold the frame until they are in, or the first frames show a fallback serif
+const MATH_FONTS = ["48px KaTeX_Main", "italic 48px KaTeX_Math", "48px KaTeX_Size1", "48px KaTeX_Size2"];
+const mathFontsIn = () => Promise.all(MATH_FONTS.map((f) => document.fonts.load(f))).catch(() => null);
 export function useMathFonts() {
   const [handle] = useState(() => delayRender("KaTeX fonts"));
   useEffect(() => {
-    Promise.all(["48px KaTeX_Main", "italic 48px KaTeX_Math", "48px KaTeX_Size1", "48px KaTeX_Size2"]
-      .map((f) => document.fonts.load(f))).then(() => continueRender(handle), () => continueRender(handle));
+    mathFontsIn().then(() => continueRender(handle));
   }, []);
 }
 
 export const Tex = ({tex, color}) => (
   <span style={{color}} dangerouslySetInnerHTML={{__html: katex.renderToString(tex, {throwOnError: false})}}/>
 );
+
+// a formula that never runs past its box: drawn at `size`, measured as it is laid out, and shrunk until it is at
+// most `max` pixels wide (never enlarged). A character count cannot know how wide \frac or a subscript sets.
+// With `wrap`, a long formula first breaks after its = and + signs, as on a board, and shrinks only if one piece
+// alone is still too wide; a narrow side panel then keeps a readable size.
+// The frame is held until it has been measured in the real fonts (a fallback serif sets narrower), so a still
+// such as the thumbnail is right too.
+export const FitTex = ({tex, color, size, max, wrap}) => {
+  const ref = useRef(null);
+  const held = useRef(null);
+  const [k, setK] = useState(1);
+  const [fonts, setFonts] = useState(false);
+  if (held.current === null) held.current = delayRender("fit a formula to its box");
+  useEffect(() => {
+    let live = true;
+    mathFontsIn().then(() => live && setFonts(true));
+    return () => {
+      live = false;
+      if (held.current) continueRender(held.current);
+      held.current = 0;
+    };
+  }, []);
+  // only ever shrinks (a wrapped formula re-wraps as it shrinks, so growing back could see-saw for ever)
+  useLayoutEffect(() => {
+    if (fonts && ref.current && max && ref.current.scrollWidth > max + 1) {
+      setK(k * max / ref.current.scrollWidth * 0.99);
+      return;
+    }
+    if (fonts && held.current) {
+      continueRender(held.current);
+      held.current = 0;
+    }
+  });
+  return (
+    <span ref={ref} style={{display: "inline-block", fontSize: size * k,
+                            ...(wrap ? {whiteSpace: "normal", maxWidth: max, lineHeight: 1.6} : {whiteSpace: "nowrap"})}}>
+      <Tex tex={tex} color={color}/>
+    </span>
+  );
+};
 
 const Head = ({s, vertical}) => <Title s={s} vertical={vertical} size={vertical ? 80 : 72}/>;
 
@@ -333,6 +374,7 @@ export const GraphScene = ({s, i, vertical}) => {
     : g.mark === "point" ? `(${fmt(mx)},\\ ${fmt(my)})` : "";
   const panel = {fontSize: vertical ? 50 : 46, padding: "14px 28px", borderRadius: 18, background: alpha(C.panel, 0.88),
                  border: `2px solid ${alpha(C.accent, 0.4)}`, color: C.text, whiteSpace: "nowrap"};
+  const room = vertical ? 780 : 380;          // the side column's width less the panel's padding and border
   return (
     <AbsoluteFill>
       <Backdrop word="" i={i}/>
@@ -394,16 +436,15 @@ export const GraphScene = ({s, i, vertical}) => {
                                                         : {left: 1420, right: 60, top: 340, flexDirection: "column"}),
                      display: "flex", gap: 22, alignItems: "flex-start"}}>
           {g.curves.map((c, k) => c.tex ? (
-            <div key={k} style={{...panel, fontSize: Math.min(vertical ? 42 : 38, (vertical ? 760 : 700) / Math.max(1,
-                                   c.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length)), borderColor: alpha(SERIES[k % SERIES.length], 0.6),
+            <div key={k} style={{...panel, borderColor: alpha(SERIES[k % SERIES.length], 0.6),
                                  opacity: ease((frame - 30 - k * 8) / 14)}}>
-              <Tex tex={c.tex} color={SERIES[k % SERIES.length]}/>
+              <FitTex tex={c.tex} color={SERIES[k % SERIES.length]} max={room} wrap size={vertical ? 42 : 38}/>
             </div>
           ) : null)}
           {g.param && pa.from !== pa.to && (
-            <div style={{...panel, opacity: clamp((frame - T * 0.28) / 10)}}><Tex tex={`a = ${fmt(a)}`} color={C.accent}/></div>
+            <div style={{...panel, opacity: clamp((frame - T * 0.28) / 10)}}><FitTex tex={`a = ${fmt(a)}`} color={C.accent} size={panel.fontSize} max={room}/></div>
           )}
-          {readout && <div style={{...panel, opacity: markOn}}><Tex tex={readout} color={mark}/></div>}
+          {readout && <div style={{...panel, opacity: markOn}}><FitTex tex={readout} color={mark} size={panel.fontSize} max={room}/></div>}
         </div>
       </Camera>
     </AbsoluteFill>
@@ -439,9 +480,9 @@ export const DeriveScene = ({s, i, vertical}) => {
               <div key={k} style={{position: "absolute", left: 0, right: 0, top: cy + d * gap - size * 0.7,
                                    display: "flex", flexDirection: "column", alignItems: "center",
                                    opacity: write > 0 ? 0.3 + 0.7 * focus : 0, transform: `scale(${0.8 + 0.2 * focus})`}}>
-                <div style={{position: "relative", fontSize: size, padding: "6px 24px",
+                <div style={{position: "relative", padding: "6px 24px",
                              clipPath: `inset(-30% ${(1 - ease(write)) * 100}% -30% 0)`}}>
-                  <Tex tex={st.tex} color={focus > 0.5 ? C.text : C.muted}/>
+                  <FitTex tex={st.tex} color={focus > 0.5 ? C.text : C.muted} size={size} max={vertical ? 960 : 1720}/>
                 </div>
                 {st.note && (
                   <div style={{marginTop: size * 0.3, display: "flex", alignItems: "center", gap: 14, fontFamily: FONT.body,
