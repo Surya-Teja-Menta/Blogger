@@ -458,14 +458,20 @@ def render(composition: str, props: str, soundtrack: str, dest: str, log: Callab
 
 
 def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]:
-    """Cut a clean frame down to what is drawn on it (everything that differs clearly from the background)."""
+    """Cut a clean frame down to what is drawn on it: on a transparent frame everything clearly opaque, otherwise
+    everything that differs clearly from the background."""
     try:
         from PIL import Image
         import numpy as np
-        im = Image.open(path).convert("RGB")
-        a = np.asarray(im).astype(int)
-        ref = np.array([int(bg[i:i + 2], 16) for i in (1, 3, 5)])
-        mask = np.abs(a - ref).max(axis=2) > 48
+        im = Image.open(path)
+        if im.mode in ("RGBA", "LA") and im.getchannel("A").getextrema()[0] < 128:
+            im = im.convert("RGBA")
+            mask = np.asarray(im.getchannel("A")).astype(int) > 60
+        else:
+            im = im.convert("RGB")
+            a = np.asarray(im).astype(int)
+            ref = np.array([int(bg[i:i + 2], 16) for i in (1, 3, 5)])
+            mask = np.abs(a - ref).max(axis=2) > 48
         ys, xs = np.nonzero(mask)
         if len(xs) < 50:
             return None
@@ -481,7 +487,7 @@ def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]
     return None
 
 
-HERO_ORDER = ("graph", "equation", "derive", "plot", "bars", "line", "donut", "compare", "kpis", "stat", "map")
+HERO_ORDER = ("graph", "equation", "derive", "plot", "diagram", "bars", "line", "donut", "compare", "kpis", "stat", "map")
 
 
 def hero_shot(scenes: List[dict], starts: List[int]) -> Optional[int]:
@@ -489,7 +495,7 @@ def hero_shot(scenes: List[dict], starts: List[int]) -> Optional[int]:
     before the shot ends), or a motion graphic; None if the video has neither."""
     best = None
     for i, s in enumerate(scenes):
-        kind = s["kind"]
+        kind = "diagram" if s.get("diagram") else s["kind"]
         rank = HERO_ORDER.index(kind) if kind in HERO_ORDER else (len(HERO_ORDER) if s.get("graphic") and
                                                                   s["graphic"]["type"] != "kinetic" else None)
         if rank is not None and (best is None or rank < best[0]):
@@ -586,7 +592,10 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
             out["kind"], out["items"] = "photo", []
     elif kind == "quote":
         q = str(sc.get("quote", "")).strip().strip('"“”')
-        if q and len(_norm(q)) > 12 and _norm(q) in quotes:
+        speaker = str(sc.get("speaker", ""))
+        # a quote is someone's words; a line lifted from an encyclopedia is not a quote (the shot gets a picture)
+        if q and len(_norm(q)) > 12 and _norm(q) in quotes and not re.search(r"wiki|encyclop|britannica|dictionary",
+                                                                                speaker, re.I):
             out["quote"], out["speaker"] = " ".join(q.split()[:30]), words(sc.get("speaker"), 5)
         else:
             out["kind"] = "photo"
@@ -826,18 +835,21 @@ class VideoMaker:
         # a lesson without its maths, or a 4 minute plan narrated in 90 seconds, is not the video; ask once more
         need = max(5, len(plan.get("scenes") or []) * 2 // 5) if brief.get("maths") else 0
         words_needed = round(brief["minutes"] * 150 * 0.75)      # ~150 spoken words a minute
-        notes = []
-        if need and maths(plan) < need:
-            notes.append(f"it had only {maths(plan)} maths shots; this lesson needs at least {need} \"equation\", "
-                         f"\"graph\", \"derive\" or \"plot\" shots, each with its required fields filled in exactly")
-        if spoken_words(plan) < words_needed:
-            notes.append(f"its narration was only {spoken_words(plan)} words; the planned {brief['minutes']:g} minutes "
-                         f"need at least {words_needed} words, so give each shot a full sentence or two and explain "
-                         f"each idea properly")
-        if notes:
-            self.log(f"[video] first draft too thin ({'; '.join(n.split(';')[0] for n in notes)}); rewriting the script")
+        for attempt in range(2):          # the best draft so far, rewritten up to twice while it falls short
+            notes = []
+            if need and maths(plan) < need:
+                notes.append(f"it had only {maths(plan)} maths shots; this lesson needs at least {need} \"equation\", "
+                             f"\"graph\", \"derive\" or \"plot\" shots, each with its required fields filled in exactly")
+            if spoken_words(plan) < words_needed:
+                notes.append(f"its narration was only {spoken_words(plan)} words; the planned {brief['minutes']:g} "
+                             f"minutes need at least {words_needed} words, so give each shot a full sentence or two "
+                             f"and explain each idea properly")
+            if not notes:
+                break
+            self.log(f"[video] draft {attempt + 1} too thin ({'; '.join(n.split(';')[0] for n in notes)}); "
+                     "rewriting the script")
             try:
-                again = self.llm.complete_json(prompt + "\n\nIMPORTANT: a first draft fell short: " + "; and ".join(notes)
+                again = self.llm.complete_json(prompt + "\n\nIMPORTANT: a draft fell short: " + "; and ".join(notes)
                                                + ".", max_tokens=14000)
             except LLMError:
                 again = {}
@@ -1101,7 +1113,7 @@ class VideoMaker:
             try:
                 hero_png = os.path.join(VIDEO_APP, "public", "job", "hero.png")
                 remotion(["still", "src/index.jsx", "Long", hero_png, f"--props={clean}", f"--frame={hero}",
-                          f"--scale={LONG_SCALE}", "--jpeg-quality=100"], self.log)
+                          f"--scale={LONG_SCALE}", "--image-format=png"], self.log)
                 aspect = crop_to_content(hero_png, theme["bg"]) or 1.8
                 thumb_props = os.path.join(job, "thumb.json")
                 with open(thumb_props, "w", encoding="utf-8") as f:
@@ -1212,15 +1224,16 @@ class VideoMaker:
                 if os.path.exists(os.path.join(job, f"look_{key}.jpg"))}
 
     def polish_diagrams(self, scenes: List[dict], long_scenes: List[dict], spoken: dict, theme: dict, job: str,
-                        rounds: int = 2) -> None:
+                        rounds: int = 3) -> None:
         """Render each diagram's last frame, let the vision model judge it against its sentence and correct it
-        (up to `rounds` times), and keep the best version only if it scores 7 or more; otherwise the shot falls
-        back to its library graphic or animated type."""
+        (up to `rounds` times; a correction the checks reject goes back once with the reason), and keep the best
+        version only if it scores 7 or more; otherwise the shot falls back to its library graphic or animated type."""
         idx = [i for i, s in enumerate(long_scenes) if s.get("diagram")]
         if not idx:
             return
         best: Dict[int, tuple] = {}
         settled = set()
+        problems: Dict[int, str] = {}
         words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
         for rnd in range(rounds + 1):
             todo = [i for i in idx if i not in settled]
@@ -1233,18 +1246,26 @@ class VideoMaker:
                     settled.add(i)
                     continue
                 with open(looks[i], "rb") as f:
-                    reply = gemini_json(self.s, diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST),
-                                        [f.read()], effort="medium", temperature=0.5)
+                    image = f.read()
+                ask = diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST)
+                reply = gemini_json(self.s, ask, [image], effort="medium", temperature=0.5)
                 try:
                     score = float((reply or {}).get("score") or 0)
                 except (TypeError, ValueError):
                     score = 0.0
                 if score > best.get(i, (-1.0, None))[0]:
                     best[i] = (score, scenes[i]["diagram"])
+                    problems[i] = str((reply or {}).get("problem") or "")[:110] if isinstance(reply, dict) else ""
                 if not isinstance(reply, dict) or score >= 9 or rnd == rounds:
                     settled.add(i)
                     continue
-                d = diagram.check({"elements": reply.get("elements") or []}, scenes[i], _verified, tex_complete)
+                why: List[str] = []
+                d = diagram.check({"elements": reply.get("elements") or []}, scenes[i], _verified, tex_complete, why)
+                if not d and reply.get("elements"):         # one more try, told exactly what the checks refused
+                    again = gemini_json(self.s, ask + diagram.RETRY.format(why="; ".join(why[:4])), [image],
+                                        effort="medium", temperature=0.4)
+                    d = diagram.check({"elements": (again or {}).get("elements") or []} if isinstance(again, dict)
+                                      else None, scenes[i], _verified, tex_complete)
                 if d and not typeset_errors([el["tex"] for el in d["elements"] if el["type"] == "tex"]):
                     scenes[i]["diagram"] = d
                     long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
@@ -1258,6 +1279,7 @@ class VideoMaker:
                 long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
                 kept.append(f"{i}:{score:g}")
                 continue
+            self.log(f"[diagram] shot {i} dropped at {score:g}/10: {problems.get(i) or 'no usable review'}")
             scenes[i].pop("diagram", None)
             long_scenes[i]["diagram"] = None
             if not scenes[i].get("graphic") and not scenes[i].get("images") and not scenes[i].get("video"):

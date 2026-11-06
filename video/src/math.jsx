@@ -26,6 +26,7 @@ const Head = ({s, vertical}) => <Title s={s} vertical={vertical} size={vertical 
 
 // faint symbols drifting behind, like a blackboard full of earlier working
 const Symbols = () => {
+  if (C.clean) return null;
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
   const marks = ["\\sum", "x^2", "\\partial", "\\hat{y}", "\\theta", "\\nabla", "\\frac{1}{n}", "\\epsilon"];

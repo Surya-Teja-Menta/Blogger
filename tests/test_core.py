@@ -1105,6 +1105,8 @@ def test_video_scene_visuals_need_verified_data_or_fall_back_to_a_photo():
                     quotes, countries)
     assert q["kind"] == "quote" and q["speaker"] == "CEO"
     assert check_scene({"kind": "quote", "quote": "Made up words here"}, allowed, quotes, countries)["kind"] == "photo"
+    assert check_scene({"kind": "quote", "quote": "We are building the future of light.", "speaker": "Wikipedia"},
+                       allowed, quotes, countries)["kind"] == "photo"           # an encyclopedia line is no quote
     h = check_scene({"kind": "photo", "headline": "A $300B rival appears", "highlight": "rival"}, allowed, quotes, countries)
     assert "$300B" not in h["headline"] and h["highlight"] == "rival"
 
@@ -1205,7 +1207,11 @@ def test_every_video_gets_its_own_readable_design():
 def test_graphics_take_the_nearest_real_icon():
     from blogwriter import graphics
     assert graphics.icon("chart line") == "chart-line" and graphics.icon("brain") == "brain"
-    assert graphics.icon("conditional-probability") == "sparkles"
+    assert graphics.icon("conditional-probability") == "dice-5"              # an idea word names its icon
+    assert graphics.icon("valley-icon", "Error valley") == "mountain" and graphics.icon("", "Advertising") == "megaphone"
+    assert graphics.icon("xqzv", "zzz") == "sparkles"
+    every = graphics.all_icons()
+    assert not [n for n in graphics.ICONS | set(graphics.CONCEPTS.values()) if n not in every]
 
 
 def test_video_dubbed_lines_are_sped_up_to_fit_the_english_picture():
@@ -1241,7 +1247,7 @@ def test_graphics_are_checked_timed_and_translated():
     words = [(0.0, 0.3, "Your"), (0.3, 0.7, "phone"), (0.7, 1.0, "sends"), (1.0, 1.2, "money"), (1.2, 1.6, "through"),
              (1.6, 2.0, "NPCI"), (2.0, 2.2, "to"), (2.2, 2.4, "the"), (2.4, 2.8, "shop")]
     g = graphics.timed(scenes[0]["graphic"], scenes[0]["headline"], words, 120, 30, 6)
-    assert [n["at"] for n in g["nodes"]] == [15, 51, 75] and "at" not in scenes[0]["graphic"]["nodes"][0]
+    assert [n["at"] for n in g["nodes"]] == [12, 51, 75] and "at" not in scenes[0]["graphic"]["nodes"][0]
     texts = on_screen(scenes[0])
     assert texts[-3:] == ["Your phone", "NPCI", "The shop"]
     hindi = with_text(scenes[0], texts[:-3] + ["आपका फ़ोन", "एनपीसीआई", "दुकान"])
@@ -1422,6 +1428,12 @@ def test_diagrams_are_checked_and_timed_to_their_words():
     crowded = {"elements": [{"type": "label", "x": 50, "y": 50, "text": "the whole line"},
                             {"type": "label", "x": 51, "y": 51, "text": "toward itself"}, {"type": "dot", "x": 9, "y": 9}]}
     assert diagram.check(crowded, scene, _verified, tex_complete) is None                         # labels collide
+    why = []
+    assert diagram.check(crowded, scene, _verified, tex_complete, why) is None
+    assert why == ['label "the whole line" and label "toward itself" overlap; move them apart']
+    why = []
+    diagram.check(raw, scene, _verified, tex_complete, why)
+    assert any("costs 400 dollars" in w for w in why) and any("typesets" in w for w in why)
     words = [(0.1 * k, 0.1 * k + 0.08, w) for k, w in enumerate(scene["narration"].split())]
     t = diagram.timed(d, words, 300, 30, 6)
     at = {e["type"]: e["at"] for e in t["elements"]}
@@ -1444,3 +1456,20 @@ def test_diagram_boxes_fit_their_words_and_pieces_never_pile_up():
     edge = diagram.check({"elements": [{**box, "x": 90, "text": "the answer"}, {"type": "dot", "x": 10, "y": 80},
                                        {"type": "dot", "x": 20, "y": 80}]}, sc, _verified, tex_complete)
     assert edge["elements"][0]["x"] + edge["elements"][0]["w"] <= 97
+
+
+def test_thumbnail_hero_is_cut_out_by_its_transparency(tmp_path):
+    from PIL import Image
+    from blogwriter.video import crop_to_content, hero_shot
+    im = Image.new("RGBA", (400, 200), (0, 0, 0, 0))
+    for x in range(100, 300):
+        for y in range(80, 120):
+            im.putpixel((x, y), (255, 80, 60, 255))
+    path = str(tmp_path / "hero.png")
+    im.save(path)
+    aspect = crop_to_content(path, "#fafafd")
+    out = Image.open(path)
+    assert out.mode == "RGBA" and 200 < out.size[0] < 260 and 40 < out.size[1] < 80 and aspect > 3
+    scenes = [{"kind": "photo", "frames": 90, "diagram": {"elements": []}}, {"kind": "bars", "frames": 90},
+              {"kind": "photo", "frames": 90, "graphic": {"type": "hub"}}]
+    assert hero_shot(scenes, [0, 90, 180]) == 90 - 15 - 12            # a kept diagram outranks a chart

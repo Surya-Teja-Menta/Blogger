@@ -24,14 +24,15 @@ export const Icon = ({name, size = 120, color, draw = 1, width = 1.5}) => {
 };
 
 // glass disc with a drawn-on icon, a ripple when it lands and a slow breathing pulse after
-const Disc = ({icon, at, size, color, label, labelSize, below = true}) => {
+const Disc = ({icon, at, size, color, label, labelSize, below = true, above = false}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const p = spring({frame: frame - at, fps, config: {damping: 12, mass: 0.8}});
   const t = frame - at;
   const ripple = ((t % 70) + 70) % 70 / 70;
   return (
-    <div style={{display: "flex", flexDirection: below ? "column" : "row", alignItems: "center", gap: below ? 22 : 30,
+    <div style={{display: "flex", flexDirection: above ? "column-reverse" : below ? "column" : "row", alignItems: "center",
+                 gap: below || above ? 22 : 30,
                  opacity: clamp(p * 2), transform: `scale(${(0.4 + 0.6 * p) * (1 + 0.025 * Math.sin(t / 11))})`}}>
       <div style={{position: "relative", width: size, height: size, flexShrink: 0}}>
         {t > 0 && <div style={{position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid ${color}`,
@@ -45,7 +46,7 @@ const Disc = ({icon, at, size, color, label, labelSize, below = true}) => {
       </div>
       {label && (
         <div style={{fontFamily: FONT.body, fontWeight: 800, fontSize: labelSize, color: C.text, lineHeight: 1.08,
-                     textAlign: below ? "center" : "left", maxWidth: below ? size * 1.9 : 640,
+                     textAlign: below || above ? "center" : "left", maxWidth: below || above ? size * 1.9 : 640,
                      opacity: clamp((t - 6) / 10), transform: `translateY(${(1 - ease((t - 6) / 14)) * 20}px)`,
                      textShadow: `0 2px 20px ${alpha(C.bg, 0.8)}`}}>{label}</div>
       )}
@@ -131,7 +132,7 @@ const Hub = ({s, i, vertical}) => {
   const {width, height} = useVideoConfig();
   const g = s.graphic, nodes = g.nodes, n = nodes.length;
   const cx = width / 2, cy = vertical ? 1150 : height * 0.575;      // the lowest label stays clear of the captions
-  const rx = vertical ? 360 : 640, ry = vertical ? 440 : 212;
+  const rx = vertical ? 360 : 640, ry = vertical ? 440 : 232;
   const turn = frame * 0.0006;
   // no node straight below the centre, where the centre's own label sits
   const below = nodes.some((_, k) => Math.abs(((-90 + (360 * k) / n) % 360 + 360) % 360 - 90) < 25);
@@ -140,6 +141,9 @@ const Hub = ({s, i, vertical}) => {
     const a = start + (2 * Math.PI * k) / n + turn;
     return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)];
   });
+  // a node above the centre carries its label on top, so the label never runs into the centre disc
+  const up = nodes.map((_, k) => Math.sin(start + (2 * Math.PI * k) / n) < -0.5);
+  const half = (vertical ? 150 : 120) / 2;
   const centerAt = g.center.at;
   return (
     <Frame s={s} i={i} vertical={vertical}>
@@ -159,9 +163,10 @@ const Hub = ({s, i, vertical}) => {
                    whiteSpace: "nowrap", opacity: clamp((frame - centerAt - 6) / 10),
                    textTransform: C.upper ? "uppercase" : "none"}}>{g.center.label}</div>
       {nodes.map((nd, k) => (
-        <div key={k} style={{position: "absolute", left: pos[k][0], top: pos[k][1], transform: "translate(-50%, -60px)"}}>
+        <div key={k} style={{position: "absolute", left: pos[k][0], top: pos[k][1],
+                             transform: up[k] ? `translate(-50%, calc(-100% + ${half}px))` : `translate(-50%, -${half}px)`}}>
           <Disc icon={nd.icon} at={nd.at} size={vertical ? 150 : 120} color={SERIES[(k + 1) % SERIES.length]}
-                label={nd.label} labelSize={vertical ? 40 : 34}/>
+                label={nd.label} labelSize={vertical ? 40 : 34} above={up[k]}/>
         </div>
       ))}
     </Frame>

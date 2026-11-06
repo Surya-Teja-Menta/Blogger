@@ -90,6 +90,11 @@ version that fixes every problem you saw.
 Reply: {{"score": 1-10 for the image as it is, "problem": "the main problem in one line, or empty",
 "elements": [the complete improved element list in the same format, or [] if it is already excellent]}}"""
 
+RETRY = """
+
+Your improved version could not be drawn: {why}.
+Send the complete improved element list again, fixing that as well. Same reply format."""
+
 
 def refine_prompt(scene: dict, d: dict, icons: str) -> str:
     import json as _json
@@ -166,9 +171,9 @@ def _solids(el: dict) -> List[tuple]:
     return []
 
 
-def crowded(els: List[dict]) -> bool:
-    """True when two labels, or a label and a solid piece, or two solid pieces sit on top of each other (a box's
-    own text, inside it, is fine)."""
+def collision(els: List[dict]) -> Optional[tuple]:
+    """The first two elements (indexes) where two labels, or a label and a solid piece, or two solid pieces sit on
+    top of each other (a box's own text, inside it, is fine); None when nothing collides."""
     pieces = [(k, b, "text") for k, el in enumerate(els) for b in _boxes(el)] + \
              [(k, b, "solid") for k, el in enumerate(els) for b in _solids(el)]
     for n, (k1, a, kind1) in enumerate(pieces):
@@ -177,8 +182,20 @@ def crowded(els: List[dict]) -> bool:
                 continue
             limit = 0.35 if kind1 == kind2 == "text" else 0.15
             if _overlap(a, b) > limit:
-                return True
-    return False
+                return k1, k2
+    return None
+
+
+def crowded(els: List[dict]) -> bool:
+    return collision(els) is not None
+
+
+def describe(el: dict) -> str:
+    """An element as a reviewer would name it: its type and its words, icon or formula."""
+    what = el.get("text") or el.get("name") or el.get("tex") or ""
+    if what:
+        return f'{el.get("type", "?")} "{what}"'
+    return f'{el.get("type", "?")} at ({el.get("x", el.get("x1"))}, {el.get("y", el.get("y1"))})'
 
 
 def _overlap(a: tuple, b: tuple) -> float:
@@ -190,9 +207,13 @@ def _overlap(a: tuple, b: tuple) -> float:
     return w * h / small
 
 
-def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool]) -> Optional[dict]:
-    """The diagram as the video can draw it, or None if it is too thin, too crowded or untrue."""
+def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool],
+          why: Optional[List[str]] = None) -> Optional[dict]:
+    """The diagram as the video can draw it, or None if it is too thin, too crowded or untrue. why, if given,
+    collects what was dropped or wrong, in words the designer can act on."""
+    why = why if why is not None else []
     if not isinstance(raw, dict) or not isinstance(raw.get("elements"), list):
+        why.append("the reply had no element list")
         return None
     narration = str(scene.get("narration", ""))
     allowed = f"{narration} {scene.get('headline', '')}"
@@ -240,13 +261,15 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             el.update(x=_num(e.get("x"), 3, 92, 40), y=_num(e.get("y"), 10, 97, 90), w=_num(e.get("w"), 2, 30, 8),
                       h=_num(e.get("h"), 1, 85, 30), text=_words(e.get("text"), 3))
         if t == "icon":
-            el.update(name=graphics.icon(e.get("name")), size=_num(e.get("size"), 4, 30, 12))
+            el.update(name=graphics.icon(e.get("name"), e.get("text") or ""), size=_num(e.get("size"), 4, 30, 12))
         if t == "tex":
             tex = str(e.get("tex", "")).strip()
             if not tex or len(tex) > 80 or not tex_ok(tex):
+                why.append(f'formula "{tex[:40]}" is not complete LaTeX that typesets')
                 continue
             el.update(tex=tex, size=e.get("size") if e.get("size") in SIZES else "m")
         if not _text_ok(el.get("text", ""), allowed, verified):
+            why.append(f'{t} "{el["text"]}" uses words or numbers the narration never says')
             continue
         for motion in ("move", "glow", "hide"):
             m = e.get(motion)
@@ -265,32 +288,46 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
                 el[motion] = mv
         out.append(el)
     if len(out) < 3:
+        why.append(f"only {len(out)} usable element(s); a diagram needs at least 3")
         return None
-    if crowded(out):
-        return None                       # pieces on top of each other read badly; the shot keeps its other picture
+    hit = collision(out)
+    if hit:                               # pieces on top of each other read badly; the shot keeps its other picture
+        why.append(f"{describe(out[hit[0]])} and {describe(out[hit[1]])} overlap; move them apart")
+        return None
     return {"elements": out}
 
 
 def design(complete_json: Callable, scenes: List[dict], idx: List[int], title: str, mood: str,
            verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool], log: Callable[[str], None]) -> int:
-    """Design diagrams for the shots in idx (a few per request); returns how many were usable."""
+    """Design diagrams for the shots in idx (a few per request); a design the checks refuse is asked for once more,
+    with the reason. Returns how many were usable."""
     made = 0
-    for start in range(0, len(idx), BATCH):
-        part = idx[start:start + BATCH]
-        try:
-            reply = complete_json(prompt(scenes, part, title, mood), max_tokens=8000, temperature=0.8)
-        except Exception as exc:              # diagrams are an upgrade; a failed request leaves the shots as they are
-            log(f"[diagram] no designs for shots {part}: {str(exc)[:100]}")
-            continue
-        for item in reply if isinstance(reply, list) else []:
-            k = item.get("scene") if isinstance(item, dict) else None
-            if k in part:
-                d = check(item, scenes[k], verified, tex_ok)
-                if d:
-                    scenes[k]["diagram"] = d
-                    made += 1
-                else:
-                    log(f"[diagram] shot {k}: unusable design")
+    failed: Dict[int, List[str]] = {}
+    batches = [(idx[start:start + BATCH], "") for start in range(0, len(idx), BATCH)]
+    for attempt in range(2):
+        for part, note in batches:
+            try:
+                reply = complete_json(prompt(scenes, part, title, mood) + note, max_tokens=8000, temperature=0.8)
+            except Exception as exc:          # diagrams are an upgrade; a failed request leaves the shots as they are
+                log(f"[diagram] no designs for shots {part}: {str(exc)[:100]}")
+                continue
+            for item in reply if isinstance(reply, list) else []:
+                k = item.get("scene") if isinstance(item, dict) else None
+                if k in part and not scenes[k].get("diagram"):
+                    why: List[str] = []
+                    d = check(item, scenes[k], verified, tex_ok, why)
+                    if d:
+                        scenes[k]["diagram"] = d
+                        failed.pop(k, None)
+                        made += 1
+                    else:
+                        failed[k] = why
+                        log(f"[diagram] shot {k}: unusable design ({'; '.join(why[:2])[:160]})")
+        if not failed or attempt:
+            break
+        reasons = "\n".join(f"shot {k}: {'; '.join(w[:3]) or 'no usable elements'}" for k, w in failed.items())
+        batches = [(sorted(failed), f"\n\nYour earlier designs for these shots could not be drawn:\n{reasons}\n"
+                                    "Design them again, avoiding those problems.")]
     return made
 
 
@@ -321,7 +358,7 @@ def timed(d: Optional[dict], words: List[tuple], frames: int, fps: int, lead: in
     for k, el in enumerate(els):
         turn = lead + 4 + round(span * k / max(1, len(els)))
         hit = frame_of(el["on"])
-        el["at"] = min(hit, turn + 20) if hit is not None else turn
+        el["at"] = min(hit, turn + (20 if k else 0)) if hit is not None else turn      # the first lands at once
         for motion in ("move", "glow", "hide"):
             if el.get(motion):
                 m = dict(el[motion])

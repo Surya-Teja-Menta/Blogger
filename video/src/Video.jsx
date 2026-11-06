@@ -70,7 +70,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
   const {width, height, durationInFrames} = useVideoConfig();
   const vertical = height > width;
   return (
-    <AbsoluteFill style={{background: C.bg, fontVariantNumeric: "lining-nums"}}>
+    <AbsoluteFill style={{background: clean ? "transparent" : C.bg, fontVariantNumeric: "lining-nums"}}>
       <TransitionSeries>
         {scenes.map((s, i) => {
           // a shot the art director gave a motion graphic plays that instead of its template

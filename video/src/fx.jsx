@@ -132,6 +132,7 @@ export const Camera = ({children, i = 0, amount: base = 1}) => {
 
 // drifting specks of light (or dust on paper); positions are seeded, so every render is identical
 export const Particles = ({n = 40, seed = "p", color}) => {
+  if (C.clean) return null;
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
   return (
@@ -151,7 +152,7 @@ export const Particles = ({n = 40, seed = "p", color}) => {
 
 // The theme's moving background, used whenever a scene has no photo or footage.
 export const Backdrop = ({word = "", hue, i = 0}) => {
-  if (C.clean) return <AbsoluteFill style={{background: C.bg}}/>;     // a thumbnail cut-out: the visual alone
+  if (C.clean) return null;           // a thumbnail cut-out: the visual alone, on a transparent frame
   const frame = useCurrentFrame() * (C.speed || 1);     // the design's pace sets how fast the backdrop drifts
   const {width, height} = useVideoConfig();
   const h = hue || C.accent;
@@ -348,6 +349,7 @@ export const ChapterSting = ({kicker, title, vertical}) => {
 
 // Film finish over everything: grain, vignette and (on dark themes) a slow light leak.
 export const Finish = () => {
+  if (C.clean) return null;
   const frame = useCurrentFrame();
   const x = Math.floor(random(`gx${frame}`) * 512), y = Math.floor(random(`gy${frame}`) * 512);
   return (

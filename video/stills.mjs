@@ -16,8 +16,10 @@ for (const j of jobs) {
   try {
     const inputProps = typeof j.props === "string" ? JSON.parse(fs.readFileSync(j.props, "utf8")) : j.props;
     const composition = await selectComposition({serveUrl, id: j.composition || "Long", inputProps, puppeteerInstance: browser});
-    await renderStill({serveUrl, composition, output: j.out, frame: j.frame, inputProps, imageFormat: "jpeg",
-                       jpegQuality: 90, scale: j.scale || 0.5, puppeteerInstance: browser, timeoutInMilliseconds: 120000});
+    const png = j.out.toLowerCase().endsWith(".png");        // a PNG keeps a transparent frame transparent
+    await renderStill({serveUrl, composition, output: j.out, frame: j.frame, inputProps, imageFormat: png ? "png" : "jpeg",
+                       ...(png ? {} : {jpegQuality: 90}), scale: j.scale || 0.5, puppeteerInstance: browser,
+                       timeoutInMilliseconds: 120000});
     console.log(`ok ${j.out}`);
   } catch (e) {
     failed++;

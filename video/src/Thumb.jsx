@@ -34,10 +34,15 @@ export const Thumb = ({scenes, thumbText = "", thumbHighlight = "", theme = null
         <>
           <div style={{position: "absolute", width: 1100, height: 700, borderRadius: "50%", right: -200, bottom: -260,
                        background: `radial-gradient(ellipse, ${alpha(C.cool, 0.22)}, transparent 65%)`}}/>
-          <Img src={staticFile(hero)} style={{position: "absolute", objectFit: "contain", filter: "saturate(1.15) contrast(1.05)",
-                                              ...(wide ? {left: 40, top: 70 + size * 2, width: 1200, height: 650 - size * 2, objectPosition: "50% 50%"}
-                                                       : {left: 600, top: 40, width: 640, height: 630, objectPosition: "100% 50%"})}}/>
-          <div style={{position: "absolute", left: 56, top: 40, width: wide ? 1060 : 520}}>{title}</div>
+          {/* the title takes the height it needs and the visual (cut out on a transparent frame) fills the rest */}
+          <div style={{position: "absolute", inset: 0, padding: wide ? "40px 56px 46px" : "40px 40px 46px 56px", display: "flex",
+                       flexDirection: wide ? "column" : "row", gap: wide ? 22 : 36}}>
+            <div style={{width: wide ? 1060 : 520, flexShrink: 0, alignSelf: wide ? "flex-start" : "center"}}>{title}</div>
+            <div style={{position: "relative", flex: 1, minWidth: 0, minHeight: 0}}>
+              <Img src={staticFile(hero)} style={{position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain",
+                                                  objectPosition: wide ? "50% 50%" : "100% 50%", filter: "saturate(1.1)"}}/>
+            </div>
+          </div>
         </>
       ) : (
         <>

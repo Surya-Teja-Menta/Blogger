@@ -3,6 +3,7 @@ of players, a unit chart, kinetic type, a spotlight, a versus split or a stack o
 draws them) and fills it with icons and short labels. The model only chooses and names; every layout is fixed,
 so a graphic always looks right. Each choice is checked: known type and icons, short labels, verified numbers."""
 import difflib
+import os
 import re
 from typing import Callable, Dict, List, Optional
 
@@ -23,7 +24,63 @@ mic video camera monitor laptop code terminal bot cog wrench hammer house school
 radio-tower cable plug wind droplets mountain trees tractor wheat pill stethoscope dna syringe baby person-standing
 briefcase file-text clipboard-check badge-check medal trophy timer infinity split merge git-branch workflow boxes
 container warehouse anchor fish ban siren vote megaphone hand-coins scroll pickaxe gem sprout cloud-rain thermometer
-telescope orbit cctv""".split())
+telescope orbit cctv sigma calculator ruler square-function variable pi chart-scatter chart-spline mountain
+arrow-down-to-line arrow-up-to-line crosshair puzzle list-checks filter sliders-horizontal trending-up-down magnet
+axis-3d grid-3x3 waves spline dice-5 shuffle equal divide binary brain-circuit notebook-pen compass route footprints
+circle-dot locate-fixed focus blocks combine tag bed-double weight test-tube book info circle-help list
+log-in log-out""".split())
+
+# everything the renderer can draw: the installed lucide package (falls back to the list above)
+LUCIDE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video", "node_modules", "lucide", "dist",
+                          "esm", "icons")
+_ALL: List[set] = []
+
+
+def all_icons() -> set:
+    if not _ALL:
+        try:
+            _ALL.append({f[:-3] for f in os.listdir(LUCIDE_DIR) if f.endswith(".js")} | ICONS)
+        except OSError:
+            _ALL.append(set(ICONS))
+    return _ALL[0]
+
+
+# ideas the model often names that have no icon of their own -> the icon that shows them
+CONCEPTS = {
+    "valley": "mountain", "hill": "mountain", "peak": "mountain", "landscape": "mountain", "surface": "waves",
+    "error": "circle-x", "errors": "circle-x", "mistake": "circle-x", "wrong": "circle-x", "loss": "trending-down",
+    "minimum": "arrow-down-to-line", "lowest": "arrow-down-to-line", "bottom": "arrow-down-to-line",
+    "maximum": "arrow-up-to-line", "highest": "arrow-up-to-line", "descent": "trending-down", "decline": "trending-down",
+    "drop": "trending-down", "growth": "trending-up", "increase": "trending-up", "rise": "trending-up",
+    "model": "brain-circuit", "network": "network", "ai": "bot", "algorithm": "workflow", "process": "workflow",
+    "data": "database", "dataset": "database", "feature": "list", "features": "list", "variables": "variable",
+    "input": "log-in", "inputs": "log-in", "output": "log-out", "outputs": "log-out", "prediction": "crosshair",
+    "predict": "crosshair", "predictions": "crosshair", "estimate": "crosshair", "price": "tag", "prices": "tag",
+    "cost": "coins", "costs": "coins", "money": "banknote", "budget": "wallet", "home": "house", "homes": "house",
+    "houses": "house", "room": "bed-double", "rooms": "bed-double", "age": "calendar", "year": "calendar",
+    "location": "map-pin", "place": "map-pin", "size": "ruler", "length": "ruler", "formula": "sigma",
+    "equation": "sigma", "sum": "sigma", "math": "calculator", "maths": "calculator", "calculation": "calculator",
+    "probability": "dice-5", "chance": "dice-5", "random": "shuffle", "noise": "waves", "signal": "activity",
+    "line": "chart-line", "trend": "chart-line", "regression": "chart-scatter", "scatter": "chart-scatter",
+    "points": "chart-scatter", "fit": "chart-spline", "curve": "chart-spline", "penalty": "scale", "balance": "scale",
+    "balanced": "scale", "tradeoff": "scale", "weights": "weight", "learning": "graduation-cap", "lesson": "graduation-cap",
+    "student": "graduation-cap", "teacher": "school", "idea": "lightbulb", "insight": "lightbulb", "history": "scroll",
+    "past": "scroll", "business": "briefcase", "businesses": "briefcase", "company": "building-2",
+    "engineering": "cog", "engineers": "wrench", "engineer": "wrench", "science": "flask-conical", "research": "microscope",
+    "security": "shield", "safety": "shield", "risk": "triangle-alert", "risks": "triangle-alert", "danger": "siren",
+    "advertising": "megaphone", "marketing": "megaphone", "ads": "megaphone", "health": "stethoscope",
+    "medicine": "pill", "finance": "landmark", "bank": "landmark", "time": "clock", "speed": "gauge",
+    "fast": "zap", "energy": "zap", "power": "zap", "step": "footprints", "steps": "footprints", "goal": "target",
+    "accuracy": "target", "precision": "target", "independent": "split", "split": "split", "informative": "info",
+    "information": "info", "test": "test-tube", "experiment": "flask-conical", "question": "circle-help",
+    "unknown": "circle-help", "people": "users", "person": "user", "world": "globe", "global": "globe",
+    "rule": "ruler", "update": "refresh-cw", "repeat": "repeat", "loop": "repeat", "iteration": "repeat",
+    "gradient": "trending-down", "slope": "trending-up", "axis": "axis-3d", "dimension": "axis-3d",
+    "dimensions": "axis-3d", "plane": "layers", "space": "orbit", "simple": "circle-dot", "complex": "puzzle",
+    "choice": "list-checks", "choose": "list-checks", "selection": "filter", "filter": "filter", "tune": "sliders-horizontal",
+    "tuning": "sliders-horizontal", "parameter": "sliders-horizontal", "parameters": "sliders-horizontal",
+    "book": "book-open", "theory": "book-open", "proof": "badge-check", "result": "badge-check", "answer": "badge-check",
+}
 
 PROMPT = """You are the art director of a premium explainer channel (Kurzgesagt, Vox, Bloomberg graphics). Below are
 shots of one video. For as many shots as possible (aim for at least 3 in 4), choose ONE motion graphic that makes the
@@ -73,20 +130,35 @@ def _label(text, allowed: str, verified: Callable[[str, str], bool]) -> Optional
     return text
 
 
-def icon(name) -> str:
-    """A real icon for the name the model gave: itself, the closest known name, or a neutral one."""
+def icon(name, hint: str = "") -> str:
+    """A real icon for the name the model gave: itself, the closest known name, the icon for one of its words (or
+    the words of the label it stands for, `hint`), or a neutral one."""
     name = re.sub(r"[^a-z0-9-]", "", str(name or "").lower().replace(" ", "-").replace("_", "-"))
-    if name in ICONS:
+    every = all_icons()
+    if name in every:
         return name
     near = difflib.get_close_matches(name, ICONS, n=1, cutoff=0.7)
-    return near[0] if near else "sparkles"
+    if near:
+        return near[0]
+    words = [w for w in name.split("-") if len(w) > 2] + re.findall(r"[a-z]{3,}", str(hint or "").lower())
+    for w in words:
+        if CONCEPTS.get(w) in every:
+            return CONCEPTS[w]
+        if w in every:
+            return w
+    for w in words:
+        if len(w) > 3:
+            named = sorted((i for i in every if w in i.split("-")), key=len)
+            if named:
+                return named[0]
+    return "sparkles"
 
 
 def _node(raw, allowed, verified) -> Optional[dict]:
     if not isinstance(raw, dict):
         return None
     label = _label(raw.get("label"), allowed, verified)
-    return {"icon": icon(raw.get("icon")), "label": label} if label else None
+    return {"icon": icon(raw.get("icon"), label), "label": label} if label else None
 
 
 def check(raw, scene: dict, verified: Callable[[str, str], bool]) -> Optional[dict]:
@@ -221,8 +293,8 @@ def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps
     span = max(30, int(frames * 0.6))
     for k, piece in enumerate(pieces):
         guess = lead + 6 + round(span * k / max(1, len(pieces)))
-        hit = when(piece["label"])          # on its word, but never more than ~0.5 s after its place in the build
-        piece["at"] = min(hit, guess + 15) if hit is not None else guess
+        hit = when(piece["label"])          # on its word, but never more than ~0.5 s after its place in the build,
+        piece["at"] = min(hit, guess + (15 if k else 0)) if hit is not None else guess    # and the first lands at once
     if g["type"] in ("flow", "stack"):
         for a, b in zip(g["nodes"], g["nodes"][1:]):
             b["at"] = max(b["at"], a["at"] + 8)
