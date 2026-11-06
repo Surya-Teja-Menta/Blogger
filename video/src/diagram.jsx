@@ -2,10 +2,12 @@
 // bars, labels, icons and formulas, each appearing on its spoken word, then moving, glowing or leaving on others.
 // The composition is the model's; this file only draws it, in the video's own colours and motion language.
 import React from "react";
-import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
+import {AbsoluteFill, useCurrentFrame, useVideoConfig} from "remotion";
+import {getLength, getPointAtLength} from "@remotion/paths";
 import {Backdrop, Camera, Title, clamp, ease} from "./fx";
 import {Icon} from "./graphics";
 import {Tex, useMathFonts} from "./math";
+import {delay, glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 
 const col = (name) => ({accent: C.accent, hot: C.hot, cool: C.cool, violet: C.violet, text: C.text, muted: C.muted}[name] || C.accent);
@@ -17,6 +19,17 @@ const smooth = (pts) => pts.map((p, k) => {
   const a = pts[k - 2] || pts[k - 1], b = pts[k - 1], c = p, d = pts[k + 1] || p;
   return `C${b[0] + (c[0] - a[0]) / 6},${b[1] + (c[1] - a[1]) / 6} ${c[0] - (d[0] - b[0]) / 6},${c[1] - (d[1] - b[1]) / 6} ${c[0]},${c[1]}`;
 }).join(" ");
+
+// a point list stretched or squeezed to n points, so two shapes with different counts can morph
+const resample = (pts, n) => Array.from({length: n}, (_, j) => {
+  const t = (j * (pts.length - 1)) / Math.max(1, n - 1), a = Math.floor(t), b = Math.min(pts.length - 1, a + 1);
+  return [pts[a][0] + (pts[b][0] - pts[a][0]) * (t - a), pts[a][1] + (pts[b][1] - pts[a][1]) * (t - a)];
+});
+const morph = (from, to, q) => {
+  if (!to || q <= 0) return from;
+  const n = Math.max(from.length, to.length), A = resample(from, n), B = resample(to, n);
+  return A.map((p, j) => [p[0] + (B[j][0] - p[0]) * q, p[1] + (B[j][1] - p[1]) * q]);
+};
 
 export const DiagramScene = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
@@ -31,13 +44,32 @@ export const DiagramScene = ({s, i, vertical}) => {
 
   // where an element is now: its own values, eased toward its move target once that word is said
   const state = (e) => {
-    const p = spring({frame: frame - (e.at ?? 0), fps, config: {damping: C.damping ?? 15, mass: 0.7}});
+    const p = pop(frame - (e.at ?? 0));
     const draw = ease((frame - (e.at ?? 0)) / 22);
-    const q = e.move ? spring({frame: frame - e.move.at, fps, config: {damping: 18}}) : 0;
+    const q = e.move ? (e.move.along !== undefined ? glide : pop)(frame - e.move.at, 1.6) : 0;
     const v = (k) => (e.move && e.move[k] !== undefined ? e[k] + (e.move[k] - e[k]) * q : e[k]);
     const gone = e.hide ? clamp((frame - e.hide.at) / 12) : 0;
     const glow = e.glow && frame >= e.glow.at ? 0.5 + 0.5 * Math.sin((frame - e.glow.at) / 5) : 0;
-    return {p, draw, v, alive: frame >= (e.at ?? 0), fade: 1 - gone, glow};
+    const pts = e.points && (e.move && e.move.points ? morph(e.points, e.move.points, q) : e.points);
+    return {p, draw, v, q, pts, alive: frame >= (e.at ?? 0), fade: 1 - gone, glow};
+  };
+  // where a dot riding a curve is: from the curve point nearest its start to the one nearest its stop
+  const ride = (e, q) => {
+    const c = els[e.move.along];
+    const d = smooth(c.points.map((pt) => [X(pt[0]), Y(pt[1])]));
+    const L = getLength(d);
+    const near = (x, y) => {
+      let best = [Infinity, 0];
+      for (let j = 0; j <= 120; j++) {
+        const pt = getPointAtLength(d, (L * j) / 120);
+        const dist = Math.hypot(pt.x - X(x), pt.y - Y(y));
+        if (dist < best[0]) best = [dist, j / 120];
+      }
+      return best[1];
+    };
+    const u0 = near(e.x, e.y), u1 = e.move.x !== undefined ? near(e.move.x, e.move.y ?? e.y) : 1;
+    const pt = getPointAtLength(d, L * (u0 + (u1 - u0) * Math.min(1, Math.max(0, q))));
+    return [pt.x, pt.y];
   };
   const shadow = (c, g) => (g ? `drop-shadow(0 0 ${10 + 16 * g}px ${alpha(c, 0.9)})` : `drop-shadow(0 0 8px ${alpha(c, 0.35)})`);
 
@@ -48,11 +80,12 @@ export const DiagramScene = ({s, i, vertical}) => {
     const c = col(e.color);
     const op = st.fade;
     if (e.type === "dot") {
-      shapes.push(<circle key={k} cx={X(st.v("x"))} cy={Y(st.v("y"))} r={e.r * u * (e.anim === "fade" ? 1 : st.p)}
+      const [cx, cy] = e.move && e.move.along !== undefined && els[e.move.along] ? ride(e, st.q) : [X(st.v("x")), Y(st.v("y"))];
+      shapes.push(<circle key={k} cx={cx} cy={cy} r={e.r * u * (e.anim === "fade" ? 1 : st.p)}
                           fill={c} opacity={op * (e.anim === "fade" ? clamp(st.p) : 1)} style={{filter: shadow(c, st.glow)}}/>);
     } else if (e.type === "dots") {
-      e.points.forEach((pt, j) => {
-        const pj = spring({frame: frame - e.at - j * 1.6, fps, config: {damping: 12}});
+      st.pts.forEach((pt, j) => {
+        const pj = pop(frame - e.at - delay(j, e.points.length, `d${k}`));
         shapes.push(<circle key={`${k}-${j}`} cx={X(pt[0])} cy={Y(pt[1])} r={e.r * u * pj} fill={c} opacity={op}
                             stroke={C.bg} strokeWidth={2} style={{filter: shadow(c, st.glow)}}/>);
       });
@@ -90,7 +123,7 @@ export const DiagramScene = ({s, i, vertical}) => {
       }
       void len;
     } else if (e.type === "curve") {
-      shapes.push(<path key={k} d={smooth(e.points.map((pt) => [X(pt[0]), Y(pt[1])]))} fill="none" stroke={c} strokeWidth={6}
+      shapes.push(<path key={k} d={smooth(st.pts.map((pt) => [X(pt[0]), Y(pt[1])]))} fill="none" stroke={c} strokeWidth={6}
                         strokeLinecap="round" strokeLinejoin="round" pathLength={1} strokeDasharray={1}
                         strokeDashoffset={1 - ease((frame - e.at) / 30)} opacity={op} style={{filter: shadow(c, st.glow)}}/>);
     } else if (e.type === "bar") {

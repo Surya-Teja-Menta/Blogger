@@ -7,8 +7,10 @@ import {geoCentroid, geoGraticule10, geoInterpolate, geoNaturalEarth1, geoPath} 
 import {feature} from "topojson-client";
 import atlas from "world-atlas/countries-50m.json";
 import {Backdrop, Camera, Glass, Kicker, Particles, PhotoCard, Plate, Shade, Title, Words, clamp, countUp, ease, useEnter} from "./fx";
+import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 import {DeriveScene, EquationScene, GraphScene, PlotScene} from "./math";
+import {SurfaceScene} from "./surface";
 
 const pad = (v) => (v ? {left: 70, right: 70} : {left: 120, right: 120});
 const media = (s) => s.video || (s.images && s.images[0]);
@@ -172,7 +174,7 @@ export const CompareScene = ({s, i, vertical}) => {
       <Camera i={i} amount={0.6}>
         <Glass p={useEnter(4)} style={{position: "absolute", ...pad(vertical), top: vertical ? 700 : 400, padding: vertical ? "50px 50px" : "50px 70px"}}>
           {items.map((it, k) => {
-            const g = spring({frame: frame - (s.cue ?? 12) - k * 9, fps, config: {damping: 22}});
+            const g = pop(frame - (s.cue ?? 12) - k * 9);
             const col = SERIES[k % SERIES.length];
             return (
               <div key={k} style={{marginBottom: k < items.length - 1 ? (vertical ? 56 : 40) : 0}}>
@@ -217,7 +219,7 @@ export const BarsScene = ({s, i, vertical}) => {
         ))}
         <div style={{position: "absolute", left: x0, width: x1 - x0, top: base, height: 3, background: alpha(C.text, 0.35)}}/>
         {items.map((it, k) => {
-          const g = spring({frame: frame - (s.cue ?? 10) - k * 6, fps, config: {damping: 18}});
+          const g = pop(frame - (s.cue ?? 10) - k * 6);
           const h = H * (it.value / max) * g;
           const big = it.value === max;
           const col = big ? C.accent : C.cool;
@@ -295,23 +297,23 @@ export const LineScene = ({s, i, vertical}) => {
         </svg>
         {items.map((it, k) => {
           const reach = items.length === 1 ? 0.5 : k / (items.length - 1);
-          const pop = spring({frame: frame - start - Math.max(30, 14 * items.length) * reach * 0.8, fps, config: {damping: 14}});
+          const pp = pop(frame - start - Math.max(30, 14 * items.length) * reach * 0.8);
           const [x, y] = pts[k];
           const last = k === items.length - 1;
           return (
             <React.Fragment key={k}>
               <div style={{position: "absolute", left: x - 13, top: y - 13, width: 26, height: 26, borderRadius: 13, background: C.bg,
-                           border: `6px solid ${last ? C.accent : C.text}`, transform: `scale(${pop})`}}/>
+                           border: `6px solid ${last ? C.accent : C.text}`, transform: `scale(${pp})`}}/>
               <div style={{position: "absolute", left: x - 140, width: 280, top: y - (vertical ? 104 : 96), textAlign: "center",
-                           opacity: clamp(pop * 1.5), transform: `translateY(${(1 - pop) * 20}px)`}}>
+                           opacity: clamp(pp * 1.5), transform: `translateY(${(1 - pp) * 20}px)`}}>
                 <span style={{display: "inline-block", padding: "6px 18px", borderRadius: 14, fontFamily: FONT.display,
                               fontWeight: C.weight, fontSize: vertical ? 46 : 44, color: last ? (C.light ? "#fff" : C.bg) : C.text,
                               background: last ? C.accent : alpha(C.panel, 0.85), border: `1.5px solid ${alpha(C.text, 0.12)}`}}>
-                  {countUp(it.display, pop)}
+                  {countUp(it.display, pp)}
                 </span>
               </div>
               <div style={{position: "absolute", left: x - 120, width: 240, top: base + 22, textAlign: "center", fontFamily: FONT.body,
-                           fontWeight: 700, fontSize: vertical ? 32 : 30, color: C.muted, opacity: clamp(pop * 2)}}>{it.label}</div>
+                           fontWeight: 700, fontSize: vertical ? 32 : 30, color: C.muted, opacity: clamp(pp * 2)}}>{it.label}</div>
             </React.Fragment>
           );
         })}
@@ -328,7 +330,7 @@ export const DonutScene = ({s, i, vertical}) => {
   const R = vertical ? 270 : 250, W = vertical ? 70 : 64, size = 2 * R + W + 40, Cc = 2 * Math.PI * R;
   const start = s.cue ?? 8;
   let acc = 0;
-  const center = spring({frame: frame - start, fps, config: {damping: 20}});
+  const center = pop(frame - start);
   return (
     <AbsoluteFill>
       <Backdrop word={s.kicker} i={i}/>
@@ -356,7 +358,7 @@ export const DonutScene = ({s, i, vertical}) => {
         </div>
         <div style={{position: "absolute", left: vertical ? 90 : 1000, right: vertical ? 90 : 140, top: vertical ? 620 + size + 40 : 400}}>
           {items.map((it, k) => {
-            const g = spring({frame: frame - start - 6 - k * 10, fps, config: {damping: 16}});
+            const g = pop(frame - start - 6 - k * 10);
             return (
               <Glass key={k} p={g} style={{display: "flex", alignItems: "center", gap: 26, padding: vertical ? "18px 30px" : "24px 34px",
                                            marginBottom: vertical ? 16 : 24}}>
@@ -388,7 +390,7 @@ export const KpiScene = ({s, i, vertical}) => {
         <div style={{position: "absolute", ...pad(vertical), top: vertical ? 640 : 440, display: "grid",
                      gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: vertical ? 26 : 34}}>
           {items.map((it, k) => {
-            const g = spring({frame: frame - (s.cue ?? 8) - k * 8, fps, config: {damping: 15}});
+            const g = pop(frame - (s.cue ?? 8) - k * 8);
             const col = SERIES[k % SERIES.length];
             return (
               <Glass key={k} p={g} glow={col} style={{padding: vertical ? "30px 40px" : "46px 40px", position: "relative", overflow: "hidden",
@@ -431,13 +433,13 @@ export const TimelineScene = ({s, i, vertical}) => {
         {events.map((e, k) => {
           const at = n === 1 ? 0.5 : k / (n - 1);
           const x = x0 + (x1 - x0) * at, y = y0 + (y1 - y0) * at;
-          const pop = spring({frame: frame - 8 - span * at * 0.9, fps, config: {damping: 13}});
+          const pp = pop(frame - 8 - span * at * 0.9);
           const above = !vertical && k % 2 === 0;
           return (
             <div key={k} style={{position: "absolute", left: x, top: y}}>
               <div style={{position: "absolute", left: -22, top: -22, width: 44, height: 44, borderRadius: 22, background: C.bg,
-                           border: `7px solid ${C.accent}`, transform: `scale(${pop})`, boxShadow: `0 0 30px ${alpha(C.accent, 0.7)}`}}/>
-              <Glass p={pop} style={vertical ? {position: "absolute", left: 60, top: -70, width: 740, padding: "20px 30px"}
+                           border: `7px solid ${C.accent}`, transform: `scale(${pp})`, boxShadow: `0 0 30px ${alpha(C.accent, 0.7)}`}}/>
+              <Glass p={pp} style={vertical ? {position: "absolute", left: 60, top: -70, width: 740, padding: "20px 30px"}
                                             : {position: "absolute", left: -175, width: 350, padding: "22px 24px", textAlign: "center",
                                                top: above ? -250 : 50}}>
                 <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: vertical ? 70 : 64, color: C.accent, lineHeight: 1}}>{e.date}</div>
@@ -467,7 +469,7 @@ export const StepsScene = ({s, i, vertical}) => {
       <Camera i={i} amount={0.5}>
         {items.map((it, k) => {
           const at = (s.cue ?? 8) + k * 14;
-          const g = spring({frame: frame - at, fps, config: {damping: 16}});
+          const g = pop(frame - at);
           const [x, y] = pos(k);
           const arrow = k < n - 1 && ease((frame - at - 8) / 10);
           return (
@@ -538,7 +540,7 @@ export const MapScene = ({s, i, vertical}) => {
       </svg>
       {picked.map((f, j) => {
         const [x, y] = proj(geoCentroid(f));
-        const p = spring({frame: frame - 36 - j * 8, fps, config: {damping: 14}});
+        const p = pop(frame - 36 - j * 8);
         const w = f.properties.name.length * (vertical ? 50 : 46) * 0.6 + 60;      // about the label's width
         const left = x + 30 + w > width - 40 ? Math.max(40, x - 30 - w) : x + 30;    // flip left at the edge
         return (
@@ -567,7 +569,7 @@ export const ListScene = ({s, i, vertical}) => {
       <Camera i={i} amount={0.5}>
         <div style={{position: "absolute", ...pad(vertical), top: vertical ? 680 : 420}}>
           {(s.items || []).map((it, k) => {
-            const p = spring({frame: frame - 12 - k * 10, fps, config: {damping: 16}});
+            const p = pop(frame - 12 - k * 10);
             return (
               <Glass key={k} p={p} style={{display: "flex", alignItems: "center", gap: 36, padding: vertical ? "26px 36px" : "22px 40px",
                                            marginBottom: vertical ? 26 : 22, transform: `translateX(${(1 - p) * -120}px)`}}>
@@ -650,15 +652,18 @@ export const OutroScene = ({s, i, vertical}) => {
           </div>
         </div>
         <div style={{textAlign: vertical ? "center" : "left", maxWidth: 760}}>
-          <Img src={staticFile("logo.png")} style={{width: 150, height: 150, marginBottom: 30, opacity: p,
-                                                   transform: `scale(${0.7 + 0.3 * p}) rotate(${(1 - p) * -12}deg)`,
-                                                   filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
+          <div style={{display: "flex", alignItems: "center", gap: 26, marginBottom: 30, opacity: p,
+                       justifyContent: vertical ? "center" : "flex-start"}}>
+            <Img src={staticFile("logo.png")} style={{width: 150, height: 150, transform: `scale(${0.7 + 0.3 * p}) rotate(${(1 - p) * -12}deg)`,
+                                                     filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
+            {s.channel && <Words text={s.channel} size={84} delay={4} maxWidth={560}/>}
+          </div>
           <Words text={s.kicker} size={110} delay={10} align={vertical ? "center" : "left"} highlight={s.highlight} maxWidth={760}/>
           <div style={{display: "inline-flex", alignItems: "center", gap: 18, marginTop: 50, padding: "26px 54px",
                        borderRadius: 60, background: press > 0.5 ? alpha(C.text, 0.15) : C.hot,
                        transform: `scale(${1 - 0.08 * Math.sin(Math.PI * clamp(press))})`,
                        fontFamily: FONT.body, fontWeight: 800, fontSize: 44, color: press > 0.5 ? C.text : "#fff", opacity: button}}>
-            {press > 0.5 ? "SUBSCRIBED" : "SUBSCRIBE"}
+            {press > 0.5 ? "SUBSCRIBED" : s.channel ? `SUBSCRIBE TO ${s.channel.toUpperCase()}` : "SUBSCRIBE"}
           </div>
         </div>
       </div>
@@ -666,6 +671,6 @@ export const OutroScene = ({s, i, vertical}) => {
   );
 };
 
-export const SCENES = {equation: EquationScene, plot: PlotScene, graph: GraphScene, derive: DeriveScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
+export const SCENES = {equation: EquationScene, plot: PlotScene, graph: GraphScene, derive: DeriveScene, surface: SurfaceScene, photo: PhotoScene, hook: PhotoScene, stat: StatScene, compare: CompareScene, bars: BarsScene,
                        line: LineScene, donut: DonutScene, kpis: KpiScene, timeline: TimelineScene, steps: StepsScene,
                        map: MapScene, list: ListScene, quote: QuoteScene, chapter: ChapterScene, outro: OutroScene};

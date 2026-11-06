@@ -6,6 +6,7 @@ files are stored and emailed, and a person reviews and uploads them.
     python -m blogwriter.video output/<run folder> [--no-email]     # (re)make the videos of a saved run"""
 import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 import json
 import math
@@ -43,10 +44,11 @@ GAP = 4                   # frames of breath after the narration (clips are trim
 MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
 SHORT_MAX_SECONDS = 58
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
+REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
 KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
-         "quote", "equation", "plot", "graph", "derive")
-MATH_KINDS = ("equation", "plot", "graph", "derive")      # lesson shots drawn from maths, not from facts or photos
+         "quote", "equation", "plot", "graph", "derive", "surface")
+MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
 PLOTS = ("scatter", "fit", "residuals", "squares", "descent")
 FIGURE_KINDS = {"compare": (2, 3), "bars": (3, 6), "line": (3, 8), "donut": (2, 4), "kpis": (3, 4)}  # items (min, max)
 CHART_KINDS = ("stat", "hook", "compare", "bars", "line", "donut", "kpis")      # a hit sound lands under these
@@ -119,7 +121,9 @@ MATHS_RULES = r"""
   "derive", "plot"), with at least 3 "equation" or "derive" shots and at least 2 "graph" shots. Always picture
   first, then the formula that says the same thing. Use "graph" to SHOW behaviour: sweep a parameter to show what
   it does, a tangent for rates and gradients, the area for integrals, totals and probabilities. Use "derive" for
-  algebra a viewer should follow step by step, each step with a note on what changed. For fitting a
+  algebra a viewer should follow step by step, each step with a note on what changed. Use "surface" whenever a
+  quantity depends on TWO inputs (a cost over two weights, a loss landscape, a valley or a saddle, a plane fitted
+  to two features): seeing it in 3D is the moment it clicks, so a lesson with such an idea has at least one. For fitting a
   line, teach in this order: the data (scatter), the idea of a line through it (fit), the model formula, each
   point's error (residuals), why we square the errors (squares), the cost formula (e.g.
   J = \frac{1}{n}\sum (y_i - \hat{y}_i)^2), how the cost is minimised (descent), and the update rule (e.g.
@@ -142,7 +146,7 @@ SCRIPT_PROMPT = """{shape}
   No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
 - "outro": 1 or 2 closing sentences in this video's own voice that say {outro_ask} linked in the description,
-  and invite the viewer to subscribe. Not a slogan; make it fit the story.
+  and invite the viewer to subscribe to {channel} (say the channel's name). Not a slogan; make it fit the story.
 
 VISUALS: pick a "kind" per shot, never the same kind twice in a row, at least 7 different kinds overall.
 About a third of shots are "photo" shots; the rest are graphics. Whenever the facts hold several comparable
@@ -185,6 +189,14 @@ chart: every figure on screen must be in the facts, written the same way.
               "squares" (each error drawn as a square, their total shrinking as the line improves), "descent"
               (gradient descent: a ball stepping down the error curve while the line improves); "xlabel" and
               "ylabel" (axis names, max 3 words, e.g. "House size", "Price").
+- "surface":  (lessons) a 3D surface z = f(x, y) that rises out of the floor while the camera orbits it. Needs
+              "surface": {{"fn": the function in plain maths using only x, y, numbers, + - * / ^, brackets, sin cos
+              tan exp log sqrt abs, pi, e (write * for multiplication: "x^2 + 3*y^2", "0.4*x + 0.2*y + 1"), "tex":
+              its KaTeX label, e.g. "J(w, b) = w^2 + 3b^2", "x": [xmin, xmax], "y": [ymin, ymax], "mark": "descent" (a
+              ball takes real gradient-descent steps from "start" down to the bottom), "minimum" (the lowest point
+              is ringed), "residuals" (3D data points with sticks to the surface; give "points": 6 to 20 [x, y, z]
+              near the surface, e.g. houses around a fitted plane) or "", "start": [x, y] (for descent: a high
+              point)}}; plus "xlabel", "ylabel" and "zlabel" (axis names, max 3 words, e.g. "w", "b", "cost").
 Every scene also has: "headline" (max 7 punchy words, NOT a copy of the narration), "kicker" (max 3 words,
 e.g. "THE DEAL"), "highlight" (1 or 2 words of the headline to mark), "subjects" (2 or 3 exact English Wikipedia
 article titles to illustrate it: organisations, places, products or buildings, plus one visual thing like
@@ -207,10 +219,18 @@ Return JSON:
 scroll in at most 14 words; then the strongest facts, at most 20 words each. Charts make strong Short beats."""
 
 OUTRO = ("That's the short version. The full report has {facts} verified facts, and every source is linked. "
-         "It's in the description. And if you want one story like this, researched properly, every day, subscribe.")
+         "It's in the description. And if you want one story like this, researched properly, every day, subscribe "
+         "to {channel}.")
 OUTRO_SOURCES = ("Every one of the {facts} facts in this video was checked, and every source is linked in the "
-                 "description. If you want more like this, explained properly, subscribe.")
-SHORT_OUTRO = "Full story, with every source, on the channel."
+                 "description. If you want more like this, explained properly, subscribe to {channel}.")
+SHORT_OUTRO = "Full story, with every source, on {channel}."
+EXPAND = """These are the narration lines of an explainer video, one per shot, in order. The video is too short:
+together they should run about {total} spoken words, but they have {have}. Rewrite every line so it explains more:
+say what the viewer is watching, why it matters and what it means, in the same voice. Keep each line's meaning
+and its place in the story, keep every symbol and term it names (in the same order), and add no new numbers,
+names or facts. The first line stays a hook of at most 28 words; no line is longer than 55 words.
+Lines (JSON): {lines}
+Reply with JSON: {{"lines": [exactly {n} strings, in the same order]}}"""
 ATLAS = os.path.join(VIDEO_APP, "node_modules", "world-atlas", "countries-50m.json")
 COUNTRY_ALIASES = {"united states": "United States of America", "usa": "United States of America",
                    "us": "United States of America", "uk": "United Kingdom", "britain": "United Kingdom",
@@ -489,7 +509,18 @@ def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]
     return None
 
 
-HERO_ORDER = ("graph", "equation", "derive", "plot", "diagram", "bars", "line", "donut", "compare", "kpis", "stat", "map")
+def subscribe_at(starts: List[int], kinds: List[str], total: int) -> Optional[int]:
+    """The frame the subscribe card appears in the long video: a second into the first shot that starts after
+    about 30% of the video (so it lands on a settled picture, never on a cut), and never in the outro."""
+    if total < 40 * FPS:
+        return None
+    for st, kind in zip(starts, kinds):
+        if st >= total * 0.3 and kind != "outro" and st + 30 + 150 < total:
+            return st + 30
+    return None
+
+
+HERO_ORDER = ("surface", "graph", "equation", "derive", "plot", "diagram", "bars", "line", "donut", "compare", "kpis", "stat", "map")
 
 
 def hero_shot(scenes: List[dict], starts: List[int]) -> Optional[int]:
@@ -625,6 +656,14 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
             out["xlabel"], out["ylabel"] = words(sc.get("xlabel"), 3) or "x", words(sc.get("ylabel"), 3) or "y"
         else:
             out["kind"] = "photo"
+    elif kind == "surface":
+        surface = mathexpr.check_surface(sc.get("surface"))
+        if surface:
+            out["surface"] = surface
+            out["xlabel"], out["ylabel"] = words(sc.get("xlabel"), 3) or "x", words(sc.get("ylabel"), 3) or "y"
+            out["zlabel"] = words(sc.get("zlabel"), 3) or "z"
+        else:
+            out["kind"] = "photo"
     elif kind == "derive":
         steps = []
         for st in (sc.get("steps") or [])[:5]:
@@ -758,7 +797,8 @@ def on_screen(scene: dict) -> List[str]:
             [i["label"] for i in scene.get("items", [])] + [e["label"] for e in scene.get("events", [])] +
             graphics.labels(scene.get("graphic")) + [p["label"] for p in scene.get("parts", [])] +
             [st["note"] for st in scene.get("steps", [])] + diagram.texts(scene.get("diagram")) +
-            ([scene["xlabel"], scene["ylabel"]] if scene["kind"] in ("plot", "graph") else []))
+            ([scene["xlabel"], scene["ylabel"]] if scene["kind"] in ("plot", "graph", "surface") else []) +
+            ([scene["zlabel"]] if scene["kind"] == "surface" else []))
 
 
 def with_text(scene: dict, texts: List[str]) -> dict:
@@ -777,8 +817,10 @@ def with_text(scene: dict, texts: List[str]) -> dict:
         st["note"], rest = rest[0], rest[1:]
     if s.get("diagram"):
         rest = diagram.retext(s["diagram"], rest)
-    if s["kind"] in ("plot", "graph"):
+    if s["kind"] in ("plot", "graph", "surface"):
         s["xlabel"], s["ylabel"] = rest[:2]
+        if s["kind"] == "surface":
+            s["zlabel"] = rest[2]
     s["highlight"] = ""          # the marked word cannot be matched across languages
     s.pop("chapter", None)       # act titles belong to the long video
     return s
@@ -818,7 +860,8 @@ class VideoMaker:
         brief = brief or check_brief({}, style)
         shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines))
         prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots).replace(
-            "{outro_ask}", "the full report, with every source, is" if report else "every source is")
+            "{outro_ask}", "the full report, with every source, is" if report else "every source is").replace(
+            "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
         plan = self.llm.complete_json(prompt, max_tokens=12000)
         kicker = KICKERS[int(hashlib.md5(title.encode()).hexdigest(), 16) % len(KICKERS)]
@@ -859,6 +902,8 @@ class VideoMaker:
                 again = {}
             if score(again) > score(plan) and len((again or {}).get("scenes") or []) >= 5:
                 plan = again
+        if spoken_words(plan) < words_needed * 0.9:        # still short: the same shots, each explained more
+            plan = self.expand(plan, words_needed)
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:32]:
             if not isinstance(sc, dict):
@@ -890,19 +935,20 @@ class VideoMaker:
             raise LLMError("the video script came back too short")
         def texs(sc):
             return [p["tex"] for p in sc.get("parts", []) + sc.get("steps", []) +
-                    (sc.get("graph") or {}).get("curves", []) if p["tex"]]
+                    (sc.get("graph") or {}).get("curves", []) + [sc.get("surface") or {"tex": ""}] if p["tex"]]
         bad = typeset_errors([t for sc in scenes for t in texs(sc)])
         for sc in scenes:             # a formula KaTeX cannot typeset turns the shot into a plain one
             if any(t in bad for t in texs(sc)):
                 self.log(f"[video] formula skipped ({sc['kind']}): {' | '.join(texs(sc))[:100]}")
                 sc["kind"], sc["parts"], sc["steps"] = "photo", [], []
                 sc.pop("graph", None)
+                sc.pop("surface", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
         outro = strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed)
         if not 8 <= len(outro.split()) <= 60 or (not report and "report" in outro.lower()):
-            outro = (OUTRO if report else OUTRO_SOURCES).format(facts=len(facts))
+            outro = (OUTRO if report else OUTRO_SOURCES).format(facts=len(facts), channel=self.s.channel_name)
         scenes.append({"kind": "outro", "narration": outro, "kicker": "Full report below" if report else "Sources below",
-                       "card": "Documentary report" if report else "Checked facts",
+                       "card": "Documentary report" if report else "Checked facts", "channel": self.s.channel_name,
                        "headline": str(plan.get("thumb_text") or title)[:40],
                        "highlight": "report" if report else "sources",
                        "label": f"{len(facts)} verified facts · {len(sources)} sources", "number": "", "items": [],
@@ -914,7 +960,7 @@ class VideoMaker:
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
-        short.append({"scene": len(scenes) - 1, "narration": SHORT_OUTRO})
+        short.append({"scene": len(scenes) - 1, "narration": SHORT_OUTRO.format(channel=self.s.channel_name)})
         return {"title": str(plan.get("title", title))[:100], "thumb_text": str(plan.get("thumb_text", ""))[:40],
                 "thumb_highlight": str(plan.get("thumb_highlight", ""))[:20],
                 "description": str(plan.get("description", "")), "tags": [str(t) for t in plan.get("tags", [])][:12],
@@ -1088,8 +1134,11 @@ class VideoMaker:
                                       "to": starts[i] + LEAD + round(cz * FPS), "text": line})
         props = os.path.join(job, "long.json")
         with open(props, "w", encoding="utf-8") as f:
+            sub = subscribe_at(starts, [s["kind"] for s in scenes], total)
             json.dump({"scenes": long_scenes, "captions": long_captions, "channel": self.s.channel_name, "theme": theme,
-                       "thumbText": plan["thumb_text"], "thumbHighlight": plan["thumb_highlight"]}, f, ensure_ascii=False)
+                       "thumbText": plan["thumb_text"], "thumbHighlight": plan["thumb_highlight"],
+                       "subscribe": {"at": sub, "name": self.s.channel_name} if sub is not None else None},
+                      f, ensure_ascii=False)
         files = {}
         for lang in texts:
             cues = []
@@ -1196,6 +1245,30 @@ class VideoMaker:
         reply = gemini_json(self.s, prompt, effort="medium", temperature=0.8)
         return reply if reply is not None else self.llm.complete_json(prompt, max_tokens=8000, temperature=0.8)
 
+    def expand(self, plan: dict, words_needed: int) -> dict:
+        """Lengthen a short script line by line (same shots, same meaning, more explanation). A line only changes
+        if the new one is longer and not overlong; any failure keeps the script as it was."""
+        rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
+        lines = [str(sc.get("narration", "")) for sc in rows]
+        if not lines:
+            return plan
+        have = sum(len(t.split()) for t in lines)
+        try:
+            reply = self.llm.complete_json(EXPAND.format(total=words_needed, have=have, n=len(lines),
+                                                         lines=json.dumps(lines, ensure_ascii=False)), max_tokens=8000)
+        except LLMError:
+            return plan
+        new = reply.get("lines") if isinstance(reply, dict) else None
+        if not isinstance(new, list) or len(new) != len(lines):
+            return plan
+        for k, (sc, line) in enumerate(zip(rows, new)):
+            line = str(line or "").strip()
+            if len(lines[k].split()) < len(line.split()) <= (28 if k == 0 else 60):
+                sc["narration"] = line
+        after = sum(len(str(sc.get("narration", "")).split()) for sc in rows)
+        self.log(f"[video] narration lengthened from {have} to {after} words")
+        return plan
+
     def draw_diagrams(self, scenes: List[dict], brief: dict, title: str) -> None:
         """A bespoke animated diagram for every shot that explains an idea (in news, the shots without a photo or
         a real graphic). Formulas inside are checked with KaTeX."""
@@ -1249,10 +1322,10 @@ class VideoMaker:
                 break
             looks = self.stills([(i, {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}],
                                       "captions": [], "theme": theme}, long_scenes[i]["frames"] - 20) for i in todo], job)
-            for i in todo:
+            def review(i: int) -> None:       # one shot's critique and correction; shots run side by side
                 if i not in looks:
                     settled.add(i)
-                    continue
+                    return
                 with open(looks[i], "rb") as f:
                     image = f.read()
                 ask = diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST)
@@ -1266,7 +1339,7 @@ class VideoMaker:
                     problems[i] = str((reply or {}).get("problem") or "")[:110] if isinstance(reply, dict) else ""
                 if not isinstance(reply, dict) or score >= 9 or rnd == rounds:
                     settled.add(i)
-                    continue
+                    return
                 why: List[str] = []
                 d = diagram.check({"elements": reply.get("elements") or []}, scenes[i], _verified, tex_complete, why)
                 if not d and reply.get("elements"):         # one more try, told exactly what the checks refused
@@ -1279,6 +1352,9 @@ class VideoMaker:
                     long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
                 else:
                     settled.add(i)
+
+            with ThreadPoolExecutor(max_workers=REVIEWERS) as pool:
+                list(pool.map(review, todo))
         kept = []
         for i in idx:
             score, d = best.get(i, (0.0, None))

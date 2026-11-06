@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1165,6 +1166,8 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
 
     class FakeLLM:
         def complete_json(self, prompt, **kw):
+            if prompt.startswith("These are the narration lines"):      # the lengthening pass: lines kept as they are
+                return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
             assert "Lemmino" in prompt and "clue by clue" in prompt and "Start on the empty harbour." in prompt
             assert "MATHS INTUITION" in prompt and r"\frac{1}{n}" in prompt and "28 to 40 scenes" in prompt
             assert "{shape}" not in prompt and "{shots}" not in prompt and "{{" not in prompt
@@ -1485,3 +1488,74 @@ def test_thumbnail_hero_is_cut_out_by_its_transparency(tmp_path):
     scenes = [{"kind": "photo", "frames": 90, "diagram": {"elements": []}}, {"kind": "bars", "frames": 90},
               {"kind": "photo", "frames": 90, "graphic": {"type": "hub"}}]
     assert hero_shot(scenes, [0, 90, 180]) == 90 - 15 - 12            # a kept diagram outranks a chart
+
+
+def test_each_video_draws_its_own_arrival_curve_and_stagger():
+    from blogwriter import design
+    picks = {design.check_fx(None, seed)["motion"]["ease"] for seed in "abcdefghijklmnop"}
+    assert len(picks) >= 4 and picks <= set(design.EASES)                  # varies from video to video
+    m = design.check_fx({"motion": {"ease": "outElastic", "frames": 3, "bounce": 7, "from": "sideways"}}, "x")["motion"]
+    assert m["ease"] == "outElastic" and m["frames"] >= 18 and m["bounce"] == 1 and m["from"] in design.FROMS
+
+
+def test_surface_shots_are_checked_and_carry_their_labels():
+    from blogwriter.mathexpr import check_surface
+    from blogwriter.video import check_scene, on_screen
+    bowl = check_surface({"fn": "x^2 + 3*y^2", "tex": "J = w^2 + 3b^2", "mark": "descent", "start": [2.5, -9]})
+    assert bowl["start"] == [2.5, -3.0] and bowl["points"] == []
+    assert check_surface({"fn": "x + a"}) is None and check_surface({"fn": "4"}) is None    # unknown symbol, flat
+    plane = check_surface({"fn": "0.5*x + 0.3*y", "mark": "residuals", "points": [[1, 1, 2], [9, 9, 9], "bad"]})
+    assert plane["mark"] == "" and plane["points"] == []                    # too few points to show residuals
+    sc = check_scene({"kind": "surface", "surface": {"fn": "x^2 - y^2", "mark": "minimum"}, "xlabel": "w",
+                      "ylabel": "b", "zlabel": "cost"}, "", "", {})
+    assert sc["kind"] == "surface" and on_screen(sc)[-3:] == ["w", "b", "cost"]
+    assert check_scene({"kind": "surface", "surface": {"fn": "y +"}}, "", "", {})["kind"] == "photo"
+
+
+def test_diagram_curves_reshape_and_dots_ride_curves():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    sc = {"narration": "the ball rolls down until the slope is flat", "headline": ""}
+    raw = {"elements": [
+        {"type": "curve", "id": "bowl", "points": [[8, 14], [30, 70], [50, 82], [70, 70], [92, 14]],
+         "move": {"on": "flat", "points": [[8, 50], [50, 50], [92, 50]]}},
+        {"type": "dot", "x": 10, "y": 20, "r": 3, "on": "ball", "move": {"on": "rolls", "along": "bowl", "x": 50, "y": 82}},
+        {"type": "dot", "x": 90, "y": 20, "r": 2, "move": {"on": "rolls", "along": "missing"}},
+        {"type": "dot", "x": 60, "y": 20, "r": 2, "move": {"on": "rolls", "along": 0}}]}
+    d = diagram.check(raw, sc, _verified, tex_complete)
+    els = d["elements"]
+    assert els[0]["move"]["points"] == [[8.0, 50.0], [50.0, 50.0], [92.0, 50.0]]
+    assert els[1]["move"]["along"] == 0 and "move" not in els[2] and els[3]["move"]["along"] == 0
+    t = diagram.timed(d, [(0.1 * k, 0.1 * k + 0.08, w) for k, w in enumerate(sc["narration"].split())], 300, 30, 6)
+    assert t["elements"][1]["move"]["along"] == 0 and t["elements"][1]["move"]["at"] > t["elements"][1]["at"]
+
+
+def test_subscribe_card_lands_on_a_settled_shot_about_a_third_in():
+    from blogwriter.video import subscribe_at
+    starts = [0, 400, 900, 1500, 2100, 2700]
+    kinds = ["hook", "photo", "graph", "photo", "equation", "outro"]
+    assert subscribe_at(starts, kinds, 3000) == 900 + 30
+    assert subscribe_at([0, 300], ["hook", "outro"], 600) is None                # too short for one
+
+
+def test_short_scripts_are_lengthened_line_by_line_and_the_outro_names_the_channel():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            if prompt.startswith("These are the narration lines"):
+                lines = json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])
+                return {"lines": [line + " and here is why that matters to you" for line in lines]}
+            return {"title": "T", "thumb_text": "x", "description": "D", "tags": [], "outro": "",
+                    "scenes": [{"kind": "hook", "narration": "Why does light win?"},
+                               {"kind": "photo", "narration": "Light is fast."},
+                               {"kind": "photo", "narration": "Copper is slow."},
+                               {"kind": "photo", "narration": "So data goes optical."},
+                               {"kind": "photo", "narration": "That is the answer."}], "short": []}
+
+    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", [], [])
+    narr = [s["narration"] for s in plan["scenes"]]
+    assert narr[1] == "Light is fast. and here is why that matters to you"
+    assert "subscribe to Adyora" in narr[-1] and plan["scenes"][-1]["channel"] == "Adyora"
+    assert plan["short"][-1]["narration"].endswith("on Adyora.")

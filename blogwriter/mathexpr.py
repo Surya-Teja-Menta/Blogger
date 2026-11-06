@@ -11,7 +11,8 @@ CONSTS = {"pi": math.pi, "e": math.e}
 TOKEN = re.compile(r"\d*\.?\d+(?:e[+-]?\d+)?|[a-z]+|[-+*/^()]")
 
 
-def compile_expr(src: str) -> Callable[[float, float], float]:
+def compile_expr(src: str, second: str = "a") -> Callable[[float, float], float]:
+    """f(x, second): a curve's parameter "a", or "y" for a surface over x and y."""
     text = str(src).lower()
     toks = TOKEN.findall(text)
     if "".join(toks) != re.sub(r"\s+", "", text) or not toks or len(toks) > 80:
@@ -66,7 +67,7 @@ def compile_expr(src: str) -> Callable[[float, float], float]:
             return lambda x, a: v
         if t == "x":
             return lambda x, a: x
-        if t == "a":
+        if t == second:
             return lambda x, a: a
         if t in CONSTS:
             v = CONSTS[t]
@@ -140,3 +141,60 @@ def check_graph(raw) -> Optional[dict]:
     if uses_a:
         out["param"] = {"from": sweep[0] if sweep else 1.0, "to": sweep[1] if sweep else 1.0}
     return out
+
+
+SURFACE_MARKS = ("descent", "minimum", "residuals", "")
+
+
+def check_surface(raw) -> Optional[dict]:
+    """A 3D surface shot the video can draw (z = f(x, y) over a box), or None: the function must parse, be finite
+    almost everywhere and not be flat. Data points (for residuals) are kept inside the box."""
+    if not isinstance(raw, dict):
+        return None
+    fn = str(raw.get("fn", "")).strip()[:80]
+    try:
+        f = compile_expr(fn, second="y")
+    except ValueError:
+        return None
+
+    def span(key):
+        try:
+            lo, hi = sorted(float(v) for v in (raw.get(key) or [-3, 3])[:2])
+        except (TypeError, ValueError):
+            lo, hi = -3.0, 3.0
+        return (lo, hi) if 0 < hi - lo <= 1e4 else (-3.0, 3.0)
+
+    (x0, x1), (y0, y1) = span("x"), span("y")
+    zs = []
+    for i in range(21):
+        for j in range(21):
+            try:
+                z = f(x0 + (x1 - x0) * i / 20, y0 + (y1 - y0) * j / 20)
+            except (ValueError, ZeroDivisionError, OverflowError, TypeError):
+                continue
+            if isinstance(z, float) and math.isfinite(z) and abs(z) < 1e6:
+                zs.append(z)
+    if len(zs) < 0.9 * 441 or max(zs) - min(zs) < 1e-6:
+        return None
+    mark = raw.get("mark") if raw.get("mark") in SURFACE_MARKS else ""
+
+    def inside(v, lo, hi):
+        return min(hi, max(lo, float(v)))
+
+    points = []
+    for pt in (raw.get("points") or [])[:30]:
+        try:
+            x, y, z = (float(v) for v in pt[:3])
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(v) for v in (x, y, z)):
+            points.append([round(inside(x, x0, x1), 4), round(inside(y, y0, y1), 4), round(z, 4)])
+    if mark == "residuals" and len(points) < 4:
+        mark = ""
+    try:
+        sx, sy = (float(v) for v in (raw.get("start") or [])[:2])
+        start = [inside(sx, x0, x1), inside(sy, y0, y1)]
+    except (TypeError, ValueError):
+        start = [x0 + 0.85 * (x1 - x0), y0 + 0.2 * (y1 - y0)]       # a high corner, for the ball to roll from
+    return {"fn": fn, "tex": str(raw.get("tex", "")).strip()[:60], "x": [x0, x1], "y": [y0, y1], "mark": mark,
+            "start": [round(v, 4) for v in start], "points": points if mark == "residuals" else []}

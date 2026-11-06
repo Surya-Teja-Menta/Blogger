@@ -5,6 +5,7 @@ import React from "react";
 import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {icons} from "lucide";
 import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease} from "./fx";
+import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 
 const pascal = (name) => String(name || "").replace(/(^|-)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
@@ -27,7 +28,7 @@ export const Icon = ({name, size = 120, color, draw = 1, width = 1.5}) => {
 const Disc = ({icon, at, size, color, label, labelSize, below = true, above = false}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-  const p = spring({frame: frame - at, fps, config: {damping: 12, mass: 0.8}});
+  const p = pop(frame - at);
   const t = frame - at;
   const ripple = ((t % 70) + 70) % 70 / 70;
   return (
@@ -264,7 +265,7 @@ const Kinetic = ({s, i, vertical}) => {
                        maxWidth: vertical ? 940 : 1320}}>
             {words.map((w, k) => {
               const at = (g.words && g.words[k]) ?? 4 + k * 4;
-              const p = spring({frame: frame - at, fps, config: {damping: 11, mass: 0.7}});
+              const p = pop(frame - at);
               const on = mark.includes(w.toLowerCase().replace(/[^\w]/g, ""));
               const box = ease((frame - at - 4) / 10);
               return (
@@ -294,7 +295,7 @@ const Spotlight = ({s, i, vertical}) => {
   const cx = vertical ? width / 2 : width * 0.32, cy = vertical ? 1000 : height * 0.6;
   const R = vertical ? 260 : 230;
   const at = g.center.at;
-  const p = spring({frame: frame - at, fps, config: {damping: 14}});
+  const p = pop(frame - at);
   return (
     <Frame s={s} i={i} vertical={vertical}>
       <div style={{position: "absolute", left: cx - R * 1.9, top: cy - R * 1.9, width: R * 3.8, height: R * 3.8, borderRadius: "50%",
@@ -318,7 +319,7 @@ const Spotlight = ({s, i, vertical}) => {
                      transform: `translateX(${(1 - ease((frame - at - 6) / 16)) * 60}px)`}}>{g.center.label}</div>
         <div style={{display: "flex", flexWrap: "wrap", gap: 18, justifyContent: vertical ? "center" : "flex-start"}}>
           {(g.nodes || []).map((nd, k) => {
-            const q = spring({frame: frame - nd.at, fps, config: {damping: 13}});
+            const q = pop(frame - nd.at);
             const col = SERIES[(k + 1) % SERIES.length];
             return (
               <div key={k} style={{display: "flex", alignItems: "center", gap: 14, padding: "14px 26px 14px 18px", borderRadius: 60,
@@ -340,10 +341,10 @@ const Versus = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
   const [a, b] = s.graphic.nodes;
-  const pa = spring({frame: frame - a.at, fps, config: {damping: 16}});
-  const pb = spring({frame: frame - b.at, fps, config: {damping: 16}});
+  const pa = pop(frame - a.at);
+  const pb = pop(frame - b.at);
   const vsAt = Math.max(a.at, b.at) + 4;
-  const pv = spring({frame: frame - vsAt, fps, config: {damping: 9}});
+  const pv = pop(frame - vsAt);
   const side = (nd, k, p) => (
     <div style={{position: "absolute", display: "flex", justifyContent: "center", alignItems: "center",
                  ...(vertical ? {left: 0, right: 0, top: k ? 1300 : 560, height: 420} : {top: 300, bottom: 60, left: k ? width / 2 : 0, width: width / 2}),
@@ -388,7 +389,7 @@ const Stack = ({s, i, vertical}) => {
   return (
     <Frame s={s} i={i} vertical={vertical}>
       {nodes.map((nd, k) => {
-        const p = spring({frame: frame - nd.at, fps, config: {damping: 13, mass: 0.9}});
+        const p = pop(frame - nd.at);
         const col = SERIES[k % SERIES.length];
         const y = base - (k + 1) * (h + 18);
         const indent = k * (vertical ? 30 : 50);

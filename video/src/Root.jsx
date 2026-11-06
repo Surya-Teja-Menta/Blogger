@@ -6,7 +6,7 @@ import {TRANSITION} from "./theme";
 
 // Props come from blogwriter/video.py (--props=job.json). These defaults only make the studio open.
 const demo = {
-  channel: "Researched",
+  channel: "Adyora",
   scenes: [
     {frames: 120, kind: "hook", kicker: "Breaking down", headline: "A $115 billion bet on light", highlight: "light",
      number: "$115B", images: [], source: "reuters.com"},

@@ -8,7 +8,9 @@
   "dependencies": {
     "@remotion/cli": "4.0.535",
     "@remotion/google-fonts": "4.0.535",
+    "@remotion/paths": "4.0.535",
     "@remotion/transitions": "4.0.535",
+    "animejs": "4.5.0",
     "d3-geo": "3.1.1",
     "katex": "0.16.11",
     "lucide": "0.468.0",

@@ -37,6 +37,10 @@ narration at which it appears, copied exactly from the narration, or "" for the 
 - "tex": x, y, "tex" (KaTeX, short), "size": s, m or l
 MOTION (optional on any element, each with its own "on" word, which must come after the element's own "on" word):
 - "move": {{"on": word, then the new x, y (or x1, y1, x2, y2 for a line or arrow; h for a bar; r for a circle)}}
+  A "curve" or "dots" can RESHAPE: give the new "points" (same count) and the shape morphs into them (a straight
+  line bending into a wiggly overfit curve, scattered points collapsing onto a line, a wide bell narrowing).
+  A "dot" can TRAVEL along a curve: give "along": the curve's "id" (give that curve an "id"), plus the x, y it
+  stops at; it rides the curve exactly (a ball rolling down a cost curve, a point sliding along a path).
 - "glow": {{"on": word}} (it pulses to draw the eye)      - "hide": {{"on": word}} (it fades away)
 
 RULES: labels use words from the narration, placed right next to what they name; never write a number that is not
@@ -67,6 +71,13 @@ Two examples of the standard expected (do not copy them; draw what YOUR sentence
  {{"type": "label", "color": "cool", "x": 62, "y": 44, "text": "twice as far", "size": "m", "on": "twice"}},
  {{"type": "box", "color": "hot", "x": 62, "y": 52, "w": 9.6, "h": 24, "on": "four", "anim": "grow", "glow": {{"on": "much"}}}},
  {{"type": "label", "color": "hot", "x": 67, "y": 88, "text": "four times as much", "size": "m", "on": "four"}}]
+
+"Gradient descent rolls downhill, step by step, until the slope is flat" ->
+[{{"type": "curve", "id": "bowl", "color": "muted", "anim": "draw", "points": [[8,14],[20,46],[32,68],[44,80],[50,82],[56,80],[68,68],[80,46],[92,14]]}},
+ {{"type": "dot", "color": "hot", "x": 14, "y": 31, "r": 3.4, "on": "rolls", "move": {{"on": "step", "along": "bowl", "x": 50, "y": 82}}}},
+ {{"type": "arrow", "color": "accent", "x1": 20, "y1": 20, "x2": 32, "y2": 50, "bend": -0.2, "on": "downhill", "text": "downhill"}},
+ {{"type": "line", "color": "accent", "x1": 38, "y1": 82, "x2": 62, "y2": 82, "on": "flat", "glow": {{"on": "flat"}}}},
+ {{"type": "label", "color": "hot", "x": 50, "y": 93, "text": "the slope is flat", "size": "m", "on": "flat"}}]
 
 Shots (index | headline | narration):
 {shots}
@@ -218,10 +229,15 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
     narration = str(scene.get("narration", ""))
     allowed = f"{narration} {scene.get('headline', '')}"
     out = []
-    for e in raw["elements"][:MAX_ELEMENTS]:
+    raw_at: Dict[int, int] = {}            # the model's element positions -> ours (some are dropped)
+    ids: Dict[str, int] = {}
+    for k_raw, e in enumerate(raw["elements"][:MAX_ELEMENTS]):
         if not isinstance(e, dict) or e.get("type") not in TYPES:
             continue
         t = e["type"]
+        raw_at[k_raw] = len(out)
+        if str(e.get("id") or "").strip():
+            ids[str(e["id"]).strip()[:24]] = len(out)
         el = {"type": t, "color": e.get("color") if e.get("color") in COLOURS else ("accent" if t != "label" else "text"),
               "on": _on(e.get("on"), narration), "anim": e.get("anim") if e.get("anim") in ANIMS else ""}
         xy = lambda k, d=50: _num(e.get(k), 3, 97, d)          # noqa: E731
@@ -283,10 +299,26 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
                         mv["h"] = _num(m["h"], 1, 85, 30)
                     if "r" in m:
                         mv["r"] = _num(m["r"], 0.8, 40, 5)
+                    if t in ("curve", "dots") and isinstance(m.get("points"), list):
+                        pts = [[_num(p[0], 3, 97, 50), _num(p[1], 3, 97, 50)] for p in m["points"]
+                               if isinstance(p, (list, tuple)) and len(p) == 2][:40]
+                        if len(pts) >= (3 if t == "curve" else 2):
+                            mv["points"] = pts
+                    if t == "dot" and m.get("along") not in (None, ""):
+                        mv["along"] = m["along"]          # a curve's id or position; resolved below
                     if len(mv) == 1:
                         continue
                 el[motion] = mv
         out.append(el)
+    for el in out:                        # a dot travels along a curve that is really there
+        mv = el.get("move")
+        if mv and "along" in mv:
+            ref = mv.pop("along")
+            k = ids.get(str(ref).strip()) if not isinstance(ref, int) else raw_at.get(ref)
+            if k is not None and out[k]["type"] == "curve":
+                mv["along"] = k
+            elif len(mv) == 1:
+                el.pop("move")
     if len(out) < 3:
         why.append(f"only {len(out)} usable element(s); a diagram needs at least 3")
         return None

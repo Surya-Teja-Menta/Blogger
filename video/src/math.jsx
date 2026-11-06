@@ -6,6 +6,7 @@ import {AbsoluteFill, continueRender, delayRender, spring, useCurrentFrame, useV
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import {Backdrop, Camera, Title, clamp, ease} from "./fx";
+import {delay, pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 import {compile} from "./expr";
 
@@ -50,8 +51,10 @@ export const EquationScene = ({s, i, vertical}) => {
   const {fps} = useVideoConfig();
   const parts = s.parts || [];
   // size from the characters that will show: rac{1}{n} reads as about three, not eleven
-  const shown = parts.reduce((n, p) => n + p.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length + 1.2, 0);
-  const size = Math.min(vertical ? 96 : 140, (vertical ? 1500 : 2600) / Math.max(6, shown));
+  // (a labelled piece also takes margin for its box); sized to stay on one line, where labels cannot collide
+  const shown = parts.reduce((n, p) => n + p.tex.replace(/\\[a-zA-Z]+/g, "X").replace(/[{}_^\s]/g, "").length +
+                             (p.label ? 1.8 : 1.2), 0);
+  const size = Math.min(vertical ? 96 : 140, (vertical ? 1400 : 2250) / Math.max(6, shown));
   let labelled = 0;
   return (
     <AbsoluteFill>
@@ -64,14 +67,14 @@ export const EquationScene = ({s, i, vertical}) => {
                        maxWidth: vertical ? 980 : 1700, rowGap: 190, fontSize: size}}>
             {parts.map((p, k) => {
               const at = p.at ?? 6 + k * 6;
-              const pop = spring({frame: frame - at, fps, config: {damping: 12, mass: 0.7}});
+              const pp = pop(frame - at);
               const col = p.label ? SERIES[labelled++ % SERIES.length] : C.text;
               const lit = p.label ? ease((frame - at - 4) / 12) : 0;
               const above = p.label && labelled % 2 === 0;
               return (
-                <div key={k} style={{position: "relative", margin: `0 ${size * (p.label ? 0.3 : 0.12)}px`, opacity: clamp(pop * 2),
-                                     transform: `translateY(${(1 - pop) * 60}px) scale(${0.7 + 0.3 * pop})`,
-                                     filter: `blur(${(1 - clamp(pop * 1.4)) * 10}px)`}}>
+                <div key={k} style={{position: "relative", margin: `0 ${size * (p.label ? 0.3 : 0.12)}px`, opacity: clamp(pp * 2),
+                                     transform: `translateY(${(1 - pp) * 60}px) scale(${0.7 + 0.3 * pp})`,
+                                     filter: `blur(${(1 - clamp(pp * 1.4)) * 10}px)`}}>
                   {p.label && <div style={{position: "absolute", inset: "-8% -10%", borderRadius: 18, background: alpha(col, 0.14 * lit),
                                            border: `3px solid ${alpha(col, 0.7 * lit)}`, boxShadow: `0 0 40px ${alpha(col, 0.3 * lit)}`}}/>}
                   <div style={{position: "relative"}}><Tex tex={p.tex} color={lit > 0.5 ? col : C.text}/></div>
@@ -192,7 +195,7 @@ export const PlotScene = ({s, i, vertical}) => {
                   stroke={C.accent} strokeWidth={7} strokeLinecap="round" style={{filter: `drop-shadow(0 0 12px ${alpha(C.accent, 0.7)})`}}/>
           )}
           {pts.map(([x, y], k) => {
-            const p = spring({frame: frame - 6 - k * 2.2, fps, config: {damping: 11}});
+            const p = pop(frame - 6 - delay(k, pts.length, "pts"));
             const ly = lineAt(x);
             const rd = resid ? ease((frame - (mode === "residuals" ? 46 : 34) - k * 3) / 10) : 0;
             const side = Math.abs(y - ly) * ky;
@@ -418,7 +421,7 @@ export const DeriveScene = ({s, i, vertical}) => {
   const size = Math.min(vertical ? 84 : 112, (vertical ? 1500 : 2700) / longest);
   const gap = size * 2.4;
   // the board scrolls one line per step, sprung, so the lines glide rather than jump
-  const pos = steps.reduce((n, st, k) => n + (k ? spring({frame: frame - (st.at ?? 8 + k * 30), fps, config: {damping: 18}}) : 0), 0);
+  const pos = steps.reduce((n, st, k) => n + (k ? pop(frame - (st.at ?? 8 + k * 30)) : 0), 0);
   const cy = vertical ? height * 0.55 : height * 0.6;
   return (
     <AbsoluteFill>

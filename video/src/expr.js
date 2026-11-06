@@ -4,7 +4,8 @@
 const FUNCS = {sin: Math.sin, cos: Math.cos, tan: Math.tan, exp: Math.exp, log: Math.log, sqrt: Math.sqrt, abs: Math.abs};
 const CONSTS = {pi: Math.PI, e: Math.E};
 
-export function compile(src) {
+// second: the token for the second argument ("a", a curve's parameter, or "y" for a surface over x and y)
+export function compile(src, second = "a") {
   const toks = String(src).toLowerCase().match(/\d*\.?\d+(?:e[+-]?\d+)?|[a-z]+|[-+*/^()]/g) || [];
   if (toks.join("") !== String(src).toLowerCase().replace(/\s+/g, "")) throw new Error(`bad expression ${src}`);
   let i = 0;
@@ -52,7 +53,7 @@ export function compile(src) {
       return () => v;
     }
     if (t === "x") return (x) => x;
-    if (t === "a") return (x, a) => a;
+    if (t === second) return (x, a) => a;
     if (t in CONSTS) return () => CONSTS[t];
     if (t in FUNCS) {
       take("(");

@@ -13,6 +13,7 @@ import {SCENES} from "./scenes";
 import {GRAPHICS} from "./graphics";
 import {Texture, genCut} from "./gen";
 import {DiagramScene} from "./diagram";
+import {SUBSCRIBE_FRAMES, Subscribe} from "./subscribe";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
@@ -36,7 +37,7 @@ const Badge = ({channel, vertical}) => (
 );
 
 // karaoke captions for Shorts: the line pops in and the word being spoken lights up
-const Caption = ({captions, vertical}) => {
+const Caption = ({captions, vertical, aside = 0}) => {
   const frame = useCurrentFrame();
   const c = captions.find((x) => frame >= x.from && frame < x.to);
   if (!c) return null;
@@ -46,7 +47,7 @@ const Caption = ({captions, vertical}) => {
   const pop = clamp((frame - c.from) / 5);
   let acc = 0;
   return (
-    <div style={{position: "absolute", left: 50, right: 50, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
+    <div style={{position: "absolute", left: 50, right: 50 + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
                  textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
       <span style={{display: "inline-block", padding: "14px 26px", borderRadius: 24, background: alpha(C.light ? "#ffffff" : "#000000", 0.55),
                     backdropFilter: "blur(10px)", fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 62 : 40,
@@ -63,7 +64,7 @@ const Caption = ({captions, vertical}) => {
   );
 };
 
-export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false}) => {
+export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null}) => {
   useTheme(theme);
   C.clean = clean;              // a frame for the thumbnail: the visual alone
   const frame = useCurrentFrame();
@@ -108,7 +109,10 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       <Finish/>
       {!clean && <Texture/>}
       {!clean && <Badge channel={channel} vertical={vertical}/>}
-      <Caption captions={captions} vertical={vertical}/>
+      {/* while the subscribe card is up, the captions step aside so the two never overlap */}
+      <Caption captions={captions} vertical={vertical} aside={subscribe && !clean && !vertical
+        ? 560 * clamp(Math.min((frame - subscribe.at) / 12, (subscribe.at + SUBSCRIBE_FRAMES - frame) / 12)) : 0}/>
+      {subscribe && <Subscribe at={subscribe.at} name={subscribe.name || channel} vertical={vertical}/>}
       <div style={{position: "absolute", left: 0, top: 0, height: clean ? 0 : 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
                    width: `${(100 * frame) / Math.max(1, durationInFrames - 1)}%`, boxShadow: `0 0 12px ${C.accent}`}}/>
     </AbsoluteFill>

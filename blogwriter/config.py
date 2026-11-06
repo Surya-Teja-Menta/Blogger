@@ -81,7 +81,7 @@ class Settings:
     output_dir: str = "output"
     # languages of the video narration: English drives the long video, the others become extra audio tracks
     video_langs: List[str] = field(default_factory=lambda: ["en"])   # add hi,te via VIDEO_LANGS
-    channel_name: str = "Researched"     # shown as the badge in every video
+    channel_name: str = "Adyora"         # the YouTube channel: named in the subscribe card, the outro and its line
     pixabay_key: str = ""                # optional: more free stock footage for the videos
     # step 5: results are emailed over SMTP (587 = STARTTLS, 465 = SSL)
     smtp_host: str = ""
@@ -148,7 +148,7 @@ class Settings:
             providers=_split(e("LLM_PROVIDERS", "")) or list(DEFAULT_PROVIDERS),
             output_dir=e("OUTPUT_DIR", "output"),
             video_langs=_split(e("VIDEO_LANGS", "")) or ["en"],
-            channel_name=e("CHANNEL_NAME", "") or "Researched",
+            channel_name=e("CHANNEL_NAME", "") or "Adyora",
             pixabay_key=e("PIXABAY_API_KEY", ""),
             smtp_host=e("SMTP_HOST", ""),
             smtp_port=int(e("SMTP_PORT", "587") or 587),

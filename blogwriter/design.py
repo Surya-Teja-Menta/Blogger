@@ -64,6 +64,11 @@ Decide:
   "text": {{"enter": rise, blur, scale, slide, drop, mask, flip, spread or tilt}} (how words appear);
   "transitions": 2 to 4 of {{"shape": circle, diamond, split, bars, corner, diagonal or fade, "angle": -60 to 60,
   "blur": 0-30, "scale": 0-0.4, "spin": -20 to 20}};
+  "motion": {{"ease": how every piece arrives, one of outExpo (fast then still), outQuart, outQuint, outCirc,
+  outSine (soft), inOutSine (calm, documentary), inOutQuart, outBack (overshoots and settles), outElastic (springy
+  wobble), spring (physical bounce) or snap (a crisp designer curve); "bounce": 0-1 (overshoot for outBack,
+  outElastic and spring); "frames": 8-30 (how long an arrival takes at 30 fps); "from": first, last, center, edges or
+  random (the order a group of dots, points or icons appears); "gap": 0.5-6 (frames between them)}};
   "camera": 0-2 (how much the camera drifts), "cards": {{"radius": 0-48, "fill": glass, solid or outline,
   "shadow": 0-1.5}}, "texture": {{"grain": 0-0.2, "vignette": 0-0.6}}, "bigWord": true/false (a giant outlined
   word drifting behind each shot).
@@ -115,6 +120,10 @@ DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
 ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt")
 CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
+# how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
+EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart", "outBack", "outElastic",
+         "spring", "snap")
+FROMS = ("first", "last", "center", "edges", "random")
 
 
 def check_fx(raw, seed: str, light: bool = False) -> dict:
@@ -161,7 +170,13 @@ def check_fx(raw, seed: str, light: bool = False) -> dict:
     text = raw.get("text") if isinstance(raw.get("text"), dict) else {}
     cards = raw.get("cards") if isinstance(raw.get("cards"), dict) else {}
     tex = raw.get("texture") if isinstance(raw.get("texture"), dict) else {}
-    return {"seed": seed[:24], "layers": layers,
+    mo = raw.get("motion") if isinstance(raw.get("motion"), dict) else {}
+    curve = pick(mo.get("ease"), EASES)
+    springy = curve in ("outElastic", "spring")            # a wobble needs time to settle
+    motion = {"ease": curve, "bounce": num(mo.get("bounce"), 0, 1, rnd.uniform(0.15, 0.7)),
+              "frames": num(mo.get("frames"), 18 if springy else 8, 30, rnd.uniform(18 if springy else 10, 26)),
+              "from": pick(mo.get("from"), FROMS), "gap": num(mo.get("gap"), 0.5, 6, rnd.uniform(0.8, 3.5))}
+    return {"seed": seed[:24], "layers": layers, "motion": motion,
             "gradient": {"x": num(g.get("x"), 0, 100, rnd.uniform(10, 90)), "y": num(g.get("y"), 0, 100, rnd.uniform(0, 70)),
                          "color": pick(g.get("color"), FX_COLOURS[:4]), "strength": num(g.get("strength"), 0, 0.4, rnd.uniform(0.06, 0.25))},
             "text": {"enter": pick(text.get("enter"), ENTERS)}, "transitions": cuts,
@@ -266,7 +281,8 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
     log(f"[design] motion: {layers}; "
-        f"words {fx['text']['enter']}; cuts {'/'.join(c['shape'] for c in fx['transitions'])}; cards {fx['cards']['fill']}")
+        f"words {fx['text']['enter']}; arrivals {fx['motion']['ease']} {fx['motion']['frames']:g}f from "
+        f"{fx['motion']['from']}; cuts {'/'.join(c['shape'] for c in fx['transitions'])}; cards {fx['cards']['fill']}")
     log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, {d['title']}/{d['kicker']}, "
         f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
     return d

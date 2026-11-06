@@ -2,6 +2,7 @@
 // the act sting, the transitions and the film finish. Colours and fonts come from the theme (theme.js).
 import React from "react";
 import {AbsoluteFill, Img, OffthreadVideo, interpolate, random, spring, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
+import {pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
 
@@ -11,7 +12,7 @@ export const ease = (t) => 1 - Math.pow(1 - clamp(t), 3);
 export function useEnter(delay = 0, damping = 18) {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
-  return spring({frame: frame - delay, fps, config: {damping, mass: 0.7}});
+  return pop(frame - delay);              // the video's own arrival curve (the design picks it)
 }
 
 export function countUp(text, p) {
@@ -38,7 +39,7 @@ export const Words = ({text = "", highlight = "", size = 110, delay = 0, color, 
                  fontWeight: weight || (display ? C.weight : 700), letterSpacing: display && C.upper ? 1 : -0.5,
                  textTransform: display && C.upper ? "uppercase" : "none", perspective: 800}}>
       {words.map((w, i) => {
-        const p = spring({frame: frame - delay - i * (C.stagger ?? 2.5), fps, config: {damping: C.damping ?? 15, mass: 0.6}});
+        const p = pop(frame - delay - i * (C.stagger ?? 2.5));
         const marked = marks.has(w.toLowerCase().replace(/[^\p{L}\p{N}$%.]/gu, ""));
         const sweep = clamp((frame - (markAt ?? delay + words.length * 2.5 + 4)) / 8);
         return (
