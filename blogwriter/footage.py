@@ -50,7 +50,7 @@ def post_json(url: str, key: str, body: dict, timeout: int = 90) -> dict:
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     try:
         r = requests.post(url, headers=headers, json=body, timeout=timeout)
-        return r.json() if r.ok else {"error": r.text[:200]}
+        return r.json() if r.ok else {"error": f"{r.status_code} {r.text[:1500]}"}
     except requests.exceptions.Timeout:          # a slow answer is a missing answer, never a crash
         return {"error": "timeout"}
     except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
@@ -63,37 +63,79 @@ def post_json(url: str, key: str, body: dict, timeout: int = 90) -> dict:
             return {"error": (r.stdout or r.stderr)[:200]}
 
 
+GROQ = "https://api.groq.com/openai/v1/chat/completions"
+# vision-capable models, strongest first. Each Gemini model has its own free daily quota, so spreading the work over
+# several multiplies what a day allows; Groq's vision model (18 keys) is the last resort. Override with env vars.
+DIAGRAM_MODELS = ("gemini-3-flash-preview,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,"
+                  "gemini-3.1-flash-lite,gemini-3.5-flash-lite,gemma-4-31b-it")
+GROQ_VISION = "qwen/qwen3.8-27b"
+_down: dict = {}                     # "model" or "model|key-index" -> time it may be tried again
+
+
+def _parse_json(text: str):
+    """The JSON in a model's reply: code fences dropped, raw line breaks inside strings tolerated."""
+    text = re.sub(r"```(?:json)?", "", text or "")
+    m = re.search(r"[\[{].*[\]}]", text, re.S)
+    return json.loads(m.group(), strict=False) if m else None
+
+
+def _why(data) -> str:
+    """A model's error, short, with the HTTP code first ('429 quota PerDay', '503 high demand', 'timeout')."""
+    err = str(data.get("error", "")) if isinstance(data, dict) else str(data)
+    code = re.search(r"\b(400|401|403|404|413|429|500|503)\b", err)
+    words = "per-day quota" if re.search(r"PerDay|per day", err, re.I) else "high demand" if "demand" in err else \
+        "timeout" if "timeout" in err else re.sub(r"\s+", " ", err)[:70]
+    return f"{code.group(1) if code else ''} {words}".strip()
+
+
 def gemini_json(settings: Settings, prompt: str, jpegs: Optional[List[bytes]] = None, model: str = "",
-                effort: str = "medium", temperature: float = 0.6, timeout: int = 180):
-    """A strong Gemini model (text and optional images in, JSON out) for the work that needs it most: designing
-    and correcting diagrams. Tries every key, waits out a rate limit once; None when nothing answers."""
+                effort: str = "medium", temperature: float = 0.6, timeout: int = 60,
+                log: Optional[Callable[[str], None]] = None):
+    """A strong vision model (text and optional images in, JSON out) for the work that needs it most: designing,
+    judging and correcting diagrams. Tries the Gemini models in turn on every key, then Groq's vision model. A model
+    that is overloaded or slow is rested for 10 minutes, a key whose quota is spent rests for the day (a per-minute
+    limit for a minute), a model that is gone or refuses the request is dropped. None when nothing answers; the
+    reasons go to `log`."""
     content = [{"type": "text", "text": prompt + "\nReply with JSON only."}]
     content += [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(j).decode()}}
                 for j in jpegs or []]
-    # newest first; a busy model (503) or an exhausted one (429) fails fast and the next one is tried
-    models = [model] if model else [m.strip() for m in (os.environ.get("DIAGRAM_MODELS", "") or
-                                                        "gemini-3.8-flash,gemini-3-flash-preview,gemini-flash-latest").split(",")
-                                    if m.strip()]
-    for attempt in range(2):
-        limited = False
-        for name in models:
-            body = {"model": name, "reasoning_effort": effort, "temperature": temperature,
-                    "messages": [{"role": "user", "content": content}]}
-            for key in settings.gemini_keys:
-                data = post_json(GEMINI, key, body, timeout=timeout)
-                if isinstance(data, list):              # Gemini sends errors as a one-item list
-                    data = data[0] if data and isinstance(data[0], dict) else {}
-                try:
-                    text = data["choices"][0]["message"]["content"]
-                    return json.loads(re.search(r"[\[{].*[\]}]", text, re.S).group())
-                except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-                    err = str(data.get("error", "")) if isinstance(data, dict) else ""
-                    if "503" in err or "high demand" in err or "404" in err or err == "timeout":
-                        break                        # this model is busy or gone: next model, not next key
-                    limited = limited or "429" in err or "quota" in err.lower() or "RESOURCE_EXHAUSTED" in err
-        if not limited:
-            break
-        time.sleep(35)                          # free-tier requests-per-minute limit: wait it out once
+    names = [model] if model else [m.strip() for m in (os.environ.get("DIAGRAM_MODELS") or DIAGRAM_MODELS).split(",")
+                                   if m.strip()]
+    plan = [(GEMINI, n, k, key) for n in names for k, key in enumerate(settings.gemini_keys)]
+    if not model:
+        groq = os.environ.get("VISION_GROQ_MODEL") or GROQ_VISION
+        plan += [(GROQ, groq, k, key) for k, key in enumerate(settings.groq_keys)]
+    reasons = []
+    for url, name, k, key in plan:
+        now = time.time()
+        if _down.get(name, 0) > now or _down.get(f"{name}|{k}", 0) > now:
+            continue
+        body = {"model": name, "temperature": temperature, "messages": [{"role": "user", "content": content}]}
+        if url == GEMINI and not name.startswith("gemma"):
+            body["reasoning_effort"] = effort          # Gemma does not take a thinking level
+        if url == GROQ:
+            body["max_tokens"] = 6000
+        data = post_json(url, key, body, timeout=timeout)
+        if isinstance(data, list):                      # Gemini sends errors as a one-item list
+            data = data[0] if data and isinstance(data[0], dict) else {}
+        try:
+            reply = _parse_json(data["choices"][0]["message"]["content"])
+            if reply is not None:
+                return reply
+            reasons.append(f"{name}: no JSON in the reply")
+            continue
+        except (KeyError, IndexError, TypeError, ValueError):
+            pass
+        why = _why(data)
+        reasons.append(f"{name}#{k + 1}: {why}")
+        if why.startswith(("404", "400")):
+            _down[name] = now + 24 * 3600               # gone, or refuses this kind of request: not again this run
+        elif why.startswith("503") or "timeout" in why:
+            _down[name] = now + 600                     # overloaded or slow right now: rest the model
+        elif why.startswith("429"):
+            _down[f"{name}|{k}"] = now + (6 * 3600 if "per-day" in why else 60)
+    if log:
+        log(f"[vision] no model answered: {'; '.join(reasons[-6:]) or 'every model is resting'}")
     return None
 
 

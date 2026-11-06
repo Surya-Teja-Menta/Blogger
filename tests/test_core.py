@@ -1752,6 +1752,116 @@ def test_long_lessons_are_written_part_by_part_from_an_outline():
     assert plan["short"][0] == {"scene": 1, "narration": "Watch the ball roll."}
 
 
+def test_a_thin_outline_still_gives_a_full_length_lesson():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker, check_brief
+    asked = []
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            asked.append(prompt)
+            if "THIS IS A LONG VIDEO" in prompt:          # 4 beats for a 10 minute lesson: far too few
+                return {"title": "CLT", "outro": "", "parts": [{"title": "One", "beats": ["a", "b"]},
+                                                               {"title": "Two", "beats": ["c", "d"]}]}
+            if "Now write ONLY part" in prompt:
+                n = 32 if "far too short" in prompt else 4     # short at first, full once told
+                return {"scenes": [{"kind": "diagram", "narration": " ".join(["word"] * 24)} for _ in range(n)]}
+            if prompt.startswith("These are the shots of a video"):
+                return {"short": []}
+            if prompt.startswith("These are the narration lines"):
+                return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            raise AssertionError("unexpected prompt")
+
+    brief = check_brief({"minutes": 10, "acts": [{"title": "One"}]}, "education")
+    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("CLT", [], [], "education", brief)
+    parts = [p for p in asked if "Now write ONLY part" in p]
+    assert "Write 35 to 46 shots" in parts[0]                      # its share of ~70 shots, not its 2 beats
+    assert any("far too short: 4 shots" in p for p in parts) and len(plan["scenes"]) >= 64
+
+
+def test_llm_skips_a_provider_a_request_is_too_big_for(monkeypatch):
+    import blogwriter.llm as L
+    calls = []
+
+    def too_big(name):
+        def call(system, prompt, max_tokens, temperature):
+            calls.append(name)
+            raise L._TooBig("HTTP 413 request too large")
+        return call
+    c, slept = _clocked_llm(monkeypatch, [("groq#1", too_big("groq#1")), ("groq#2", too_big("groq#2")),
+                                          ("gemini#1", lambda *a: calls.append("gemini#1") or "the answer")])
+    assert c.complete("a very long prompt") == "the answer"
+    assert calls[0].startswith("groq#") and calls[1:] == ["gemini#1"] and slept == []   # one Groq key, then on
+    assert c.complete("short") == "the answer" and calls[2].startswith("groq#")       # small requests still go to Groq
+    assert L._over_limit("Limit 8000, Used 0, Requested 9200") is False                # needs the full phrase
+    assert L._over_limit("on tokens per minute (TPM): Limit 8000, Used 10, Requested 9200") is True
+    assert L._over_limit("on tokens per minute (TPM): Limit 8000, Used 7900, Requested 900") is False
+
+
+def test_vision_models_rest_when_busy_and_replies_are_read_leniently(monkeypatch):
+    from blogwriter import footage as F
+    from blogwriter.config import Settings
+    monkeypatch.setattr(F, "_down", {})
+    monkeypatch.setenv("DIAGRAM_MODELS", "busy-model,good-model")
+    calls, logs = [], []
+
+    def fake_post(url, key, body, timeout=90):
+        calls.append((body["model"], key))
+        if body["model"] == "busy-model":
+            return [{"error": {"code": 503, "message": "This model is currently experiencing high demand."}}]
+        if key == "k1":
+            return {"error": '429 {"error": {"code": 429, "details": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel"}]}}'}
+        if body["model"].startswith("qwen"):
+            return {"error": "500 nope"}
+        return {"choices": [{"message": {"content": '```json\n{"score": 8, "problem": "a\nb"}\n```'}}]}
+    monkeypatch.setattr(F, "post_json", fake_post)
+    s = Settings(gemini_keys=["k1", "k2"], groq_keys=["g1"])
+    assert F.gemini_json(s, "judge", [b"img"]) == {"score": 8, "problem": "a\nb"}
+    assert calls == [("busy-model", "k1"), ("good-model", "k1"), ("good-model", "k2")]
+    calls.clear()
+    assert F.gemini_json(s, "judge", [b"img"])["score"] == 8
+    assert calls == [("good-model", "k2")]                     # the busy model and the spent key are resting
+    monkeypatch.setattr(F, "post_json", lambda *a, **k: {"error": "timeout"})
+    assert F.gemini_json(s, "judge", log=logs.append) is None and "no model answered" in logs[0]
+
+
+def test_a_diagram_no_vision_model_could_review_is_kept_and_one_that_cannot_draw_is_dropped(monkeypatch, tmp_path):
+    from blogwriter import video
+    from blogwriter.config import Settings
+    els = [{"type": "dot", "x": 20, "y": 50, "r": 2, "color": "accent", "on": "", "anim": ""},
+           {"type": "dot", "x": 50, "y": 50, "r": 2, "color": "accent", "on": "", "anim": ""},
+           {"type": "dot", "x": 80, "y": 50, "r": 2, "color": "accent", "on": "", "anim": ""}]
+    scenes = [{"kind": "diagram", "headline": f"h{k}", "narration": "n", "diagram": {"elements": [dict(e) for e in els]}}
+              for k in range(2)]
+    long = [{**s, "frames": 120, "diagram": video.diagram.timed(s["diagram"], [], 120, 30, 6)} for s in scenes]
+    look = tmp_path / "look.jpg"
+    look.write_bytes(b"jpeg")
+    logs = []
+    maker = video.VideoMaker(Settings(), None, log=logs.append)
+    monkeypatch.setattr(maker, "stills", lambda shots, job: {0: str(look)})        # shot 1 never draws
+    monkeypatch.setattr(video, "gemini_json", lambda *a, **k: None)               # no vision model answers
+    maker.polish_diagrams(scenes, long, {}, {}, str(tmp_path))
+    assert scenes[0].get("diagram") and long[0]["diagram"] and not scenes[1].get("diagram") and long[1]["diagram"] is None
+    assert any("kept unreviewed" in m and "0" in m for m in logs) and any("preview did not render" in m for m in logs)
+
+
+def test_numbers_said_in_words_count_and_a_formula_inside_a_box_is_its_content():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, check_brief, spelled_numbers, tex_complete
+    assert spelled_numbers("forty orders, six hundred and fifty more, twenty-five times") == ["40", "650", "25"]
+    assert _verified("averages of 40 samples", "average forty samples") and not _verified("41 samples", "forty samples")
+    scene = {"headline": "The sum", "narration": "Add them all up and divide by the count."}
+    boxed = {"elements": [{"type": "box", "x": 10, "y": 30, "w": 40, "h": 40},
+                          {"type": "tex", "x": 30, "y": 50, "tex": r"\frac{1}{n}\sum x_i", "size": "m"},
+                          {"type": "arrow", "x1": 52, "y1": 50, "x2": 80, "y2": 50}]}
+    assert diagram.check(boxed, scene, _verified, tex_complete) is not None
+    half_out = {"elements": [boxed["elements"][0], {**boxed["elements"][1], "x": 49}, boxed["elements"][2]]}
+    assert diagram.check(half_out, scene, _verified, tex_complete) is None
+    assert "sarcastic" in check_brief({"narrator": "A patient teacher."}, "education")["narrator"]
+    assert check_brief({"narrator": "A deadpan guide."}, "education")["narrator"] == "A deadpan guide."
+    assert "sarcastic" not in check_brief({"narrator": "A calm anchor."}, "news")["narrator"]
+
+
 def test_a_long_render_is_split_evenly_into_parts_for_parallel_machines():
     from blogwriter.video import CHUNK_FRAMES, part_args, render_parts
     parts = render_parts(18000)

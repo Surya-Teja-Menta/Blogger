@@ -307,7 +307,8 @@ THE OUTLINE OF THE WHOLE VIDEO:
 
 Now write ONLY part [k] of [n], "[title]", shot by shot. Its beats:
 [beats]
-Write one or two shots per beat: [lo] to [hi] shots, about [words] spoken words in all. [first]
+Write [lo] to [hi] shots for these beats (a beat may take several shots: one sentence and one picture each),
+about [words] spoken words in all. [first]
 [prev]
 Reply with JSON: {"scenes": [{"kind": "...", "narration": "...", "headline": "...", "kicker": "...",
  "highlight": "...", "act": "", "facts": [], plus every field that shot's kind needs, exactly as described above}]}"""
@@ -688,10 +689,38 @@ def country_names() -> Dict[str, str]:
         return {}
 
 
+_UNITS = {w: k for k, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                       "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * k for k, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if k > 1}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000}
+
+
+def spelled_numbers(text: str) -> List[str]:
+    """Numbers said in words, as digits: "forty" -> "40", "six hundred and fifty" -> "650"."""
+    out, total, cur, on = [], 0, 0, False
+    for w in re.findall(r"[a-z]+", (text or "").lower().replace("-", " ")) + ["."]:
+        if w in _UNITS or w in _TENS:
+            cur, on = cur + _UNITS.get(w, _TENS.get(w, 0)), True
+        elif w in _SCALES and on:
+            if _SCALES[w] == 100:
+                cur *= 100
+            else:
+                total, cur = total + cur * _SCALES[w], 0
+        elif w == "and" and on:
+            continue
+        elif on:
+            out.append(str(total + cur))
+            total, cur, on = 0, 0, False
+    return out
+
+
 def _verified(text: str, allowed: str) -> bool:
-    """Every number in `text` appears in the verified material."""
+    """Every number in `text` appears in the verified material (written in digits or said in words)."""
     flat = allowed.replace(",", "")
-    return all(d.rstrip(".").replace(",", "") in flat for d in re.findall(r"\d[\d,.]*", text or ""))
+    digits = re.findall(r"\d[\d,.]*", text or "")
+    if digits and not all(d.rstrip(".").replace(",", "") in flat for d in digits):
+        flat += " " + " ".join(spelled_numbers(allowed))
+    return all(d.rstrip(".").replace(",", "") in flat for d in digits)
 
 
 def _figure(text: str, allowed: str) -> str:
@@ -1005,12 +1034,15 @@ def check_brief(raw, style: str) -> dict:
 
     def s(k, d):
         return str(raw.get(k) or d)[:300]
+    narrator = s("narrator", "a curious guide who works things out alongside the viewer.")
+    if style == "education" and not re.search(r"sarcas|deadpan|dry wit|wry", narrator, re.I):
+        narrator = narrator.rstrip(". ") + ". Dry, deadpan and sarcastic in tone, but warm."    # the lesson voice
     return {"style": style, "acts": acts[:5] or [{"title": "The story", "job": "tell it from start to finish"}],
             "structure": s("structure", "whatever shape makes this subject clearest"),
             "opening": s("opening", "a question or a surprising fact the viewer already half-wonders about."),
             "ending": s("ending", "answer the opening question in one sentence."),
             "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "minutes": minutes,
-            "narrator": s("narrator", "a curious guide who works things out alongside the viewer."),
+            "narrator": narrator,
             "device": s("device", "one running example that grows with every shot."),
             "examples": s("examples", "an everyday situation the viewer has lived, chosen for this subject"),
             "maths": bool(raw.get("maths"))}
@@ -1101,26 +1133,38 @@ class VideoMaker:
         total = sum(len(p["beats"]) for p in parts)
         listing = "\n".join(f"{k + 1}. {p.get('title', '')}: " + " | ".join(str(b) for b in p["beats"])
                              for k, p in enumerate(parts))
+        if total < n_shots * 0.75:
+            self.log(f"[video] the outline has {total} beats for about {n_shots} shots: each part is written longer")
         scenes = []
+        words_of = lambda shots: sum(len(str(s.get("narration", "")).split()) for s in shots)      # noqa: E731
         for k, part in enumerate(parts):
             beats = [str(b) for b in part["beats"]][:16]
             name = " ".join(str(part.get("title") or f"Part {k + 1}").split()[:4])
+            # the part's share of the planned length, however thin its outline: a beat may need several shots
+            lo = max(len(beats), round(n_shots * len(beats) / total))
+            target = round(words_needed * len(beats) / total)
             ask = rules + fill(ACT, outline=listing, k=k + 1, n=len(parts), title=name,
-                               beats="\n".join(f"- {b}" for b in beats), lo=len(beats), hi=2 * len(beats),
-                               words=round(words_needed * len(beats) / total * 1.1),
+                               beats="\n".join(f"- {b}" for b in beats), lo=lo, hi=lo + max(3, lo // 3),
+                               words=target,
                                first='Its first shot is the opening (see "Opening") and has "act": "".' if k == 0 else
                                f'Its first shot has "act": "{name}"; every other shot has "act": "".',
                                prev=f'The part before ended with: "{scenes[-1].get("narration", "")}"' if scenes else "")
-            got = []
-            for _ in range(2):            # a part that comes back empty is asked for once more
+            got, note = [], ""
+            for _ in range(3):            # a part that comes back empty or far too short is asked for again
                 try:
-                    reply = self.llm.complete_json(ask, max_tokens=8000, temperature=0.7)
+                    reply = self.llm.complete_json(ask + note, max_tokens=8000, temperature=0.7)
                 except LLMError:
                     continue
-                got = [sc for sc in (reply.get("scenes") if isinstance(reply, dict) else reply) or []
+                new = [sc for sc in (reply.get("scenes") if isinstance(reply, dict) else reply) or []
                        if isinstance(sc, dict) and str(sc.get("narration", "")).strip()]
-                if got:
+                if words_of(new) > words_of(got):
+                    got = new
+                if len(got) >= lo * 0.75 and words_of(got) >= target * 0.75:
                     break
+                if got:
+                    note = (f"\n\nYour last version of this part was far too short: {len(got)} shots and "
+                            f"{words_of(got)} words. Write {lo} to {lo + max(3, lo // 3)} shots and about {target} "
+                            "words: split each beat into several shots, one sentence and one picture each.")
             if got and k:
                 got[0]["act"] = name
             scenes += got
@@ -1128,8 +1172,8 @@ class VideoMaker:
                      f"{sum(len(str(s['narration']).split()) for s in got)} words")
         if len(scenes) < 5:
             return None
-        return {**{k: outline.get(k) for k in ("title", "thumb_text", "thumb_highlight", "description", "tags", "outro")},
-                "scenes": scenes, "short": None}
+        return {**{k: outline[k] for k in ("title", "thumb_text", "thumb_highlight", "description", "tags", "outro")
+                   if outline.get(k) is not None}, "scenes": scenes, "short": None}     # a missing field is left out
 
     def pick_short(self, scenes: List[dict], allowed: str) -> List[dict]:
         """The Short's beats, chosen from the finished shots (their index is final, so the pictures match)."""
@@ -1160,7 +1204,7 @@ class VideoMaker:
             "{outro_ask}", "the full report, with every source, is" if report else "every source is").replace(
             "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
-        words_needed = round(brief["minutes"] * 150 * 0.75)      # ~150 spoken words a minute
+        words_needed = round(brief["minutes"] * 160)      # the voice speaks ~170 words a minute; pauses take the rest
         plan = None
         if brief["minutes"] >= LONG_MINUTES:
             plan = self.long_plan(prompt.split("\nReturn JSON:")[0], brief, words_needed)
@@ -1604,7 +1648,7 @@ class VideoMaker:
 
     def design_json(self, prompt: str, **kw):
         """Diagrams need the strongest model: Gemini Flash first, then the usual providers."""
-        reply = gemini_json(self.s, prompt, effort="medium", temperature=0.8)
+        reply = gemini_json(self.s, prompt, effort="medium", temperature=0.8, log=self.log)
         return reply if reply is not None else self.llm.complete_json(prompt, max_tokens=8000, temperature=0.8)
 
     def expand(self, plan: dict, words_needed: int) -> dict:
@@ -1665,8 +1709,13 @@ class VideoMaker:
             json.dump(jobs, f, ensure_ascii=False)
         node = shutil.which("node") or shutil.which("node.exe")
         try:
-            subprocess.run([node, "stills.mjs", path], cwd=VIDEO_APP, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=1800)
+            r = subprocess.run([node, "stills.mjs", path], cwd=VIDEO_APP, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=1800)
+            for line in (r.stdout or "").splitlines():
+                if line.startswith("failed"):
+                    self.log(f"[diagram] preview {line[:200]}")
+            if r.returncode and not any(l.startswith(("ok", "failed")) for l in (r.stdout or "").splitlines()):
+                self.log(f"[diagram] the preview renderer stopped: {(r.stderr or r.stdout or '')[-300:]}")
         except (OSError, subprocess.SubprocessError, TypeError) as exc:
             self.log(f"[diagram] could not render previews: {type(exc).__name__}")
         return {key: os.path.join(job, f"look_{key}.jpg") for key, _, _ in shots
@@ -1681,7 +1730,7 @@ class VideoMaker:
         if not idx:
             return
         best: Dict[int, tuple] = {}
-        settled = set()
+        settled, unrendered = set(), set()
         problems: Dict[int, str] = {}
         words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
         for rnd in range(rounds + 1):
@@ -1691,17 +1740,21 @@ class VideoMaker:
             looks = self.stills([(i, {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}],
                                       "captions": [], "theme": theme}, long_scenes[i]["frames"] - 20) for i in todo], job)
             def review(i: int) -> None:       # one shot's critique and correction; shots run side by side
-                if i not in looks:
+                if i not in looks:            # it did not draw: it could break the video's render too
+                    unrendered.add(i)
                     settled.add(i)
                     return
                 with open(looks[i], "rb") as f:
                     image = f.read()
                 ask = diagram.refine_prompt(scenes[i], scenes[i]["diagram"], diagram.ICON_LIST)
-                reply = gemini_json(self.s, ask, [image], effort="medium", temperature=0.5)
+                reply = gemini_json(self.s, ask, [image], effort="medium", temperature=0.5, log=self.log)
                 try:
-                    score = float((reply or {}).get("score") or 0)
+                    score = float(reply.get("score")) if isinstance(reply, dict) else None
                 except (TypeError, ValueError):
-                    score = 0.0
+                    score = None
+                if score is None:             # no verdict: the version that passed the checks stands
+                    settled.add(i)
+                    return
                 if score > best.get(i, (-1.0, None))[0]:
                     best[i] = (score, scenes[i]["diagram"])
                     problems[i] = str((reply or {}).get("problem") or "")[:110] if isinstance(reply, dict) else ""
@@ -1716,6 +1769,7 @@ class VideoMaker:
                     d = diagram.check({"elements": (again or {}).get("elements") or []} if isinstance(again, dict)
                                       else None, scenes[i], _verified, tex_complete)
                 if d and not typeset_errors([el["tex"] for el in d["elements"] if el["type"] == "tex"]):
+                    unrendered.discard(i)
                     scenes[i]["diagram"] = d
                     long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
                 else:
@@ -1723,22 +1777,27 @@ class VideoMaker:
 
             with ThreadPoolExecutor(max_workers=REVIEWERS) as pool:
                 list(pool.map(review, todo))
-        kept = []
+        kept, unreviewed = [], []
         for i in idx:
+            if i not in best and i not in unrendered and scenes[i].get("diagram"):
+                unreviewed.append(str(i))     # no vision model answered: it passed every check, so it stays
+                continue
             score, d = best.get(i, (0.0, None))
             if d is not None and score >= 7:
                 scenes[i]["diagram"] = d
                 long_scenes[i]["diagram"] = diagram.timed(d, words(i), long_scenes[i]["frames"], FPS, LEAD)
                 kept.append(f"{i}:{score:g}")
                 continue
-            self.log(f"[diagram] shot {i} dropped at {score:g}/10: {problems.get(i) or 'no usable review'}")
+            self.log(f"[diagram] shot {i} dropped " + ("(its preview did not render)" if i in unrendered
+                                                        else f"at {score:g}/10: {problems.get(i) or 'weak'}"))
             scenes[i].pop("diagram", None)
             long_scenes[i]["diagram"] = None
             if not scenes[i].get("graphic") and not scenes[i].get("images") and not scenes[i].get("video"):
                 scenes[i]["graphic"] = {"type": "kinetic", "nodes": []}
                 long_scenes[i]["graphic"] = graphics.timed(scenes[i]["graphic"], scenes[i].get("headline", ""), words(i),
                                                            long_scenes[i]["frames"], FPS, LEAD)
-        self.log(f"[diagram] kept {len(kept)} of {len(idx)} after review (shot:score {' '.join(kept)})")
+        self.log(f"[diagram] kept {len(kept) + len(unreviewed)} of {len(idx)} after review (shot:score {' '.join(kept)})"
+                 + (f"; kept unreviewed (no vision model answered): {' '.join(unreviewed)}" if unreviewed else ""))
 
     def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
         """Motion graphics for the shots without a strong picture; any failure leaves the templates in place.

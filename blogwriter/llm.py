@@ -37,6 +37,12 @@ class _Hard(Exception):
         self.cooldown = cooldown
 
 
+class _TooBig(Exception):
+    """This request is larger than the provider accepts at all (HTTP 413, or a request over its per-minute token
+    allowance): no key of that provider can serve it, so the request goes to the next provider at once. The
+    provider stays available for smaller requests."""
+
+
 MAX_WAIT = 120      # longest pause (seconds) worth waiting out when every endpoint is rate-limited
 MAX_WAITS = 8       # how many such pauses one request may take
 RETRY_IN = re.compile(r"try again in\s+(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)(m?s))?", re.I)
@@ -64,6 +70,12 @@ def limit_detail(body: str) -> str:
         return (body or "")[:120]
     _, _, kind, limit, used, req = m.groups()
     return f"{kind}: used {used} + requested {req} of {limit}"
+
+
+def _over_limit(body: str) -> bool:
+    """A 429 whose request alone is over the limit ('Limit 8000, Used 0, Requested 9200'): waiting cannot help."""
+    m = LIMIT_RE.search(body or "")
+    return bool(m) and int(m.group(6)) > int(m.group(4))
 
 
 def strip_think(text: str) -> str:
@@ -104,10 +116,11 @@ class LLMClient:
                  temperature: float = 0.7) -> str:
         max_tokens = max_tokens or self.s.max_tokens
         errors = []
+        too_big = set()              # providers this request is too large for
         self._turn += 1
         for waits in range(MAX_WAITS + 1):
             for name, call in self._rotated(self._endpoints()):
-                if self._cooldown.get(name, 0) > time.time():
+                if self._cooldown.get(name, 0) > time.time() or name.split("#")[0] in too_big:
                     continue
                 for attempt in range(3):
                     try:
@@ -128,6 +141,12 @@ class LLMClient:
                             if exc.provider_wide else [name]
                         for n in names:
                             self._cooldown[n] = time.time() + exc.cooldown
+                        break
+                    except _TooBig as exc:   # no key of this provider can take it: straight to the next provider
+                        provider = name.split("#")[0]
+                        too_big.add(provider)
+                        errors.append(f"{provider}: {exc}")
+                        self.log(f"[llm] {provider}: request too large for it, trying the next provider")
                         break
                     except Exception as exc:  # transient: back off, retry, then move on
                         msg = f"{name}: {type(exc).__name__}: {str(exc)[:160]}"
@@ -222,6 +241,9 @@ class LLMClient:
                 raise _Hard(f"timed out after {timeout}s", cooldown=300)
             if r.status_code == 404:       # model removed / not served: same for every key
                 raise _Hard(f"HTTP 404 model '{model}' unavailable: {r.text[:100]}", provider_wide=True)
+            if r.status_code == 413 or (r.status_code == 429 and "requested" in r.text.lower() and
+                                        _over_limit(r.text)):
+                raise _TooBig(f"HTTP {r.status_code} request too large: {limit_detail(r.text)}")
             if r.status_code == 429:        # rate limited: park this key until the limit resets, try the next one
                 raise _Hard(f"HTTP 429 rate limited: {limit_detail(r.text)}", cooldown=retry_after(r.text))
             if r.status_code in (401, 402, 403) or "free-models-per-day" in r.text:

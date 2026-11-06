@@ -230,9 +230,19 @@ def collision(els: List[dict]) -> Optional[tuple]:
     top of each other (a box's own text, inside it, is fine); None when nothing collides."""
     pieces = [(k, b, "text") for k, el in enumerate(els) for b in _boxes(el)] + \
              [(k, b, "solid") for k, el in enumerate(els) for b in _solids(el)]
+    def inside(small: tuple, big: tuple) -> bool:          # small sits (nearly) wholly within big
+        w = min(small[2], big[2]) - max(small[0], big[0])
+        h = min(small[3], big[3]) - max(small[1], big[1])
+        area = (small[2] - small[0]) * (small[3] - small[1])
+        return w > 0 and h > 0 and area > 0 and w * h / area >= 0.9 and area < (big[2] - big[0]) * (big[3] - big[1])
+
     for n, (k1, a, kind1) in enumerate(pieces):
         for k2, b, kind2 in pieces[n + 1:]:
             if k1 == k2:
+                continue
+            # a box is a container: a formula, icon or label placed wholly inside it is its content, not a clash
+            if (els[k1]["type"] == "box" and kind1 == "solid" and inside(b, a)) or \
+                    (els[k2]["type"] == "box" and kind2 == "solid" and inside(a, b)):
                 continue
             limit = 0.35 if kind1 == kind2 == "text" else 0.15
             if _overlap(a, b) > limit:
