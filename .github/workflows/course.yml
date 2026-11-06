@@ -83,9 +83,11 @@ jobs:
           export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
           auto=$([ "$ACTION" = "plan and make" ] && echo --auto || true)      # only then do later waves follow by themselves
           slug=$(python -u blogwriter/course.py plan "$SUBJECT" --level "$LEVEL" --syllabus "$SYLLABUS" $auto)
+          [[ "$slug" =~ ^[a-z0-9-]+$ ]] || { echo "unexpected course name: $slug"; exit 1; }
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
           cp "courses/$slug.json" "$RUNNER_TEMP/course.json"
-          export APPLY='mkdir -p courses && cp "$RUNNER_TEMP/course.json" "courses/'"$slug"'.json"'
+          export SLUG="$slug"
+          export APPLY='mkdir -p courses && cp "$RUNNER_TEMP/course.json" "courses/$SLUG.json"'
           export MSG="course: plan $slug"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
           bash "$RUNNER_TEMP/commit.sh"
@@ -118,8 +120,11 @@ jobs:
           if [ -z "$slug" ] && [ -n "$SUBJECT" ]; then slug=$(python3 -c "import sys; sys.path.insert(0, 'blogwriter'); import course; print(course.slugify(sys.argv[1]))" "$SUBJECT"); fi
           if [ -z "$slug" ]; then slug=$(python3 blogwriter/course.py pending | head -1); fi
           if [ -z "$slug" ] || [ ! -f "courses/$slug.json" ]; then echo "no course to continue"; echo "jobs=[]" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [[ "$slug" =~ ^[a-z0-9-]+$ ]] || { echo "unexpected course name: $slug"; exit 1; }
           take=$([ "${PER_WAVE:-auto}" = "auto" ] && echo 0 || echo "$PER_WAVE")
-          export APPLY='python3 blogwriter/course.py next "'"$slug"'" --take '"$take"' > "$RUNNER_TEMP/jobs.json"'
+          [[ "$take" =~ ^[0-9]+$ ]] || take=0
+          export SLUG="$slug" TAKE="$take"
+          export APPLY='python3 blogwriter/course.py next "$SLUG" --take "$TAKE" > "$RUNNER_TEMP/jobs.json"'
           export MSG="course: next wave of $slug"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
           bash "$RUNNER_TEMP/commit.sh"

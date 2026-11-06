@@ -139,8 +139,8 @@ jobs:
           BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           if [ -n "$QUEUE_ID" ]; then
-            flag=$([ "$OUTCOME" = "success" ] && echo --ok || echo --failed)
-            export APPLY='python blogwriter/videoqueue.py done "$QUEUE_ID" '"$flag"
+            export FLAG=$([ "$OUTCOME" = "success" ] && echo --ok || echo --failed)
+            export APPLY='python blogwriter/videoqueue.py done "$QUEUE_ID" "$FLAG"'
           fi
           export MSG="$( [ -n "$QUEUE_ID" ] && echo queue || echo history ): $RUN_TOPIC $(date -u +%F)"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"     # the checkout is reset while it runs
@@ -251,8 +251,8 @@ jobs:
           OK: ${{ needs.make.result == 'success' && needs.render.result != 'failure' && needs.render.result != 'cancelled' && needs.finish.result != 'failure' && needs.finish.result != 'cancelled' }}
           BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          flag=$([ "$OK" = "true" ] && echo --ok || echo --failed)
-          export APPLY='python3 blogwriter/course.py done "$SLUG" "$LESSON" '"$flag"
-          export MSG="course: $SLUG $LESSON $flag"
+          export FLAG=$([ "$OK" = "true" ] && echo --ok || echo --failed)
+          export APPLY='python3 blogwriter/course.py done "$SLUG" "$LESSON" "$FLAG"'
+          export MSG="course: $SLUG $LESSON $FLAG"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
           bash "$RUNNER_TEMP/commit.sh"
