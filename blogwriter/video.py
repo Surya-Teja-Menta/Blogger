@@ -26,7 +26,7 @@ import requests
 from . import sound
 from .config import Settings
 from .critic import review, summary
-from .footage import CLIP_SECONDS, find_clip, gemini_json, photo_fits
+from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from . import design, diagram, graphics, mathexpr
@@ -323,6 +323,28 @@ the Short, saying only what that shot says.
 Reply with JSON: {"short": [{"scene": index, "narration": "..."}]}"""
 
 
+def outline_parts(outline) -> List[dict]:
+    """The parts of a long video's outline, read leniently: "parts", "acts" or "sections"; beats as a list, a string
+    or objects."""
+    raw = (outline.get("parts") or outline.get("acts") or outline.get("sections")) if isinstance(outline, dict) \
+        else outline if isinstance(outline, list) else None
+    parts = []
+    for p in raw or []:
+        if not isinstance(p, dict):
+            continue
+        beats = p.get("beats") or p.get("shots") or p.get("points") or p.get("scenes")
+        if isinstance(beats, str):
+            beats = re.split(r"\s*(?:[;|\n]|\s-\s)\s*", beats)
+        if not isinstance(beats, list):
+            continue
+        beats = [str(b.get("beat") or b.get("text") or b.get("narration") or b.get("what") or "") if isinstance(b, dict)
+                 else str(b) for b in beats]
+        beats = [b.strip() for b in beats if b and b.strip()]
+        if beats:
+            parts.append({"title": str(p.get("title") or p.get("name") or ""), "beats": beats})
+    return parts
+
+
 def fill(template: str, **values) -> str:
     """str.format for prompts that also contain JSON braces: [name] placeholders."""
     for k, v in values.items():
@@ -564,12 +586,53 @@ def remotion(args: List[str], log: Callable[[str], None], timeout: int = 3600) -
 
 
 def ffmpeg(args: List[str], timeout: int = 900) -> None:
-    """A full ffmpeg (from the imageio-ffmpeg wheel): the one Remotion ships lacks the audio filters used here."""
-    import imageio_ffmpeg
-    r = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-y", "-v", "error", *args],
+    """A full ffmpeg (the system's with SVT-AV1, else the imageio-ffmpeg wheel's): the one Remotion ships lacks the
+    audio filters and modern encoders used here."""
+    r = subprocess.run([ffmpeg_exe(), "-hide_banner", "-y", "-v", "error", *args],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {r.stderr[-600:]}")
+
+
+# The delivered video's codec. The frames are rendered as high-quality H.264 parts; the whole video is then encoded
+# once with the most efficient codec this machine's ffmpeg has: AV1 (SVT-AV1, what YouTube and Netflix stream) is
+# about half the size of H.264 at the same sharpness, HEVC about a third smaller. 10-bit colour compresses better
+# still and keeps soft background gradients free of banding. VIDEO_CODEC=av1|hevc|h264 forces one.
+CODECS = {
+    "av1": ("libsvtav1", ["-crf", "28", "-pix_fmt", "yuv420p10le", "-g", "300", "-svtav1-params", "tune=0"]),
+    "hevc": ("libx265", ["-crf", "20", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-x265-params", "log-level=error"]),
+    "h264": ("libx264", ["-crf", "18", "-pix_fmt", "yuv420p", "-preset", "slow"]),
+}
+
+
+def final_codec() -> str:
+    """The best codec the ffmpeg here can encode (or the one VIDEO_CODEC asks for, when it is available)."""
+    have = footage_encoders(ffmpeg_exe())
+    wanted = os.environ.get("VIDEO_CODEC", "").strip().lower()
+    order = ([wanted] if wanted in CODECS else []) + ["av1", "hevc", "h264"]
+    return next((c for c in order if CODECS[c][0] in have), "h264")
+
+
+def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Callable[[str], None] = print,
+                 concat: bool = False) -> str:
+    """Encode the delivered video once, small and sharp, with its soundtrack. `video` is a rendered H.264 file (or,
+    with concat, a list of parts for ffmpeg's concat demuxer). If the encode fails, the rendered pictures are kept as
+    they are (never a lost video). Returns the codec used."""
+    codec = final_codec()
+    encoder, args = CODECS[codec]
+    speed = {"av1": ("6", "8", "10"), "hevc": ("medium", "fast", "faster")}.get(codec)
+    if speed:                            # bigger frames, faster preset: a long 4K or 8K encode still fits its job
+        args = args + ["-preset", speed[0] if pixels <= 2560 * 1440 else speed[1] if pixels <= 3840 * 2160 else speed[2]]
+    source = ["-f", "concat", "-safe", "0", "-i", video] if concat else ["-i", video]
+    tail = ["-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest]
+    try:
+        ffmpeg([*source, "-i", soundtrack, "-c:v", encoder, *args, *tail], timeout=4 * 3600)
+    except (RuntimeError, subprocess.SubprocessError) as exc:
+        log(f"[video] {codec.upper()} encode failed ({str(exc)[:160]}); keeping the rendered H.264")
+        ffmpeg([*source, "-i", soundtrack, "-c:v", "copy", *tail], timeout=3600)
+        codec = "h264"
+    log(f"[video] {os.path.basename(dest)}: {codec.upper()}, {os.path.getsize(dest) / 1e6:.0f} MB")
+    return codec
 
 
 def timeline(seconds: List[float], kinds: List[str]) -> tuple:
@@ -594,12 +657,19 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
             "-b:a", "192k", dest])
 
 
-LONG_SCALE = "1.3333333333333333"   # 1920x1080 layout rendered at 2560x1440: YouTube streams 1440p uploads at a
-                                    # far higher bitrate, so text, formulas and thin lines stay crisp
+# The long video's resolution: its 1920x1080 layout is rendered at a higher device scale, so text, formulas and thin
+# lines are drawn sharp at that size (vector, not upscaled). 4K by default: YouTube streams a 4K upload at a far
+# higher bitrate on every screen. Set the repository variable VIDEO_RESOLUTION to 8k (7680x4320: about 4x the render
+# time and file size) or 1440. A render machine's share shrinks with the pixel count, so each part takes about as long.
+RESOLUTIONS = {"1440": 1440, "1440p": 1440, "2160": 2160, "4k": 2160, "2160p": 2160, "4320": 4320, "8k": 4320, "4320p": 4320}
+RESOLUTION = RESOLUTIONS.get(os.environ.get("VIDEO_RESOLUTION", "4k").strip().lower(), 2160)
+LONG_SCALE = repr(RESOLUTION / 1080)
 
 
-QUALITY = ["--muted", "--crf=16", "--x264-preset=slow", "--image-format=png"]   # lossless frames: crisp coloured text
-CHUNK_FRAMES = 2700       # one render machine's share of a long video (90 s of video, ~40 min of rendering)
+# the rendered parts are an intermediate (the delivered file is encoded once more, see final_encode): near-lossless
+QUALITY = ["--muted", "--crf=12", "--x264-preset=fast", "--image-format=png"]   # lossless frames: crisp coloured text
+# one render machine's share of a long video: 90 s of video at 1440p, 40 s at 4K, 10 s at 8K (~30-40 min each)
+CHUNK_FRAMES = max(300, min(2700, round(2700 * (1440 / RESOLUTION) ** 2 / 100) * 100))
 SOUNDTRACK = "soundtrack_en.mp3"
 
 
@@ -610,8 +680,8 @@ def render(composition: str, props: str, soundtrack: str, dest: str, log: Callab
     scale = [f"--scale={LONG_SCALE}"] if composition == "Long" else []
     remotion(["render", "src/index.jsx", composition, silent, f"--props={props}", *QUALITY, *scale], log,
              timeout=5 * 3600)
-    ffmpeg(["-i", silent, "-i", soundtrack, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
-            "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest])
+    pixels = (RESOLUTION * 16 // 9) * RESOLUTION if composition == "Long" else 1080 * 1920
+    final_encode(silent, soundtrack, dest, pixels, log)
     os.remove(silent)
 
 
@@ -628,14 +698,13 @@ def part_args(first: int, last: int, dest: str) -> List[str]:
             *QUALITY, f"--scale={LONG_SCALE}", "--log=error", "--timeout=120000"]
 
 
-def join_parts(parts: List[str], soundtrack: str, dest: str) -> None:
-    """The long video from its separately rendered parts (same encoder settings, each starting on a key frame,
-    so they join without re-encoding), with the soundtrack laid on."""
+def join_parts(parts: List[str], soundtrack: str, dest: str, log: Callable[[str], None] = print) -> None:
+    """The long video from its separately rendered parts (same encoder settings, each starting on a key frame, so
+    they join seamlessly), encoded once with the most efficient codec available, with the soundtrack laid on."""
     listing = dest + ".parts.txt"
     with open(listing, "w", encoding="utf-8") as f:
         f.write("".join(f"file '{os.path.abspath(p)}'\n" for p in parts))
-    ffmpeg(["-f", "concat", "-safe", "0", "-i", listing, "-i", soundtrack, "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest], timeout=3600)
+    final_encode(listing, soundtrack, dest, (RESOLUTION * 16 // 9) * RESOLUTION, log, concat=True)
     os.remove(listing)
 
 
@@ -1164,16 +1233,24 @@ class VideoMaker:
         request (one request for 10 minutes comes back far too short). The Short is picked later, from the
         finished shots. None if no outline came back."""
         n_shots = round(brief["minutes"] * 7)
-        try:
-            outline = self.llm.complete_json(rules + fill(OUTLINE, minutes=f"{brief['minutes']:g}", words=words_needed,
-                                                          shots=n_shots), max_tokens=6000, temperature=0.6)
-        except LLMError as exc:
-            self.log(f"[video] no outline ({str(exc)[:80]}); writing in one go")
-            return None
-        parts = [p for p in (outline.get("parts") or [] if isinstance(outline, dict) else [])
-                 if isinstance(p, dict) and isinstance(p.get("beats"), list) and p["beats"]]
-        if not parts:
-            return None
+        outline, parts = {}, []
+        for attempt in range(2):          # an outline in an unexpected shape is read leniently, then asked for again
+            try:
+                outline = self.llm.complete_json(
+                    rules + fill(OUTLINE, minutes=f"{brief['minutes']:g}", words=words_needed, shots=n_shots) +
+                    ("\n\nYour last reply had no usable \"parts\" list with \"beats\": reply in exactly that format."
+                     if attempt else ""), max_tokens=6000, temperature=0.6)
+            except LLMError as exc:
+                self.log(f"[video] no outline ({str(exc)[:80]})")
+                continue
+            parts = outline_parts(outline)
+            if parts:
+                break
+            self.log("[video] the outline came back without parts" + ("; asking once more" if not attempt else ""))
+        if not parts:                     # never one request for a long video: write it part by part from the plan
+            self.log("[video] writing part by part from the plan's acts")
+            parts = [{"title": a["title"], "beats": [a.get("job") or a["title"]]} for a in brief["acts"]]
+        outline = outline if isinstance(outline, dict) else {}
         total = sum(len(p["beats"]) for p in parts)
         listing = "\n".join(f"{k + 1}. {p.get('title', '')}: " + " | ".join(str(b) for b in p["beats"])
                              for k, p in enumerate(parts))
@@ -1215,6 +1292,7 @@ class VideoMaker:
             self.log(f"[video] part {k + 1}/{len(parts)} \"{name}\": {len(got)} shots, "
                      f"{sum(len(str(s['narration']).split()) for s in got)} words")
         if len(scenes) < 5:
+            self.log(f"[video] the parts gave only {len(scenes)} shots: writing in one go instead")
             return None
         return {**{k: outline[k] for k in ("title", "thumb_text", "thumb_highlight", "description", "tags", "outro")
                    if outline.get(k) is not None}, "scenes": scenes, "short": None}     # a missing field is left out
@@ -1670,7 +1748,7 @@ class VideoMaker:
         parts = sorted(glob.glob(os.path.join(out, "parts", "part*.mp4")))
         if not os.path.exists(dest) and parts:
             self.log(f"[video] joining the {len(parts)} rendered parts")
-            join_parts(parts, os.path.join(out, SOUNDTRACK), dest)
+            join_parts(parts, os.path.join(out, SOUNDTRACK), dest, self.log)
         if not os.path.exists(dest):
             raise RuntimeError("the long video was not rendered")
         files, plan, texts = st["files"], st["plan"], st["texts"]

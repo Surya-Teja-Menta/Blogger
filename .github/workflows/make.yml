@@ -54,6 +54,14 @@ jobs:
         working-directory: video
         run: npm ci --no-audit --no-fund && npx remotion browser ensure
 
+      # the delivered video is encoded with AV1 (small and sharp): Ubuntu's ffmpeg has the SVT-AV1 encoder
+      - name: Video encoder (AV1)
+        if: inputs.video
+        run: |
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libsvtav1 ||
+            { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libsvtav1|libx265" || echo "no AV1 or HEVC encoder: H.264 is kept"
+
       # Every repository secret and variable becomes an environment variable of the same name, so a new API key
       # only has to be added in Settings -> Secrets and variables -> Actions (no change to this file).
       - name: Load all secrets and variables
@@ -190,7 +198,7 @@ jobs:
     needs: [make, render]
     if: needs.make.outputs.key != '' && needs.render.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300           # the one AV1 encode of a 4K (or 8K) video happens here
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -198,6 +206,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Video encoder (AV1)
+        run: |
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libsvtav1 ||
+            { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libsvtav1|libx265" || echo "no AV1 or HEVC encoder: H.264 is kept"
       - name: Load all secrets and variables
         env:
           ALL_SECRETS: ${{ toJSON(secrets) }}

@@ -86,7 +86,8 @@ export const Texture = () => {
     <>
       {t.grain > 0 && <AbsoluteFill style={{opacity: clamp(t.grain, 0, 0.25), mixBlendMode: C.light ? "multiply" : "overlay",
                                             pointerEvents: "none"}}>
-        <Img src={staticFile("grain.png")} style={{width: "100%", height: "100%", objectFit: "cover"}}/>  {/* still: no shimmer */}
+        {/* still (no shimmer) and tiled at its own size, so the grain stays fine at 4K instead of a stretched blur */}
+        <AbsoluteFill style={{backgroundImage: `url(${staticFile("grain.png")})`, backgroundSize: "512px 512px"}}/>
       </AbsoluteFill>}
       {t.vignette > 0 && <AbsoluteFill style={{pointerEvents: "none",
         background: `radial-gradient(ellipse at center, transparent 55%, ${alpha(C.light ? "#000000" : "#000000", clamp(t.vignette, 0, 0.7))})`}}/>}

@@ -1779,6 +1779,34 @@ def test_a_thin_outline_still_gives_a_full_length_lesson():
     assert any("far too short: 4 shots" in p for p in parts) and len(plan["scenes"]) >= 64
 
 
+def test_a_long_video_is_always_written_part_by_part_even_without_a_usable_outline():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker, check_brief, outline_parts
+    assert outline_parts({"acts": [{"name": "A", "beats": "graph: a bell; check: which way?"}]}) == \
+        [{"title": "A", "beats": ["graph: a bell", "check: which way?"]}]
+    assert outline_parts({"parts": [{"title": "B", "shots": [{"beat": "diagram: dots"}, ""]}]})[0]["beats"] == ["diagram: dots"]
+    assert outline_parts({"title": "no parts at all"}) == [] and outline_parts("text") == []
+    asked, logs = [], []
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            asked.append(prompt)
+            if "THIS IS A LONG VIDEO" in prompt:
+                return {"title": "CLT", "scenes": [{"narration": "an outline that is really a script"}]}   # no parts
+            if "Now write ONLY part" in prompt:
+                return {"scenes": [{"kind": "diagram", "narration": " ".join(["word"] * 24)} for _ in range(30)]}
+            if prompt.startswith(("These are the shots of a video", "You are the comedy writer", "These are the narration")):
+                return {"short": []} if "shots of a video" in prompt else \
+                    {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            raise AssertionError("one request for a long video must never happen")
+
+    brief = check_brief({"minutes": 10, "acts": [{"title": "Setup", "job": "the jar of sweets"},
+                                                {"title": "Twist", "job": "averages make a bell"}]}, "education")
+    plan = VideoMaker(Settings(), FakeLLM(), log=logs.append).script("CLT", [], [], "education", brief)
+    assert sum("THIS IS A LONG VIDEO" in p for p in asked) == 2                     # asked once more
+    assert any("from the plan's acts" in m for m in logs) and len(plan["scenes"]) >= 60
+
+
 def test_llm_skips_a_provider_a_request_is_too_big_for(monkeypatch):
     import blogwriter.llm as L
     calls = []
@@ -1943,6 +1971,52 @@ def test_numbers_said_in_words_count_and_a_formula_inside_a_box_is_its_content()
     assert "sarcastic" in check_brief({"narrator": "A patient teacher."}, "education")["narrator"]
     assert check_brief({"narrator": "A deadpan guide."}, "education")["narrator"] == "A deadpan guide."
     assert "sarcastic" not in check_brief({"narrator": "A calm anchor."}, "news")["narrator"]
+
+
+def test_the_video_is_encoded_once_with_the_best_codec_and_never_lost(monkeypatch, tmp_path):
+    from blogwriter import video
+    monkeypatch.setattr(video, "ffmpeg_exe", lambda: "ffmpeg")
+    monkeypatch.delenv("VIDEO_CODEC", raising=False)
+    for listing, best in (("libsvtav1 libx265 libx264", "av1"), ("libx265 libx264", "hevc"), ("libx264", "h264"), ("", "h264")):
+        monkeypatch.setattr(video, "footage_encoders", lambda exe, l=listing: l)
+        assert video.final_codec() == best
+    monkeypatch.setattr(video, "footage_encoders", lambda exe: "libsvtav1 libx265 libx264")
+    monkeypatch.setenv("VIDEO_CODEC", "hevc")
+    assert video.final_codec() == "hevc"
+    monkeypatch.setenv("VIDEO_CODEC", "av1")
+    calls, logs = [], []
+    dest = tmp_path / "long.mp4"
+
+    def fake_ffmpeg(args, timeout=0):
+        calls.append(args)
+        if "libsvtav1" in args:
+            raise RuntimeError("encoder crashed")
+        dest.write_bytes(b"x" * 2_000_000)
+    monkeypatch.setattr(video, "ffmpeg", fake_ffmpeg)
+    assert video.final_encode("parts.txt", "s.mp3", str(dest), 3840 * 2160, logs.append, concat=True) == "h264"
+    first, second = calls
+    assert first[:6] == ["-f", "concat", "-safe", "0", "-i", "parts.txt"] and "yuv420p10le" in first
+    assert first[first.index("-preset") + 1] == "8"                       # 4K: the faster AV1 preset
+    assert second[second.index("-c:v") + 1] == "copy"                     # the rendered pictures are kept
+    assert any("AV1 encode failed" in m for m in logs) and "H264, 2 MB" in logs[-1]
+
+
+def test_the_resolution_is_4k_by_default_and_8k_on_request(monkeypatch):
+    import importlib
+    from blogwriter import video
+    try:
+        for value, height, scale, chunk in ((None, 2160, "2.0", 1200), ("8k", 4320, "4.0", 300), ("1440", 1440, None, 2700),
+                                            ("huh", 2160, "2.0", 1200)):
+            if value is None:
+                monkeypatch.delenv("VIDEO_RESOLUTION", raising=False)
+            else:
+                monkeypatch.setenv("VIDEO_RESOLUTION", value)
+            importlib.reload(video)
+            assert video.RESOLUTION == height and video.CHUNK_FRAMES == chunk
+            assert scale is None or video.LONG_SCALE == scale
+    finally:
+        monkeypatch.delenv("VIDEO_RESOLUTION", raising=False)
+        importlib.reload(video)
 
 
 def test_a_long_render_is_split_evenly_into_parts_for_parallel_machines():

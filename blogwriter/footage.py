@@ -3,9 +3,11 @@ image and video library (plus Pixabay when PIXABAY_API_KEY is set). Only a short
 remote file, and a vision model checks one frame of it, so a talking head or an off-topic clip is never used.
 The vision model is also the critic that looks at the finished video."""
 import base64
+import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from typing import Callable, List, Optional
@@ -40,8 +42,24 @@ def download(url: str, path: str) -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=None)
+def encoders(exe: str) -> str:
+    """The encoders an ffmpeg binary offers (its -encoders listing; empty if it cannot be run)."""
+    try:
+        return subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+@functools.lru_cache(maxsize=None)
 def ffmpeg_exe() -> str:
+    """The most capable ffmpeg here: the system's when it has the modern encoders (the render machines install one
+    with SVT-AV1, which also decodes AV1 for the quality check), else the imageio-ffmpeg wheel's full build."""
     import imageio_ffmpeg
+    system = shutil.which("ffmpeg")
+    if system and "libsvtav1" in encoders(system):
+        return system
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
