@@ -86,8 +86,7 @@ export const Texture = () => {
     <>
       {t.grain > 0 && <AbsoluteFill style={{opacity: clamp(t.grain, 0, 0.25), mixBlendMode: C.light ? "multiply" : "overlay",
                                             pointerEvents: "none"}}>
-        <Img src={staticFile("grain.png")} style={{width: "120%", height: "120%", objectFit: "cover",
-                                                   transform: `translate(${(frame * 37) % 9 - 4}%, ${(frame * 53) % 7 - 3}%)`}}/>
+        <Img src={staticFile("grain.png")} style={{width: "100%", height: "100%", objectFit: "cover"}}/>  {/* still: no shimmer */}
       </AbsoluteFill>}
       {t.vignette > 0 && <AbsoluteFill style={{pointerEvents: "none",
         background: `radial-gradient(ellipse at center, transparent 55%, ${alpha(C.light ? "#000000" : "#000000", clamp(t.vignette, 0, 0.7))})`}}/>}

@@ -123,14 +123,13 @@ export const Camera = ({children, i = 0, amount: base = 1}) => {
   const {durationInFrames} = useVideoConfig();
   const t = frame / Math.max(1, durationInFrames);
   const dir = i % 2 ? 1 : -1;
+  // flat (no 3D tilt): a tilted layer is redrawn in perspective every frame, so text edges shimmer and soften on a
+  // big screen; a slow push and a small drift keep the shot alive while every letter stays crisp
   const sway = (key, period) => noise2D(`${key}-${i}`, frame / period, 0);
-  const ry = dir * (1.6 - 3.2 * t) * amount + sway("ry", 150) * 1.7 * amount;
-  const rx = (0.8 - 1.6 * t) * amount + sway("rx", 170) * 1.1 * amount;
-  const tx = dir * t * 24 * amount + sway("tx", 120) * 12 * amount, ty = sway("ty", 140) * 8 * amount;
+  const tx = dir * t * 16 * amount + sway("tx", 160) * 6 * amount, ty = sway("ty", 180) * 4 * amount;
   return (
-    <AbsoluteFill style={{perspective: 1800}}>
-      <AbsoluteFill style={{transform: `rotateY(${ry}deg) rotateX(${rx}deg) scale(${1 + 0.05 * t * amount}) `
-                                       + `translate(${tx}px, ${ty}px)`}}>
+    <AbsoluteFill>
+      <AbsoluteFill style={{transform: `translate(${tx}px, ${ty}px) scale(${1 + 0.04 * t * amount})`}}>
         {children}
       </AbsoluteFill>
     </AbsoluteFill>
@@ -355,10 +354,12 @@ export const ChapterSting = ({kicker, title, vertical}) => {
 };
 
 // Film finish over everything: grain, vignette and (on dark themes) a slow light leak.
+// The film finish: a light leak (dark themes), a vignette and a grain that holds still. Grain that jumps every frame
+// shimmers on a big screen like the picture is blinking, and costs the encoder most of its bitrate.
 export const Finish = () => {
   if (C.clean) return null;
   const frame = useCurrentFrame();
-  const x = Math.floor(random(`gx${frame}`) * 512), y = Math.floor(random(`gy${frame}`) * 512);
+  const x = 0, y = 0;
   return (
     <>
       {!C.light && <AbsoluteFill style={{background: `radial-gradient(circle at ${20 + 60 * (0.5 + 0.5 * Math.sin(frame / 140))}% 0%, ${alpha(C.accent, 0.12)}, transparent 45%)`,

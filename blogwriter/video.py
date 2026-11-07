@@ -328,6 +328,23 @@ def fill(template: str, **values) -> str:
     for k, v in values.items():
         template = template.replace(f"[{k}]", str(v))
     return template
+PUNCH = """You are the comedy writer of a science channel whose narrator is dry, deadpan and sarcastic: a teacher who has
+heard every wrong answer and finds them all hilarious, warm underneath. These are the narration lines of one lesson,
+one per shot, in order. Punch them up so the sarcasm is UNMISTAKABLE when a calm voice reads them aloud.
+- About one line in three gets a real joke, written for THAT line: a deadpan aside, ironic understatement, mock
+  praise, a jab at the obvious wrong intuition, at jargon or at the subject's scary reputation, an everyday
+  absurdity, or a callback to the running example ({examples}). A joke that could sit in any other video is not good
+  enough: no catchphrases, no stock lines, never the same joke twice.
+  The standard, from a lesson on gravity (do not reuse it): "Drop a hammer and a feather on the Moon and they land
+  together. Galileo predicted it four centuries ago. Physics teachers have not stopped bringing it up since."
+- Timing: the punchline comes LAST, after a full stop or an ellipsis, and is short (under 12 words).
+- The other lines may get a sharper, wittier wording, but stay calm; never two jokes in a row.
+- Never mock the viewer, a real person or a group. A joke never replaces the explanation: every line still teaches
+  exactly what it taught, in simple everyday words.
+- Keep every number, name, symbol and technical term a line has; add no new numbers, names or facts. No line over
+  55 words; the first line stays a hook of at most 28 words.
+Lines (JSON): {lines}
+Reply with JSON: {{"lines": [exactly {n} strings, in the same order]}}"""
 EXPAND = """These are the narration lines of an explainer video, one per shot, in order. The video is too short:
 together they should run about {total} spoken words, but they have {have}. Rewrite every line so it explains more:
 say what the viewer is watching, why it matters and what it means, in the same voice. Keep each line's meaning
@@ -581,7 +598,7 @@ LONG_SCALE = "1.3333333333333333"   # 1920x1080 layout rendered at 2560x1440: Yo
                                     # far higher bitrate, so text, formulas and thin lines stay crisp
 
 
-QUALITY = ["--muted", "--crf=16", "--x264-preset=slow", "--jpeg-quality=100"]   # quality over speed
+QUALITY = ["--muted", "--crf=16", "--x264-preset=slow", "--image-format=png"]   # lossless frames: crisp coloured text
 CHUNK_FRAMES = 2700       # one render machine's share of a long video (90 s of video, ~40 min of rendering)
 SOUNDTRACK = "soundtrack_en.mp3"
 
@@ -1276,6 +1293,8 @@ class VideoMaker:
                 plan = again
         if spoken_words(plan) < words_needed * 0.9:        # still short: the same shots, each explained more
             plan = self.expand(plan, words_needed)
+        if style == "education":                            # the lesson voice: sarcasm a viewer actually hears
+            plan = self.punch_up(plan, brief)
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:MAX_SCENES]:
             if not isinstance(sc, dict):
@@ -1683,6 +1702,45 @@ class VideoMaker:
         """Diagrams need the strongest model: Gemini Flash first, then the usual providers."""
         reply = gemini_json(self.s, prompt, effort="medium", temperature=0.8, log=self.log)
         return reply if reply is not None else self.llm.complete_json(prompt, max_tokens=8000, temperature=0.8)
+
+    def punch_up(self, plan: dict, brief: dict) -> dict:
+        """A comedy writer's pass over a lesson: about one line in three gets a deadpan, sarcastic joke with the
+        punchline last, so a calm voice still lands it. A line keeps its meaning, terms and numbers: a rewrite that
+        adds, drops or changes a number, or runs too long, is ignored and the line stays as it was."""
+        rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
+        lines = [str(sc.get("narration", "")) for sc in rows]
+        if len(lines) < 3:
+            return plan
+        out, changed, used = [], 0, set()
+        for start in range(0, len(lines), 40):          # in batches, so each reply stays well inside the limits
+            batch = lines[start:start + 40]
+            try:                                         # comedy needs the strongest writer available
+                reply = self.design_json(PUNCH.format(examples=brief.get("examples") or "-", n=len(batch),
+                                                      lines=json.dumps(batch, ensure_ascii=False)))
+            except LLMError:
+                out += batch
+                continue
+            new = reply.get("lines") if isinstance(reply, dict) else None
+            if not isinstance(new, list) or len(new) != len(batch):
+                out += batch
+                continue
+            for k, (old, line) in enumerate(zip(batch, new)):
+                line = " ".join(str(line or "").split())
+                same_numbers = sorted(re.findall(r"\d[\d,.]*", line)) == sorted(re.findall(r"\d[\d,.]*", old))
+                limit = 28 if start + k == 0 else 60
+                # the joke a line gained (its last sentence): the same joke twice in one video is a catchphrase
+                tail = re.sub(r"[^a-z ]", "", re.split(r"(?<=[.!?…])\s+", line)[-1].lower()).strip()
+                repeat = tail in used and tail not in re.sub(r"[^a-z ]", "", old.lower())
+                if line and line != old and same_numbers and len(line.split()) <= limit and not repeat:
+                    used.add(tail)
+                    out.append(line)
+                    changed += 1
+                else:
+                    out.append(old)
+        for sc, line in zip(rows, out):
+            sc["narration"] = line
+        self.log(f"[video] comedy pass: {changed} of {len(lines)} lines punched up")
+        return plan
 
     def expand(self, plan: dict, words_needed: int) -> dict:
         """Lengthen a short script line by line (same shots, same meaning, more explanation). A line only changes

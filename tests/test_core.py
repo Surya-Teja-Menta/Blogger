@@ -1203,7 +1203,7 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
 
     class FakeLLM:
         def complete_json(self, prompt, **kw):
-            if prompt.startswith("These are the narration lines"):      # the lengthening pass: lines kept as they are
+            if prompt.startswith(("These are the narration lines", "You are the comedy writer")):      # the lengthening pass: lines kept as they are
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
             assert "Lemmino" in prompt and "clue by clue" in prompt and "Start on the empty harbour." in prompt
             assert "MATHS INTUITION" in prompt and r"\frac{1}{n}" in prompt and "28 to 40 scenes" in prompt
@@ -1668,7 +1668,7 @@ def test_short_scripts_are_lengthened_line_by_line_and_the_outro_names_the_chann
 
     class FakeLLM:
         def complete_json(self, prompt, **kw):
-            if prompt.startswith("These are the narration lines"):
+            if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 lines = json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])
                 return {"lines": [line + " and here is why that matters to you" for line in lines]}
             return {"title": "T", "thumb_text": "x", "description": "D", "tags": [], "outro": "",
@@ -1736,7 +1736,7 @@ def test_long_lessons_are_written_part_by_part_from_an_outline():
                                    for k in range(3)]}
             if prompt.startswith("These are the shots of a video"):
                 return {"short": [{"scene": 1, "narration": "Watch the ball roll."}]}
-            if prompt.startswith("These are the narration lines"):
+            if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
             raise AssertionError("unexpected prompt")
 
@@ -1768,7 +1768,7 @@ def test_a_thin_outline_still_gives_a_full_length_lesson():
                 return {"scenes": [{"kind": "diagram", "narration": " ".join(["word"] * 24)} for _ in range(n)]}
             if prompt.startswith("These are the shots of a video"):
                 return {"short": []}
-            if prompt.startswith("These are the narration lines"):
+            if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
             raise AssertionError("unexpected prompt")
 
@@ -1903,6 +1903,29 @@ def test_no_empty_boxes_words_in_formulas_keep_spaces_and_the_level_reaches_the_
     advanced, _ = video.shape_prompt({**brief, "level": "advanced"}, "education", "CLT", "(none)")
     assert "complete beginners" in basic and "complete beginners" not in advanced and "full picture" in advanced
     assert "never symbol by symbol" in basic
+
+
+def test_the_comedy_pass_lands_jokes_but_never_changes_numbers_or_repeats_a_joke():
+    from blogwriter.config import Settings
+    from blogwriter.video import VideoMaker
+    lines = ["Thirty orders make one average.", "The bell gets narrower.", "Pizza takes 30 minutes.",
+             "The spread shrinks.", "That is the theorem."]
+
+    class FakeLLM:
+        def complete_json(self, prompt, **kw):
+            assert "deadpan" in prompt and "pizza" in prompt
+            return {"lines": ["Thirty orders make one average. Democracy, but for numbers.",     # a joke: kept
+                              "The bell gets narrower. Democracy, but for numbers.",            # the same joke: no
+                              "Pizza takes 45 minutes. Allegedly.",                             # a changed number: no
+                              "The spread shrinks. " + "very " * 60,                            # far too long: no
+                              "That is the theorem... no applause needed."]}                    # kept
+    plan = {"scenes": [{"narration": l} for l in lines]}
+    logs = []
+    VideoMaker(Settings(), FakeLLM(), log=logs.append).punch_up(plan, {"examples": "pizza delivery"})
+    got = [s["narration"] for s in plan["scenes"]]
+    assert got == ["Thirty orders make one average. Democracy, but for numbers.", "The bell gets narrower.",
+                   "Pizza takes 30 minutes.", "The spread shrinks.", "That is the theorem... no applause needed."]
+    assert "2 of 5 lines punched up" in logs[-1]
 
 
 def test_numbers_said_in_words_count_and_a_formula_inside_a_box_is_its_content():
