@@ -133,6 +133,14 @@ jobs:
           if [ "$RUN_VIDEO" = "true" ] && grep -q '^\[video\] FAILED' run.log; then status=1; fi
           exit $status
 
+      - name: Release the voice machines
+        if: always() && inputs.video
+        continue-on-error: true
+        env:
+          RUN_TOPIC: ${{ inputs.topic }}
+          RUN_LESSON: ${{ inputs.course != '' && format('{0}:{1}', inputs.course, inputs.lesson_id) || '' }}
+        run: python -c "from blogwriter import voicefarm; from blogwriter.config import Settings; voicefarm.release(Settings.from_env())"
+
       - name: Hand the long video to the render machines
         id: farm
         if: inputs.video && steps.run.outcome == 'success'
@@ -177,6 +185,78 @@ jobs:
           export MSG="$( [ -n "$QUEUE_ID" ] && echo queue || echo history ): $RUN_TOPIC $(date -u +%F)"
           cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"     # the checkout is reset while it runs
           bash "$RUNNER_TEMP/commit.sh"
+
+  # The voice farm (blogwriter/voicefarm.py): twelve machines that start with the run, install the voice cloning
+  # environment while the script is written, and clone one chunk of the narration each (through the private bucket).
+  # They are jobs of this run, so GitHub never holds them for approval (a workflow started by the make job was held).
+  # CHUNKS in voicefarm.py is the size of this matrix. A machine that gets nothing to do leaves; none of them can fail
+  # the run: without them the make job clones the lines itself, or the standard voice speaks.
+  voice:
+    if: inputs.video && vars.NARRATOR_VOICE != 'standard' && vars.VOICE_FARM != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    name: voice chunk ${{ matrix.chunk }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # the same environment (and cache key) as the make job keeps: keep the two identical
+      - name: Keep the voice environment between runs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .voice
+            ~/.cache/huggingface
+          key: voice-chatterbox-0.1.7-fw-${{ runner.os }}-py313-v1
+
+      - name: Voice cloning environment
+        run: |
+          ready() { .voice/bin/python -c "import chatterbox, faster_whisper" 2>/dev/null; }
+          if ! ready; then
+            rm -rf .voice && python -m venv .voice
+            .voice/bin/pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+            .voice/bin/pip install -q chatterbox-tts==0.1.7 faster-whisper
+          fi
+          ready
+          echo "VOICE_PYTHON=$GITHUB_WORKSPACE/.voice/bin/python" >> "$GITHUB_ENV"
+
+      # only what this job needs: the storage bucket and the voice settings
+      - name: Load the storage and voice settings
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if not re.fullmatch(r"(S3_|VOICE_|CLONE_|NARRATOR_)[A-Z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+
+      - name: Clone this chunk when its lines arrive
+        env:
+          RUN_TOPIC: ${{ inputs.topic }}
+          RUN_LESSON: ${{ inputs.course != '' && format('{0}:{1}', inputs.course, inputs.lesson_id) || '' }}
+          FARM_INDEX: ${{ matrix.chunk }}
+          CLONE_BUDGET_MINUTES: "60"          # a chunk is about ten minutes of work: far more means something is wrong
+        run: |
+          export FARM_PREFIX=$(python -c "from blogwriter import voicefarm; import os; print(voicefarm.run_prefix(os.environ['RUN_TOPIC'], os.environ['RUN_LESSON']))")
+          python -u -m blogwriter.voice_worker
 
   # one machine per part of the long video, all at once
   render:

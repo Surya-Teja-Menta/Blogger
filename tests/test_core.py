@@ -2323,42 +2323,49 @@ def test_the_voice_farm_clones_in_parallel_and_hands_back_what_a_machine_missed(
     bucket = _FakeBucket()
     monkeypatch.setattr(storage, "_client", lambda settings: bucket)
     s = Settings(s3_endpoint="e", s3_bucket="b", s3_access_key="k", s3_secret_key="s")
-    monkeypatch.setenv("ACTIONS_TOKEN", "t")
-    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
-    monkeypatch.setenv("VOICE_FARM_CHUNKS", "3")
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    monkeypatch.setenv("RUN_TOPIC", "Central Limit Theorem")
+    monkeypatch.delenv("RUN_LESSON", raising=False)
     assert voicefarm.available(s)
     monkeypatch.setenv("VOICE_FARM", "off")
     assert not voicefarm.available(s)
     monkeypatch.setenv("VOICE_FARM", "on")
-    asked = []
+    monkeypatch.setattr(voicefarm, "CHUNKS", 4)
+    prefix = voicefarm.run_prefix("Central Limit Theorem", "")
+    assert prefix.startswith("voice-farm/77-1-") and prefix != voicefarm.run_prefix("Another topic", "")
 
-    def dispatch(prefix, index):
-        asked.append(index)
-        spec = json.loads(bucket.objects[f"{prefix}/spec-{index}.json"])
-        if index == 2:                                            # this machine dies and leaves its marker
-            bucket.objects[f"{prefix}/err-{index}.txt"] = b"gone"
-            return None
-        zp = tmp_path / f"w{index}.zip"
+    def machines(key):                      # the voice machines, answering as the lines are put out
+        if "/spec-" not in key:
+            return
+        k = int(key.rsplit("-", 1)[1].split(".")[0])
+        if k == 3:
+            return                          # this machine never came: no "alive" note
+        bucket.objects[f"{prefix}/alive-{k}.txt"] = b"here"
+        spec = json.loads(bucket.objects[key])
+        if k == 2:                          # this one dies and leaves its marker
+            bucket.objects[f"{prefix}/err-{k}.txt"] = b"gone"
+            return
+        zp = tmp_path / f"w{k}.zip"
         with zipfile.ZipFile(zp, "w") as z:
-            z.writestr("jobs.json", json.dumps([{"ok": True, "words": [[0, 1, it["text"].split()[0]]], "match": 1.0}
-                                                 for it in spec]))
+            z.writestr("jobs.json", json.dumps([{"ok": True, "words": [[0, 1, it["text"].split()[0]]], "match": 1.0} for it in spec]))
             for j in range(len(spec)):
                 z.writestr(f"{j}.wav", b"RIFF")
-        bucket.objects[f"{prefix}/out-{index}.zip"] = zp.read_bytes()
-        return None
-    monkeypatch.setattr(voicefarm, "dispatch", dispatch)
+        bucket.objects[f"{prefix}/out-{k}.zip"] = zp.read_bytes()
+    bucket.on_put = machines
+    monkeypatch.setenv("VOICE_FARM_HELLO_MINUTES", "0")
     logs = []
-    texts = ["one a", "two b", "three c", "four d", "five e", "six f"]
+    texts = ["one a", "two b", "three c", "four d", "five e", "six f", "seven g", "eight h"]
     items = voicefarm.clone(texts, s, str(tmp_path), logs.append, sleep=lambda x: None)
-    assert asked == [0, 1, 2] and [bool(i.get("missing")) for i in items] == [False] * 4 + [True] * 2
+    assert [bool(i.get("missing")) for i in items] == [False] * 5 + [True] * 3          # chunks 2 and 3 were not delivered
     assert items[0]["ok"] and items[0]["words"] == [[0, 1, "one"]] and open(items[3]["out"], "rb").read() == b"RIFF"
-    assert not bucket.objects                                       # nothing is left in the bucket
-    assert any("2 of 3 machines delivered" in m for m in logs)
-    monkeypatch.setattr(voicefarm, "dispatch", lambda p, i: "HTTP 403")
-    assert voicefarm.clone(texts, s, str(tmp_path), logs.append, sleep=lambda x: None) is None   # nothing started
+    assert list(bucket.objects) == [f"{prefix}/done.txt"]           # nothing but the "no more voices" note is left
+    assert any("2 of 4 chunks delivered" in m for m in logs)
+    bucket.on_put = None
+    monkeypatch.setenv("VOICE_FARM_HELLO_MINUTES", "0")
+    assert voicefarm.clone(texts, s, str(tmp_path), logs.append, sleep=lambda x: None) is None   # nobody came: clone here
 
 
-def test_a_voice_farm_machine_clones_its_chunk_and_reports_failure(monkeypatch, tmp_path):
+def test_a_voice_farm_machine_waits_for_its_lines_clones_them_and_reports_failure(monkeypatch, tmp_path):
     import json
     import sys
     import zipfile
@@ -2368,7 +2375,15 @@ def test_a_voice_farm_machine_clones_its_chunk_and_reports_failure(monkeypatch, 
     monkeypatch.setenv("S3_ENDPOINT", "e")
     monkeypatch.setenv("S3_BUCKET", "b")
     monkeypatch.setenv("VOICE_PYTHON", sys.executable)
-    bucket.objects["voice-farm/ab12cd34/spec-1.json"] = json.dumps([{"text": "Hello there."}, {"text": "Bye."}]).encode()
+    monkeypatch.setenv("FARM_PREFIX", "voice-farm/77-1-ab12cd34")
+    monkeypatch.setenv("FARM_INDEX", "1")
+    prefix = "voice-farm/77-1-ab12cd34"
+    bucket.list_objects_v2 = lambda Bucket, Prefix: {"Contents": [{"Key": k} for k in bucket.objects if k.startswith(Prefix)]}
+    waits = []
+
+    def sleep(sec):                         # the make job puts the lines out while the machine waits
+        waits.append(sec)
+        bucket.objects[f"{prefix}/spec-1.json"] = json.dumps([{"text": "Hello there."}, {"text": "Bye."}]).encode()
 
     def sample(settings, work, log):
         ref = tmp_path / "ref.wav"
@@ -2384,13 +2399,18 @@ def test_a_voice_farm_machine_clones_its_chunk_and_reports_failure(monkeypatch, 
         return False
     monkeypatch.setattr(video, "voice_sample", sample)
     monkeypatch.setattr(video, "clone_with_budget", clone)
-    assert voice_worker.main(["voice-farm/ab12cd34", "1"]) == 0
-    z = zipfile.ZipFile(__import__("io").BytesIO(bucket.objects["voice-farm/ab12cd34/out-1.zip"]))
+    assert voice_worker.main(sleep=sleep) == 0 and waits == [15]
+    assert f"{prefix}/alive-1.txt" in bucket.objects
+    z = zipfile.ZipFile(__import__("io").BytesIO(bucket.objects[f"{prefix}/out-1.zip"]))
     assert sorted(z.namelist()) == ["0.wav", "1.wav", "jobs.json"]
     assert "text" not in json.loads(z.read("jobs.json"))[0]           # the script stays out of the hand-over
     monkeypatch.setattr(video, "voice_sample", lambda *a: None)       # no recording: say so, so the make job moves on
-    assert voice_worker.main(["voice-farm/ab12cd34", "1"]) == 1 and "voice-farm/ab12cd34/err-1.txt" in bucket.objects
-    assert voice_worker.main(["../../etc", "1"]) == 2                  # the inputs are checked
+    assert voice_worker.main(sleep=sleep) == 1 and f"{prefix}/err-1.txt" in bucket.objects
+    bucket.objects.clear()
+    bucket.objects[f"{prefix}/done.txt"] = b"done"                    # the make job needs no more voices: leave quietly
+    assert voice_worker.main(sleep=sleep) == 0
+    monkeypatch.setenv("FARM_PREFIX", "../../etc")
+    assert voice_worker.main(sleep=sleep) == 2                        # the inputs are checked
 
 
 def test_lines_the_farm_did_not_deliver_are_cloned_here_and_all_else_is_standard(monkeypatch, tmp_path):
