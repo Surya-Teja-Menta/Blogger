@@ -6,6 +6,7 @@ import {noise2D} from "@remotion/noise";
 import {pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
+import {Surface} from "./looks";
 
 export const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 export const ease = (t) => 1 - Math.pow(1 - clamp(t), 3);
@@ -45,6 +46,7 @@ export const Words = ({text = "", highlight = "", size = 110, delay = 0, color, 
         const sweep = clamp((frame - (markAt ?? delay + words.length * 2.5 + 4)) / 8);
         return (
           <span key={i} style={{display: "inline-block", marginRight: size * 0.24, ...wordEnter(p, size, i),
+                                ...(C.look && C.look.misregister ? {textShadow: `${size * 0.06}px ${size * 0.06}px 0 ${alpha(C[C.look.misregister] || C.hot, 0.6)}`} : {}),
                                 padding: marked ? `0 ${size * 0.1}px` : 0, borderRadius: size * 0.08,
                                 color: marked && sweep > 0.35 ? (C.light ? "#fff" : C.bg) : undefined,
                                 background: marked ? `linear-gradient(100deg, ${C.accent}, ${C.accent}) no-repeat left / ${sweep * 100}% 100%` : "none",
@@ -138,7 +140,7 @@ export const Camera = ({children, i = 0, amount: base = 1}) => {
 
 // drifting specks of light (or dust on paper); positions are seeded, so every render is identical
 export const Particles = ({n = 40, seed = "p", color}) => {
-  if (C.clean) return null;
+  if (C.clean || C.look) return null;     // a film look is a real surface: no floating dust
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
   return (
@@ -159,6 +161,7 @@ export const Particles = ({n = 40, seed = "p", color}) => {
 // The theme's moving background, used whenever a scene has no photo or footage.
 export const Backdrop = ({word = "", hue, i = 0}) => {
   if (C.clean) return null;           // a thumbnail cut-out: the visual alone, on a transparent frame
+  if (C.look) return <Surface i={i}/>;   // a film look draws on its own surface (looks.jsx)
   const frame = useCurrentFrame() * (C.speed || 1);     // the design's pace sets how fast the backdrop drifts
   const {width, height} = useVideoConfig();
   const h = hue || C.accent;

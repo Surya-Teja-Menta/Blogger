@@ -15,6 +15,7 @@ import {Texture, genCut} from "./gen";
 import {DiagramScene} from "./diagram";
 import {SUBSCRIBE_FRAMES, Subscribe} from "./subscribe";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
+import {LookDefs, LookOverlay, LookStyle} from "./looks";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -90,7 +91,10 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
   const bars = scenes.map((s, k) => (k === 0 ? [0, Math.min(s.frames, 150)] : s.chapter ? [starts[k], starts[k] + STING + 45] : null))
     .filter(Boolean);
   return (
-    <AbsoluteFill style={{background: clean ? "transparent" : C.bg, fontVariantNumeric: "lining-nums"}}>
+    <AbsoluteFill className="look-root" style={{background: clean ? "transparent" : C.bg, fontVariantNumeric: "lining-nums",
+                                                 filter: C.look && C.look.mono ? "grayscale(1) contrast(1.06)" : undefined}}>
+      <LookDefs/>
+      <LookStyle/>
       <TransitionSeries>
         {scenes.map((s, i) => {
           // a shot the art director gave a motion graphic plays that instead of its template
@@ -127,6 +131,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       </TransitionSeries>
       <Finish/>
       {!clean && <Texture/>}
+      <LookOverlay/>
       <Letterbox spans={bars} vertical={vertical}/>
       {!clean && <Badge channel={channel} vertical={vertical}/>}
       {/* while the subscribe card is up, the captions step aside so the two never overlap */}

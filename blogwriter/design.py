@@ -26,7 +26,13 @@ FONTS: Dict[str, tuple] = {
     "ArchivoBlack": ((400,), "display"), "AbrilFatface": ((400,), "display"),
     "Merriweather": ((400, 700, 900), "both"), "Nunito": ((400, 700, 900), "body"),
     "DMSans": ((400, 600, 800), "body"),
+    # used only by the film looks (looks.py): handwriting, technical and period faces
+    "Kalam": ((400, 700), "hand"), "ArchitectsDaughter": ((400,), "hand"), "Caveat": ((400, 700), "hand"),
+    "PatrickHand": ((400,), "hand"), "SpecialElite": ((400,), "hand"), "IBMPlexMono": ((400, 600), "mono"),
+    "ShareTechMono": ((400,), "mono"), "VT323": ((400,), "mono"), "CourierPrime": ((400, 700), "mono"),
+    "CormorantGaramond": ((400, 600, 700), "look"), "Limelight": ((400,), "look"), "Bungee": ((400,), "look"),
 }
+OPEN_FONTS = [f for f, (_, role) in FONTS.items() if role in ("display", "both", "body")]   # what a free design picks
 BACKGROUNDS = ("aurora", "orbs", "grid", "contour", "paper", "rays", "dots", "waves")
 CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
 DARK_ONLY = ("grid", "orbs")      # backdrops drawn for dark backgrounds
@@ -118,7 +124,7 @@ def _weight(font: str, want: int) -> int:
 SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob")
 DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
-ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt")
+ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write")
 CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
 # how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
 EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart", "outBack", "outElastic",
@@ -212,7 +218,7 @@ def check(raw) -> Optional[dict]:
     if contrast(pal["text"], bg) < NEEDS["text"] or contrast(pal["panel"], bg) > 2.2:
         return None
     display, body = raw.get("display"), raw.get("body")
-    if display not in FONTS or body not in FONTS or len(FONTS[body][0]) < 2:    # body text needs regular and bold
+    if display not in OPEN_FONTS or body not in OPEN_FONTS or len(FONTS[body][0]) < 2:   # body needs regular and bold
         return None
     back = raw.get("background")
     cuts = [c for c in (raw.get("cuts") or []) if c in CUTS][:4]
@@ -267,11 +273,23 @@ def generate(seed: str) -> dict:
 
 
 def prompt(title: str, style: str, mood: str) -> str:
-    return PROMPT.format(title=title, style=style, mood=mood or "-", fonts=", ".join(FONTS),
+    return PROMPT.format(title=title, style=style, mood=mood or "-", fonts=", ".join(OPEN_FONTS),
                          backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS))
 
 
 def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None]) -> dict:
+    """The video's look: a film style from the library when one suits the subject (looks.py), else a design of its
+    own. FILM_LOOK=<key> or FILM_LOOK=free forces the choice."""
+    import os
+    from . import looks
+    forced = os.environ.get("FILM_LOOK", "").strip().lower()
+    picked = ((forced, next(iter(looks.LOOKS[forced]["accents"].values()))) if forced in looks.LOOKS else
+              None if forced == "free" else looks.choose(complete_json, title, style, mood, log))
+    if picked:
+        d = looks.theme_for(picked[0], picked[1], _finish, check_fx, title)
+        log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
+            f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
+        return d
     try:
         d = check(complete_json(prompt(title, style, mood), max_tokens=2000, temperature=1.0))
     except Exception as exc:            # a design is a nice-to-have; a failed call never stops the video

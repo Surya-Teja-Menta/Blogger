@@ -2127,6 +2127,33 @@ def test_a_video_run_sells_its_document_but_sends_only_the_video_email(tmp_path,
     assert video.youtube_block(str(tmp_path / "missing.txt")) == ""
 
 
+def test_a_film_look_from_the_library_is_chosen_for_the_subject(monkeypatch):
+    from blogwriter import design, looks
+    logs = []
+    pick = looks.choose(lambda *a, **k: {"look": "Chalkboard", "accent": "pink chalk", "why": "a lesson"},
+                        "Central Limit Theorem", "education", "playful", logs.append)
+    assert pick == ("chalkboard", "#f48fb1") and "Chalkboard" in logs[-1]
+    assert looks.choose(lambda *a, **k: {"look": "free"}, "t", "news", "") is None
+    assert looks.choose(lambda *a, **k: {"look": "volcano"}, "t", "news", "", logs.append) is None
+    t = looks.theme_for("chalkboard", "#f48fb1", design._finish, design.check_fx, "seed")
+    assert t["look"] == {"slug": "chalkboard", "surface": "slate", "stroke": "chalk", "overlay": "", "misregister": "",
+                         "mono": False}
+    assert t["accent"] == "#f48fb1" and t["display"] == "Kalam" and t["hand"] == "Kalam" and t["light"] is False
+    assert t["fx"]["text"]["enter"] == "write" and {c["shape"] for c in t["fx"]["transitions"]} == {"fade", "split"}
+    news = looks.theme_for("newsreel", "#efe7d6", design._finish, design.check_fx, "s")
+    assert news["look"]["mono"] and news["upper"]
+    monkeypatch.setenv("FILM_LOOK", "blueprint")
+    d = design.design(lambda *a, **k: {}, "How a jet engine works", "education", "", logs.append)
+    assert d["look"]["surface"] == "blueprint" and d["source"] == "look:blueprint"
+    monkeypatch.setenv("FILM_LOOK", "free")
+    d = design.design(lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")), "t", "news", "", logs.append)
+    assert "look" not in d                                           # a design of its own
+    assert "Kalam" not in design.OPEN_FONTS and "Inter" in design.OPEN_FONTS   # free designs never pick a look's hand
+    for key, L in looks.LOOKS.items():                               # every look uses fonts the renderer loads
+        assert all(f in design.FONTS for f in (L["display"], L["body"], L["hand"])), key
+        assert design.contrast(L["palette"]["text"], L["palette"]["bg"]) >= 7, key
+
+
 def test_a_long_render_is_split_evenly_into_parts_for_parallel_machines():
     from blogwriter.video import CHUNK_FRAMES, part_args, render_parts
     parts = render_parts(18000)

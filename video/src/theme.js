@@ -31,12 +31,24 @@ import {loadFont as AbrilFatface} from "@remotion/google-fonts/AbrilFatface";
 import {loadFont as Merriweather} from "@remotion/google-fonts/Merriweather";
 import {loadFont as Nunito} from "@remotion/google-fonts/Nunito";
 import {loadFont as DMSans} from "@remotion/google-fonts/DMSans";
+import {loadFont as Caveat} from "@remotion/google-fonts/Caveat";
+import {loadFont as Kalam} from "@remotion/google-fonts/Kalam";
+import {loadFont as PatrickHand} from "@remotion/google-fonts/PatrickHand";
+import {loadFont as ArchitectsDaughter} from "@remotion/google-fonts/ArchitectsDaughter";
+import {loadFont as ShareTechMono} from "@remotion/google-fonts/ShareTechMono";
+import {loadFont as IBMPlexMono} from "@remotion/google-fonts/IBMPlexMono";
+import {loadFont as VT323} from "@remotion/google-fonts/VT323";
+import {loadFont as SpecialElite} from "@remotion/google-fonts/SpecialElite";
+import {loadFont as CourierPrime} from "@remotion/google-fonts/CourierPrime";
+import {loadFont as CormorantGaramond} from "@remotion/google-fonts/CormorantGaramond";
+import {loadFont as Limelight} from "@remotion/google-fonts/Limelight";
+import {loadFont as Bungee} from "@remotion/google-fonts/Bungee";
 import {loadFont as mono} from "@remotion/google-fonts/JetBrainsMono";
 import {loadFont as telugu} from "@remotion/google-fonts/NotoSansTelugu";
 import {loadFont as devanagari} from "@remotion/google-fonts/NotoSansDevanagari";
 
-const LOADERS = {Inter, BebasNeue, SpaceGrotesk, Unbounded, PlayfairDisplay, Manrope, Oswald, Sora, DMSerifDisplay, Fraunces, Archivo, Syne, RobotoSlab, Anton, Lora, IBMPlexSans, Outfit, BricolageGrotesque, InstrumentSerif, Lexend, Poppins, Montserrat, LibreBaskerville, WorkSans, Rubik, BarlowCondensed, ArchivoBlack, AbrilFatface, Merriweather, Nunito, DMSans};
-const WEIGHTS = {Inter: ["400", "600", "800", "900"], BebasNeue: ["400"], SpaceGrotesk: ["400", "500", "700"], Unbounded: ["400", "600", "800", "900"], PlayfairDisplay: ["400", "700", "900"], Manrope: ["400", "600", "800"], Oswald: ["400", "500", "700"], Sora: ["400", "600", "800"], DMSerifDisplay: ["400"], Fraunces: ["400", "700", "900"], Archivo: ["400", "600", "800", "900"], Syne: ["400", "600", "800"], RobotoSlab: ["400", "700", "900"], Anton: ["400"], Lora: ["400", "700"], IBMPlexSans: ["400", "600", "700"], Outfit: ["400", "600", "800", "900"], BricolageGrotesque: ["400", "600", "800"], InstrumentSerif: ["400"], Lexend: ["400", "600", "800"], Poppins: ["400", "600", "800", "900"], Montserrat: ["400", "600", "800", "900"], LibreBaskerville: ["400", "700"], WorkSans: ["400", "600", "800"], Rubik: ["400", "600", "800", "900"], BarlowCondensed: ["400", "600", "800"], ArchivoBlack: ["400"], AbrilFatface: ["400"], Merriweather: ["400", "700", "900"], Nunito: ["400", "700", "900"], DMSans: ["400", "600", "800"]};
+const LOADERS = {Caveat, Kalam, PatrickHand, ArchitectsDaughter, ShareTechMono, IBMPlexMono, VT323, SpecialElite, CourierPrime, CormorantGaramond, Limelight, Bungee, Inter, BebasNeue, SpaceGrotesk, Unbounded, PlayfairDisplay, Manrope, Oswald, Sora, DMSerifDisplay, Fraunces, Archivo, Syne, RobotoSlab, Anton, Lora, IBMPlexSans, Outfit, BricolageGrotesque, InstrumentSerif, Lexend, Poppins, Montserrat, LibreBaskerville, WorkSans, Rubik, BarlowCondensed, ArchivoBlack, AbrilFatface, Merriweather, Nunito, DMSans};
+const WEIGHTS = {Caveat: ["400", "700"], Kalam: ["400", "700"], PatrickHand: ["400"], ArchitectsDaughter: ["400"], ShareTechMono: ["400"], IBMPlexMono: ["400", "600"], VT323: ["400"], SpecialElite: ["400"], CourierPrime: ["400", "700"], CormorantGaramond: ["400", "600", "700"], Limelight: ["400"], Bungee: ["400"], Inter: ["400", "600", "800", "900"], BebasNeue: ["400"], SpaceGrotesk: ["400", "500", "700"], Unbounded: ["400", "600", "800", "900"], PlayfairDisplay: ["400", "700", "900"], Manrope: ["400", "600", "800"], Oswald: ["400", "500", "700"], Sora: ["400", "600", "800"], DMSerifDisplay: ["400"], Fraunces: ["400", "700", "900"], Archivo: ["400", "600", "800", "900"], Syne: ["400", "600", "800"], RobotoSlab: ["400", "700", "900"], Anton: ["400"], Lora: ["400", "700"], IBMPlexSans: ["400", "600", "700"], Outfit: ["400", "600", "800", "900"], BricolageGrotesque: ["400", "600", "800"], InstrumentSerif: ["400"], Lexend: ["400", "600", "800"], Poppins: ["400", "600", "800", "900"], Montserrat: ["400", "600", "800", "900"], LibreBaskerville: ["400", "700"], WorkSans: ["400", "600", "800"], Rubik: ["400", "600", "800", "900"], BarlowCondensed: ["400", "600", "800"], ArchivoBlack: ["400"], AbrilFatface: ["400"], Merriweather: ["400", "700", "900"], Nunito: ["400", "700", "900"], DMSans: ["400", "600", "800"]};
 const loaded = {};
 // a font is fetched only when a video uses it, once per render
 const face = (key) => {
@@ -57,7 +69,7 @@ const FALLBACK = {bg: "#0a0c10", panel: "#141a24", line: "#273041", text: "#f4f1
 // C and FONT are read by every component; useTheme() fills them from the design before anything draws.
 // Each render uses one design for all of its frames, so this stays deterministic.
 export const C = {...FALLBACK};
-export const FONT = {display: "", body: "", mono: `${monoFace}, monospace`};
+export const FONT = {display: "", body: "", hand: "", mono: `${monoFace}, monospace`};
 export const SERIES = [];
 
 export function useTheme(design) {
@@ -65,6 +77,7 @@ export function useTheme(design) {
   Object.assign(C, t);
   FONT.display = `${face(t.display)}, ${indic}`;
   FONT.body = `${face(t.body)}, ${indic}`;
+  FONT.hand = `${face(t.hand || t.body)}, ${indic}`;     // a film look's handwriting, for notes and labels
   SERIES.splice(0, SERIES.length, t.accent, t.cool, t.hot, t.violet);
   return t;
 }

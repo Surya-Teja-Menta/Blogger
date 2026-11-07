@@ -106,6 +106,7 @@ export const wordEnter = (p, size, k) => {
     case "slide": return {opacity: q, transform: `translateX(${(1 - p) * size * 1.2}px)`};
     case "drop": return {opacity: q, transform: `translateY(${(1 - p) * -size * 0.8}px)`};
     case "mask": return {clipPath: `inset(${(1 - q) * 100}% 0 0 0)`, transform: `translateY(${(1 - p) * size * 0.4}px)`};
+    case "write": return {clipPath: `inset(-20% ${(1 - q) * 100}% -20% 0)`};      // written on left to right
     case "flip": return {opacity: q, transform: `rotateY(${(1 - p) * 90}deg)`, transformOrigin: "left center"};
     case "spread": return {opacity: q, letterSpacing: `${(1 - q) * size * 0.25}px`, filter: `blur(${(1 - q) * 8}px)`};
     case "tilt": return {opacity: q, transform: `rotate(${(1 - p) * (k % 2 ? 12 : -12)}deg) translateY(${(1 - p) * size * 0.3}px)`};
