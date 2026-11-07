@@ -41,9 +41,18 @@ VOICES = {"en": "en-US-BrianMultilingualNeural", "hi": "hi-IN-MadhurNeural", "te
 FPS = 30
 TRANSITION = 15           # frames two scenes overlap; must equal TRANSITION in video/src/theme.js
 LEAD = 6                  # frames after a shot starts before its narration begins
-GAP = 4                   # frames of breath after the narration (clips are trimmed to the words, see tighten)
+GAP = 8                   # frames of breath after the narration (clips are trimmed to the words, see tighten)
+HOLD = 15                 # extra frames (half a second) held on the last shot of a part before the next part begins
+PACE = 0.88               # narration speed (NARRATION_PACE, 0.8 to 1): the owner found 1.0 a little too fast
+
+
+def narration_pace() -> float:
+    try:
+        return max(0.8, min(1.0, float(os.environ.get("NARRATION_PACE") or PACE)))
+    except ValueError:
+        return PACE
 MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
-SHORT_MAX_SECONDS = 58
+SHORT_MAX_SECONDS = 38     # a Short is a thirty second explanation of the whole thing
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
 SHOTS_PER_REQUEST = 14    # the most shots one request is asked to write (asked for 70 at once, a model returns ~18)
@@ -287,8 +296,10 @@ Return JSON:
               "subjects": [], "footage": "", "act": "", "facts": []}}],
   "outro": "...", "short": [{{"scene": scene index, "narration": "..."}}]}}
 
-"short": 4 or 5 beats for a vertical Short under 50 seconds, reusing scenes' visuals by index. Beat 1 stops the
-scroll in at most 14 words; then the strongest facts, at most 20 words each. Charts make strong Short beats."""
+"short": 4 beats for a vertical Short of 30 seconds that explains the WHOLE story or defines the idea on its own
+(not a few parts of it, not a trailer), reusing scenes' visuals by index. Beat 1 stops the scroll in at most 12
+words; beat 2 says what it is; beat 3 the one thing that makes it work or matter; beat 4 the takeaway; about 65 words
+in all."""
 
 OUTRO = ("That's the short version. The full report has {facts} verified facts, and every source is linked. "
          "It's in the description. And if you want one story like this, researched properly, every day, subscribe "
@@ -321,10 +332,15 @@ about [words] spoken words in all. [first]
 [prev]
 Reply with JSON: {"scenes": [{"kind": "...", "narration": "...", "headline": "...", "kicker": "...",
  "highlight": "...", "act": "", "facts": [], plus every field that shot's kind needs, exactly as described above}]}"""
-SHORT_PICK = """These are the shots of a video (index | kind | narration). Pick 4 or 5 beats for a vertical Short
-under 50 seconds that reuse these shots' pictures: beat 1 stops the scroll in at most 14 words; then the strongest
-moments, at most 20 words each (pictures of the idea make strong beats). Each beat's narration is a new line for
-the Short, saying only what that shot says.
+SHORT_PICK = """These are the shots of a video (index | kind | narration). Write a vertical Short of 30 seconds that
+EXPLAINS THE WHOLE TOPIC on its own: a viewer who knows nothing must finish it understanding what the thing is and
+why it works or matters. It is not a trailer and not a few parts of the video: it is the entire idea in miniature.
+Use exactly 4 beats, each reusing the picture of the shot that shows it best:
+1. a hook that stops the scroll, at most 12 words (a question or a surprising claim about the topic itself);
+2. what it is: a plain definition in one sentence, at most 18 words;
+3. the one thing that makes it work, or how it works, at most 22 words (the picture of the mechanism);
+4. why it matters or what to remember, at most 14 words.
+About 65 words in all, plain words, no names and no dates. Say only what the shots say.
 [rows]
 Reply with JSON: {"short": [{"scene": index, "narration": "..."}]}"""
 
@@ -400,7 +416,7 @@ async def _speak(text: str, voice: str, path: str, gate: asyncio.Semaphore) -> L
         for attempt in range(5):           # the free voice service drops connections now and then
             try:
                 sentences, audio = [], bytearray()
-                stream = edge_tts.Communicate(text, voice, rate="+6%" if voice.startswith("en") else "+0%",
+                stream = edge_tts.Communicate(text, voice, rate=f"{round((narration_pace() - 1) * 100):+d}%" if voice.startswith("en") else "+0%",
                                               boundary="WordBoundary").stream()
                 async for chunk in stream:
                     if chunk["type"] == "audio":
@@ -561,9 +577,11 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             text, _, path = jobs[k]
             if not item.get("ok") or not os.path.exists(item.get("out", "")):
                 continue
-            try:                 # the pipeline's own audio format (mp3_seconds relies on it)
-                ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-b:a", "48k", path])
-                results[k] = align_words(text, item["words"]) or None
+            try:                 # the pipeline's own audio format (mp3_seconds relies on it), at the chosen pace
+                pace = narration_pace()
+                ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-af", f"atempo={pace:.3f}", "-b:a", "48k", path])
+                heard = [[a / pace, b / pace, w] for a, b, w in item["words"]]
+                results[k] = align_words(text, heard) or None
             except RuntimeError:
                 pass
             finally:
@@ -596,7 +614,7 @@ def tighten(path: str, words: List[tuple]) -> List[tuple]:
     if not words:
         return words
     a = max(0.0, words[0][0] - 0.04)
-    b = words[-1][1] + 0.12
+    b = words[-1][1] + 0.22           # a word's tail runs on past the time the recogniser gives it
     tmp = path + ".tmp.mp3"
     try:
         ffmpeg(["-ss", f"{a:.3f}", "-i", path, "-t", f"{b - a:.3f}", "-ac", "1", "-ar", "24000", "-b:a", "48k", tmp])
@@ -830,11 +848,11 @@ def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Calla
     return codec
 
 
-def timeline(seconds: List[float], kinds: List[str]) -> tuple:
+def timeline(seconds: List[float], kinds: List[str], holds: Optional[List[int]] = None) -> tuple:
     """Scene lengths in frames and the frame each scene starts at. Scenes overlap by TRANSITION frames, so
     each one lasts its narration plus the lead-in, a breath and the overlap; a silent chapter card gets 2.5 s."""
-    frames = [max(75 if k == "chapter" else 60, math.ceil(s * FPS) + LEAD + GAP + TRANSITION)
-              for s, k in zip(seconds, kinds)]
+    frames = [max(75 if k == "chapter" else 60, math.ceil(s * FPS) + LEAD + GAP + TRANSITION) + (holds[i] if holds else 0)
+              for i, (s, k) in enumerate(zip(seconds, kinds))]
     starts = [sum(frames[:i]) - i * TRANSITION for i in range(len(frames))]
     return frames, starts, sum(frames) - TRANSITION * (len(frames) - 1)
 
@@ -1529,7 +1547,7 @@ class VideoMaker:
             text = strip_unsupported_numbers(str((item or {}).get("narration", "")).strip(), allowed)
             if isinstance(idx, int) and 0 <= idx < len(scenes) and text:
                 beats.append({"scene": idx, "narration": text})
-        return beats[:5]
+        return beats[:4]
 
     def script(self, title: str, facts: List[dict], sources: List[dict], style: str = "news",
                brief: Optional[dict] = None, report: bool = False, lesson: Optional[dict] = None) -> dict:
@@ -1545,7 +1563,7 @@ class VideoMaker:
             "{outro_ask}", "the full report, with every source, is" if report else "every source is").replace(
             "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
-        words_needed = round(brief["minutes"] * 160)      # the voice speaks ~170 words a minute; pauses take the rest
+        words_needed = round(brief["minutes"] * 160 * narration_pace())   # ~170 words a minute at full speed; pauses take the rest
         plan = None
         if brief["minutes"] >= LONG_MINUTES:
             plan = self.long_plan(prompt.split("\nReturn JSON:")[0], brief, words_needed)
@@ -1651,7 +1669,7 @@ class VideoMaker:
         if plan.get("short") is None:      # a long video's Short is picked from its finished shots
             plan["short"] = self.pick_short(scenes[:-1], allowed)
         short = []
-        for item in plan.get("short", [])[:5]:
+        for item in plan.get("short", [])[:4]:
             idx = item.get("scene")
             text = strip_unsupported_numbers(str(item.get("narration", "")).strip(), allowed)
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
@@ -1835,7 +1853,8 @@ class VideoMaker:
             dub = max((v for (l, k), v in secs.items() if k == i and l != "en"), default=0.0)
             longest.append(max(en, dub / MAX_TEMPO) if en else dub)
         tempo = {key: max(1.0, v / longest[key[1]]) if longest[key[1]] else 1.0 for key, v in secs.items()}
-        frames, starts, total = timeline(longest, kinds)
+        holds = [HOLD if i + 1 < n_long and scenes[i + 1].get("chapter") else 0 for i in range(n_long)]   # a beat before a new part
+        frames, starts, total = timeline(longest, kinds, holds)
         sound.music(total / FPS + 1, assets["music"], seed=title)
         long_scenes = [{**s, "frames": frames[i], "cue": cue(spoken.get(("en", "long", i), []), s.get("number", "")),
                         "hcue": cue(spoken.get(("en", "long", i), []), s.get("highlight", "")),

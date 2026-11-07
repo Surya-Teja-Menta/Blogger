@@ -2542,3 +2542,31 @@ def test_the_cloned_voice_is_dried_and_the_mix_is_levelled_by_one_fixed_gain():
     assert "measured_I=-19.5" in f and "linear=true" in f and "offset=-0.15" in f
     assert sound.two_pass_filter("garbage") == "loudnorm=I=-14:TP=-1.5:LRA=11"
     assert sound.two_pass_filter(report.replace("-19.50", "-inf")) == "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+
+def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short_explains_the_whole_thing(monkeypatch, tmp_path):
+    from blogwriter import video
+    from blogwriter.config import Settings
+    monkeypatch.delenv("NARRATION_PACE", raising=False)
+    assert video.narration_pace() == 0.88
+    monkeypatch.setenv("NARRATION_PACE", "0.5")
+    assert video.narration_pace() == 0.8                              # never slower than 0.8
+    monkeypatch.setenv("NARRATION_PACE", "fast")
+    assert video.narration_pace() == 0.88
+    monkeypatch.delenv("NARRATION_PACE", raising=False)
+    plain = video.timeline([3.0, 3.0, 3.0], ["hook", "diagram", "diagram"])
+    held = video.timeline([3.0, 3.0, 3.0], ["hook", "diagram", "diagram"], [0, video.HOLD, 0])
+    assert video.HOLD == 15 and held[0][1] - plain[0][1] == 15 and held[1][2] - plain[1][2] == 15   # half a second at 30 fps
+    wav = tmp_path / "x.wav"
+    wav.write_bytes(b"x")
+    seen = []
+    monkeypatch.setattr(video, "voice_sample", lambda *a: None)
+    from blogwriter import voicefarm
+    monkeypatch.setattr(voicefarm, "available", lambda s: True)
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": True, "words": [[0.0, 1.0, "Hi"], [1.0, 2.0, "there"]], "out": str(wav)}])
+    monkeypatch.setattr(video, "ffmpeg", lambda args, **k: seen.append(args))
+    out = video.speak_cloned([("Hi there", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), lambda m: None)
+    assert "atempo=0.880" in seen[0]
+    assert abs(out[0][1][1] - 2.0 / 0.88) < 1e-6                      # the words move with the slowed voice
+    assert "WHOLE" in video.SHORT_PICK and "30 seconds" in video.SHORT_PICK and "exactly 4 beats" in video.SHORT_PICK
+    assert video.SHORT_MAX_SECONDS <= 40
