@@ -2,6 +2,7 @@
 transitions and a low hit for figures, plus the ffmpeg mix that ducks the music under the voice and masters
 the result to YouTube loudness."""
 import hashlib
+import os
 import wave
 from typing import List, Optional, Tuple
 
@@ -126,6 +127,14 @@ def hit(path: str) -> None:
     _write(path, np.stack([y, y], axis=1) * 0.8)
 
 
+def bed_level() -> float:
+    """The music's volume under the narration (repository variable MUSIC_LEVEL; 0 = no music)."""
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.12)))
+    except ValueError:
+        return 0.12
+
+
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
                tempos: Optional[List[float]] = None) -> Tuple[str, int]:
     """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit] -> [out]. The voice is cleaned up,
@@ -138,10 +147,13 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     parts.append("".join(f"[v{k}]" for k in range(v)) + f"amix=inputs={v}:normalize=0,aformat=channel_layouts=stereo,"
                  "highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,"
                  "equalizer=f=3500:t=q:w=1.2:g=2.5,apad,asplit=2[voice][key]")   # apad: music runs past the last word
-    parts.append(f"[{m}:a]volume=0.5[bedraw]")          # audible under the voice, never competing with it
-    parts.append("[bedraw][key]sidechaincompress=threshold=0.04:ratio=4:attack=20:release=700[bed]")
+    # the music is a faint floor under the narration, never a second thing to listen to: about 20 dB under the
+    # voice (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
+    # background noise), pushed down further while the voice speaks. MUSIC_LEVEL=0 removes it altogether.
+    parts.append(f"[{m}:a]volume={bed_level():.3f}[bedraw]")
+    parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=900[bed]")
     sfx = []
-    for name, idx, times, vol in (("w", w, whoosh_at, 0.3), ("h", h, hit_at, 0.45)):
+    for name, idx, times, vol in (("w", w, whoosh_at, 0.12), ("h", h, hit_at, 0.22)):
         if not times:
             continue
         outs = "".join(f"[{name}{k}r]" for k in range(len(times)))

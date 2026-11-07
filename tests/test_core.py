@@ -2248,3 +2248,23 @@ def test_each_film_look_cuts_in_its_own_medium_and_tells_the_designer_its_langua
     t = looks.theme_for("halftone-dossier", "#c0392b", design._finish, design.check_fx, "s")
     p = diagram.prompt([{"headline": "h", "narration": "n"}], [0], "T", "m", looks.moves_text(t))
     assert "stamp slammed on the verdict" in p and "native move" in p
+
+
+def test_the_cinematic_design_is_the_default_and_a_film_look_only_when_asked(monkeypatch):
+    from blogwriter import design, looks
+    picks = lambda *a, **k: {"look": "chalkboard", "accent": "pink", "why": "x"}
+    monkeypatch.delenv("FILM_LOOK", raising=False)
+    d = design.design(picks, "Central Limit Theorem", "education", "", lambda m: None)
+    assert "look" not in d                                              # the design made for the video alone
+    monkeypatch.setenv("FILM_LOOK", "auto")
+    assert design.design(picks, "Central Limit Theorem", "education", "", lambda m: None)["look"]["slug"] == "chalkboard"
+
+
+def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monkeypatch):
+    from blogwriter import sound
+    monkeypatch.delenv("MUSIC_LEVEL", raising=False)
+    assert sound.bed_level() == 0.12 and "volume=0.120[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    monkeypatch.setenv("MUSIC_LEVEL", "0")
+    assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    monkeypatch.setenv("MUSIC_LEVEL", "loud")
+    assert sound.bed_level() == 0.12

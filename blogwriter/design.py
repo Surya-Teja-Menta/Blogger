@@ -278,13 +278,14 @@ def prompt(title: str, style: str, mood: str) -> str:
 
 
 def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None]) -> dict:
-    """The video's look: a film style from the library when one suits the subject (looks.py), else a design of its
-    own. FILM_LOOK=<key> or FILM_LOOK=free forces the choice."""
+    """The video's look: by default a cinematic design made for the video alone (floating light, depth, glow: the
+    one the owner preferred to a flat film look). FILM_LOOK=auto lets the model pick a film style from the library
+    (looks.py) when one suits the subject; FILM_LOOK=<key> forces that style."""
     import os
     from . import looks
     forced = os.environ.get("FILM_LOOK", "").strip().lower()
     picked = ((forced, next(iter(looks.LOOKS[forced]["accents"].values()))) if forced in looks.LOOKS else
-              None if forced == "free" else looks.choose(complete_json, title, style, mood, log))
+              looks.choose(complete_json, title, style, mood, log) if forced == "auto" else None)
     if picked:
         d = looks.theme_for(picked[0], picked[1], _finish, check_fx, title)
         log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
