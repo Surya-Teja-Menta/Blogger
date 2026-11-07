@@ -473,6 +473,46 @@ def voice_sample(settings: Settings, job: str, log: Callable[[str], None]) -> Op
             os.remove(raw)                       # the recording is not kept in the job folder (or its artifacts)
 
 
+def clone_with_budget(python: str, spec: str, ref: str, texts: List[str], log: Callable[[str], None]) -> bool:
+    """Run the cloning tool, watching its progress: once a few lines are done, the time for the whole narration is
+    projected from them, and if it would exceed CLONE_BUDGET_MINUTES (default 150) the tool is stopped, so the
+    whole video speaks in the standard voice instead (never half one voice and half another). Returns True when
+    stopped that way. The measured speed is logged either way."""
+    budget = float(os.environ.get("CLONE_BUDGET_MINUTES") or 150) * 60
+    total = sum(len(t) for t in texts) or 1
+    t0, ready, aborted = time.time(), None, False
+    try:
+        proc = subprocess.Popen([python, CLONE_TOOL, spec, ref], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        log(f"[voice] the cloning tool could not run: {type(exc).__name__}")
+        return True
+    tail: List[str] = []
+    for line in proc.stdout:
+        tail = (tail + [line.rstrip()])[-6:]
+        if line.startswith("[clone] models ready"):
+            ready = time.time()
+            log(f"[voice] cloning models ready in {ready - t0:.0f}s")
+        m = re.match(r"\[clone\] (\d+)/(\d+)", line)
+        if m and ready:
+            k = int(m.group(1))
+            done = sum(len(t) for t in texts[:k]) or 1
+            projected = (time.time() - ready) / done * total
+            if k >= min(4, len(texts)) and projected > budget:
+                log(f"[voice] cloning would take about {projected / 60:.0f} min for {len(texts)} lines (budget "
+                    f"{budget / 60:.0f}): the standard voice speaks this video")
+                proc.kill()
+                aborted = True
+                break
+    try:
+        proc.wait(timeout=60)
+    except subprocess.SubprocessError:
+        proc.kill()
+    if proc.returncode and not aborted:
+        log(f"[voice] the cloning tool stopped: {' | '.join(tail)[-400:]}")
+    return aborted
+
+
 def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
     """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default) and
     the cloning environment (VOICE_PYTHON) and the voice sample are there; any line that fails, or everything when
@@ -488,16 +528,10 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             with open(spec, "w", encoding="utf-8") as f:
                 json.dump([{"text": t, "out": p[:-4] + ".clone.wav"} for t, _, p in jobs], f, ensure_ascii=False)
             t0 = time.time()
-            try:
-                r = subprocess.run([python, CLONE_TOOL, spec, ref], capture_output=True, text=True, encoding="utf-8",
-                                   errors="replace", timeout=5 * 3600)
-                if r.returncode:
-                    log(f"[voice] the cloning tool stopped: {(r.stderr or r.stdout)[-400:]}")
-            except (OSError, subprocess.SubprocessError) as exc:
-                log(f"[voice] the cloning tool could not run: {type(exc).__name__}")
+            aborted = clone_with_budget(python, spec, ref, [t for t, _, _ in jobs], log)
             try:
                 with open(spec, encoding="utf-8") as f:
-                    done = json.load(f)
+                    done = [] if aborted else json.load(f)
             except (OSError, ValueError):
                 done = []
             for k, (item, (text, _, path)) in enumerate(zip(done, jobs)):
@@ -511,7 +545,10 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
                 finally:
                     os.remove(item["out"])
             cloned = sum(r is not None for r in results)
-            log(f"[voice] {cloned} of {len(jobs)} lines spoken in the owner's voice ({time.time() - t0:.0f}s)")
+            spoken_s = sum(r[-1][1] for r in results if r)
+            took = time.time() - t0
+            log(f"[voice] {cloned} of {len(jobs)} lines spoken in the owner's voice ({took:.0f}s; "
+                f"{spoken_s / max(1.0, took):.2f}x real time)")
             os.remove(ref)
     missing = [k for k, r in enumerate(results) if r is None]
     if missing:

@@ -54,7 +54,10 @@ def main() -> int:
     asr = WhisperModel(os.environ.get("CLONE_WHISPER", "base.en"), device="cpu", compute_type="int8")
     exaggeration = float(os.environ.get("CLONE_EXAGGERATION", "0.6"))
     cfg = float(os.environ.get("CLONE_CFG", "0.4"))
-    tts.prepare_conditionals(reference, exaggeration=exaggeration)
+    if turbo:     # the sample is already loudness-normalised; Turbo's own normalisation trips a dtype bug
+        tts.prepare_conditionals(reference, exaggeration=exaggeration, norm_loudness=False)
+    else:
+        tts.prepare_conditionals(reference, exaggeration=exaggeration)
     speak = (lambda s: tts.generate(s)) if turbo else (lambda s: tts.generate(s, exaggeration=exaggeration, cfg_weight=cfg))
     print(f"[clone] models ready in {time.time() - t0:.0f}s", flush=True)
     gap = torch.zeros(1, int(tts.sr * 0.18))           # a breath between sentences

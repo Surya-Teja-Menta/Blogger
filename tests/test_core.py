@@ -2057,6 +2057,24 @@ def test_captions_keep_the_script_words_timed_by_the_cloned_voice(monkeypatch, t
     assert video.speak_cloned([("Hi.", "v", str(tmp_path / "b.mp3"))], Settings(), str(tmp_path), logs.append) and not logs
 
 
+def test_cloning_that_would_take_too_long_is_stopped_and_the_standard_voice_speaks(monkeypatch, tmp_path):
+    import sys
+    from blogwriter import video
+    tool = tmp_path / "slow_tool.py"
+    tool.write_text("import time, sys\nprint('[clone] models ready in 1s', flush=True)\n"
+                    "for k in range(1, 11):\n    time.sleep(0.05)\n    print(f'[clone] {k}/10 ok', flush=True)\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(video, "CLONE_TOOL", str(tool))
+    logs = []
+    monkeypatch.setenv("CLONE_BUDGET_MINUTES", "0.001")             # far less than the projected time
+    assert video.clone_with_budget(sys.executable, "spec", "ref", ["a line of narration"] * 10, logs.append) is True
+    assert any("standard voice speaks this video" in m for m in logs)
+    monkeypatch.setenv("CLONE_BUDGET_MINUTES", "60")
+    logs.clear()
+    assert video.clone_with_budget(sys.executable, "spec", "ref", ["a line"] * 10, logs.append) is False
+    assert any("models ready" in m for m in logs) and not any("standard voice" in m for m in logs)
+
+
 def test_the_document_is_sold_for_99_rupees_and_never_mispriced(monkeypatch):
     from blogwriter import gumroad as G
     from blogwriter.config import Settings
