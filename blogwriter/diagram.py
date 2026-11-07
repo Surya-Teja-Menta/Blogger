@@ -14,8 +14,8 @@ from .mathexpr import compile_expr, finite_share
 
 TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex",
          "samples", "physics", "counter", "shape", "crowd", "stamp",
-         "plot", "network", "tree", "grid", "venn", "cycle")
-RICH = ("plot", "network", "tree", "grid", "venn", "cycle")     # moving pictures of how a thing works (rich.jsx)
+         "plot", "network", "tree", "grid", "venn", "cycle", "code", "wave", "surface", "bars", "flow")
+RICH = ("plot", "network", "tree", "grid", "venn", "cycle", "code", "wave", "surface", "bars", "flow")     # moving pictures of how a thing works (rich.jsx)
 REGIONS = ("samples", "physics", "crowd") + RICH   # parts that fill a box of the canvas
 SOURCES = ("uniform", "skewed", "exponential", "bimodal", "normal", "dice", "coin")
 SHAPES = ("circle", "square", "triangle", "diamond", "hexagon", "star", "heart")
@@ -94,10 +94,31 @@ narration at which it appears, copied exactly from the narration, or "" for the 
 - "cycle": region (w at least 40, h at least 50): a loop of 3 to 7 stages, "nodes": ["plan", "build", ...] (each max
   2 words, in order), with a comet circling the loop and lighting each stage in turn; optional "text": the loop's
   name in the middle (max 2 words). For repeating processes, feedback, orbits, routines, life cycles.
+- "code": region (w at least 35, h at least 40): a program typed out, then run line by line. "lines": up to 10 lines of
+  code (each up to 44 characters, indentation kept; any language); "lang": its name (one word); "steps": up to 8 of
+  {{"line": 1-based line number, "note": max 4 words, e.g. "i is 0"}}: on the element's "glow" word a marker steps
+  through them with the note beside each; "output": up to 3 lines the program prints at the end.
+- "wave": region (w at least 40, h at least 40): waves that add up. "waves": up to 5 of {{"freq": 0.5 to 12, "amp":
+  0.05 to 1}} or "preset": "square" (odd harmonics building a square wave), "saw" or "beats" (two close notes);
+  "mode": "sum" (the parts and their sum) or "fourier" (turning circles whose tip draws the wave). The parts join
+  one by one on the element's "glow" word. For sound, signals, vibration, interference, Fourier, seasons, cycles.
+- "surface": region (w at least 40, h at least 50): a lit 3D landscape z = f(x, y) that rises and slowly turns.
+  "expr": in x and y, e.g. "x^2+y^2" (a bowl), "x^2-y^2" (a saddle), "sin(x)*cos(y)" (hills), "exp(-(x^2+y^2))" (a
+  peak); "lo", "hi": the range of x and y; "descent": true: on the element's "glow" word a ball rolls down it
+  in gradient-descent steps, leaving its trail (optimisation, loss, minimum, saddle, energy, terrain).
+- "bars": region (w at least 35, h at least 35): bars that grow and swap places as numbers change. "items": [{{"text":
+  name (max 3 words), "value": number}}, ...] 2 to 8; "to": the new values (same count) the bars move to on the
+  element's "glow" word; "sort": true: the bars re-rank as they move (a race, a before and after, who overtakes
+  whom); "show": true prints the numbers (only numbers the narration says); "unit": max 2 words.
+- "flow": region (w at least 45, h at least 40): streams of particles through a pipeline. "stages": 2 to 5 of {{"text":
+  max 2 words, "share": 0 to 1 (the first is 1; how much is left at that stage)}}: the pipe narrows with each share
+  and the lost particles fall away. For funnels, conversion, supply chains, energy, money, water, losses, filters.
 These moving parts fill the picture: use at most ONE per shot, with a few labels, arrows or a stamp around it.
 Choose one whenever the sentence is about a function or how a knob changes it (plot), connections or spreading
-(network), choices or hierarchy (tree), a board, image or sliding window (grid), what two things share (venn), or
-something that repeats (cycle): the viewer SEES how it works, which a static drawing cannot show.
+(network), choices or hierarchy (tree), a board, image or sliding window (grid), what two things share (venn),
+something that repeats (cycle), a program (code), signals or vibration (wave), an optimisation landscape or terrain
+(surface), things changing rank or size (bars), or what is lost at each step (flow): the viewer SEES how it works,
+which a static drawing cannot show.
 MOTION (optional on any element, each with its own "on" word, which must come after the element's own "on" word):
 - "move": {{"on": word, then the new x, y (or x1, y1, x2, y2 for a line or arrow; h for a bar; r for a circle)}}
   A "curve" or "dots" can RESHAPE: give the new "points" (same count) and the shape morphs into them (a straight
@@ -158,7 +179,8 @@ Two examples of the standard expected (do not copy them; draw what YOUR sentence
   "sweep": {{"from": 0.5, "to": 4}}, "trace": true, "xlabel": "input", "ylabel": "output", "on": "knob"}},
  {{"type": "label", "color": "hot", "x": 50, "y": 94, "text": "steeper", "size": "m", "on": "steeper"}}]
 
-The moving parts (plot, network, tree, grid, venn, cycle, samples, physics, crowd, counter) are what make the video
+The moving parts (plot, network, tree, grid, venn, cycle, code, wave, surface, bars, flow, samples, physics, crowd,
+counter) are what make the video
 worth watching: use one wherever the sentence fits one, and "click", "mark" and "glow" to point at what matters. A
 shot with only labels and arrows is the last resort.
 
@@ -463,6 +485,88 @@ def _rich(el: dict, e: dict, allowed: str, verified: Callable[[str, str], bool],
             return True
         el.update(sets=sets, overlap=_num(e.get("overlap"), 0.15, 0.7, 0.35), both=_words(e.get("both"), 3))
         return False
+    if t == "code":
+        lines = [str(x).rstrip()[:44] for x in (e.get("lines") or [])[:10] if str(x).strip()]
+        if len(lines) < 2:
+            why.append("code needs 2 or more lines in \"lines\"")
+            return True
+        steps = []
+        for st in (e.get("steps") or [])[:8]:
+            if isinstance(st, dict) and isinstance(st.get("line"), (int, float)) and 1 <= int(st["line"]) <= len(lines):
+                steps.append({"line": int(st["line"]), "note": _words(st.get("note"), 4)[:22]})
+        out = [str(x)[:40] for x in (e.get("output") or [])[:3] if str(x).strip()]
+        el.update(lines=lines, steps=steps, output=out, lang=_words(e.get("lang"), 1)[:12])
+        return False
+    if t == "wave":
+        preset = e.get("preset")
+        if preset == "square":
+            ws = [{"freq": n, "amp": round(1 / n, 3)} for n in (1, 3, 5, 7, 9)]
+        elif preset == "saw":
+            ws = [{"freq": n, "amp": round(1 / n, 3)} for n in (1, 2, 3, 4, 5)]
+        elif preset == "beats":
+            ws = [{"freq": 5, "amp": 0.5}, {"freq": 5.6, "amp": 0.5}]
+        else:
+            ws = []
+            for w in (e.get("waves") or [])[:5]:
+                if isinstance(w, dict):
+                    ws.append({"freq": _num(w.get("freq"), 0.5, 12, 1), "amp": _num(w.get("amp"), 0.05, 1, 0.5)})
+        if len(ws) < 2:
+            why.append('a wave needs 2 or more "waves" (or a "preset")')
+            return True
+        el.update(waves=ws, mode="fourier" if e.get("mode") == "fourier" else "sum", text=_words(e.get("text"), 5))
+        return False
+    if t == "surface":
+        expr = str(e.get("expr") or "").strip()[:60]
+        lo, hi = _num(e.get("lo"), -1e3, 1e3, -3), _num(e.get("hi"), -1e3, 1e3, 3)
+        if hi <= lo:
+            lo, hi = -3, 3
+        try:
+            f = compile_expr(expr, "y")
+        except ValueError:
+            why.append(f'surface "expr" {expr[:40]!r} is not a surface in x and y (numbers, x, y, + - * / ^, sin cos tan exp log sqrt abs, pi, e)')
+            return True
+        if finite_share(f, lo, hi, [lo, (lo + hi) / 2, hi]) < 0.8:
+            why.append(f'surface "{expr[:40]}" is not a real number across {lo} to {hi}')
+            return True
+        start = e.get("start")
+        try:
+            sx, sy = (float(start[0]), float(start[1]))
+            start = [min(hi, max(lo, sx)), min(hi, max(lo, sy))]
+        except (TypeError, ValueError, IndexError, KeyError):
+            start = [round(0.8 * hi, 2), round(-0.7 * hi, 2)]
+        el.update(expr=expr, lo=lo, hi=hi, descent=bool(e.get("descent")), start=start, text=_words(e.get("text"), 5))
+        return False
+    if t == "bars":
+        items = []
+        for it in (e.get("items") or [])[:8]:
+            if isinstance(it, dict) and _words(it.get("text"), 3):
+                items.append({"text": _words(it.get("text"), 3), "value": _num(it.get("value"), 0, 1e9, 0)})
+        if len(items) < 2 or max(i["value"] for i in items) <= 0:
+            why.append('bars need 2 or more "items" with a text and a positive value')
+            return True
+        to = e.get("to")
+        to = [_num(v, 0, 1e9, items[k]["value"]) for k, v in enumerate(to)] if isinstance(to, list) and len(to) == len(items) else None
+        shown = bool(e.get("show")) and all(verified(str(int(v) if v == int(v) else v), allowed)
+                                            for v in [i["value"] for i in items] + (to or []))
+        el.update(items=items, show=shown, sort=bool(e.get("sort")), unit=_words(e.get("unit"), 2), text=_words(e.get("text"), 5))
+        if to:
+            el["to"] = to
+        return False
+    if t == "flow":
+        stages = []
+        for sg in (e.get("stages") or [])[:5]:
+            if isinstance(sg, dict) and _words(sg.get("text"), 2):
+                stages.append({"text": _words(sg.get("text"), 2), "share": _num(sg.get("share"), 0, 1, 1)})
+        if len(stages) < 2:
+            why.append('a flow needs 2 to 5 "stages" with a text and a share')
+            return True
+        top = stages[0]["share"] or 1
+        prev = 1.0
+        for sg in stages:
+            sg["share"] = round(max(0.05, min(prev, sg["share"] / top)), 3)
+            prev = sg["share"]
+        el.update(stages=stages, text=_words(e.get("text"), 5))
+        return False
     if t == "cycle":
         nodes = [_words(n, 2) for n in (e.get("nodes") or [])[:7] if _words(n, 2)]
         if len(nodes) < 3:
@@ -509,7 +613,8 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
         if t in REGIONS:
             lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10), "plot": (40, 45),
                           "network": (40, 45), "tree": (40, 40), "grid": (30, 35), "venn": (35, 45),
-                          "cycle": (40, 50)}[t]
+                          "cycle": (40, 50), "code": (35, 40), "wave": (40, 40), "surface": (40, 50),
+                          "bars": (35, 35), "flow": (45, 40)}[t]
             el.update(x=_num(e.get("x"), 3, 97 - lo_w, 10), y=_num(e.get("y"), 3, 97 - lo_h, 10))
             el.update(w=_num(e.get("w"), lo_w, 97 - el["x"], max(lo_w, 60)), h=_num(e.get("h"), lo_h, 97 - el["y"], max(lo_h, 70)))
         if t == "samples":

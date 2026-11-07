@@ -22,22 +22,22 @@ import {compile} from "./expr";
 import {glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 
-const mixHex = (a, b, t) => {
+export const mixHex = (a, b, t) => {
   const p = (h) => { const s = String(h).replace("#", ""); const f = s.length === 3 ? s.split("").map((x) => x + x).join("") : s.padEnd(6, "0");
     return [0, 2, 4].map((k) => parseInt(f.slice(k, k + 2), 16) || 0); };
   const A = p(a), B = p(b);
   return `rgb(${A.map((v, k) => Math.round(v + (B[k] - v) * clamp(t))).join(",")})`;
 };
-const smoothstep = (t) => { const x = clamp(t); return x * x * (3 - 2 * x); };
+export const smoothstep = (t) => { const x = clamp(t); return x * x * (3 - 2 * x); };
 
 // text with a halo in the background colour, so it reads over lines and fills
-const Txt = ({x, y, children, size = 28, color, anchor = "middle", weight = 800, op = 1, mono = false, rotate}) => (
+export const Txt = ({x, y, children, size = 28, color, anchor = "middle", weight = 800, op = 1, mono = false, rotate, halo = true}) => (
   <text x={x} y={y} fontSize={size} fontFamily={mono ? FONT.mono : FONT.body} fontWeight={weight} fill={color || C.text}
-        textAnchor={anchor} dominantBaseline="central" opacity={op} stroke={C.bg} strokeWidth={size * 0.3} paintOrder="stroke"
+        textAnchor={anchor} dominantBaseline="central" opacity={op} stroke={halo ? C.bg : "none"} strokeWidth={size * 0.3} paintOrder="stroke"
         strokeLinejoin="round" transform={rotate ? `rotate(${rotate} ${x} ${y})` : undefined}>{children}</text>
 );
 
-const Caption = ({text, rect, at, frame, size}) => (text ? (
+export const Caption = ({text, rect, at, frame, size}) => (text ? (
   <Txt x={(rect[0] + rect[2]) / 2} y={rect[3] + size * 0.2} size={size} color={C.muted} op={clamp((frame - at - 8) / 14)}>{text}</Txt>
 ) : null);
 

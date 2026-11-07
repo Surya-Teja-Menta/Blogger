@@ -2482,3 +2482,35 @@ def test_rich_parts_are_checked_before_they_are_drawn():
     clicked = diagram.timed({"elements": [{"type": "box", "x": 30, "y": 30, "w": 20, "h": 20, "text": "", "on": "", "click": {"on": "steeper"}}]},
                             [(0.0, 0.3, "A"), (2.0, 2.4, "steeper")], 300, 30, 10)
     assert clicked["elements"][0]["click"]["at"] == 70
+
+
+def test_the_second_batch_of_rich_parts_is_checked_and_normalised():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    scene = {"headline": "Run it", "narration": "Run the loop. Waves add up, the ball rolls, bars race and 40 visitors drop."}
+    R = {"x": 8, "y": 8, "w": 84, "h": 76}
+
+    def run(el):
+        why = []
+        d = diagram.check({"elements": [el, {"type": "label", "x": 50, "y": 94, "text": "loop"}, {"type": "dot", "x": 20, "y": 95}]},
+                          scene, _verified, tex_complete, why)
+        return (d["elements"][0] if d else None), why
+
+    code, _ = run({"type": "code", "lang": "Python 3", "lines": ["x = 0", "for i in range(3):", "  x += i", ""] + ["y"] * 12,
+                   "steps": [{"line": 2, "note": "i is zero right now"}, {"line": 99, "note": "no such line"}], "output": ["3"], **R})
+    assert len(code["lines"]) == 9 and code["lang"] == "Python" and code["steps"] == [{"line": 2, "note": "i is zero right"}]
+    assert run({"type": "code", "lines": ["only one"], **R})[0] is None
+    wave, _ = run({"type": "wave", "preset": "square", "mode": "fourier", **R})
+    assert [w["freq"] for w in wave["waves"]] == [1, 3, 5, 7, 9] and wave["mode"] == "fourier"
+    assert run({"type": "wave", "waves": [{"freq": 3}], **R})[0] is None
+    surf, _ = run({"type": "surface", "expr": "x^2+y^2", "lo": -3, "hi": 3, "descent": True, "start": [9, 9], **R})
+    assert surf["descent"] and surf["start"] == [3, 3]
+    assert run({"type": "surface", "expr": "x^2+zzz", **R})[0] is None            # only x and y
+    bars, _ = run({"type": "bars", "items": [{"text": "a", "value": 40}, {"text": "b", "value": 99}], "to": [50, 10], "show": True, **R})
+    assert bars["show"] is False and bars["to"] == [50.0, 10.0]                     # 99 is not in the narration: no numbers shown
+    bars, _ = run({"type": "bars", "items": [{"text": "a", "value": 40}, {"text": "b", "value": 40}], "show": True, **R})
+    assert bars["show"] is True and "to" not in bars
+    assert run({"type": "bars", "items": [{"text": "a", "value": 0}, {"text": "b", "value": 0}], **R})[0] is None
+    flow, _ = run({"type": "flow", "stages": [{"text": "visitors", "share": 4}, {"text": "buyers", "share": 9}, {"text": "fans", "share": 0}], **R})
+    assert [s["share"] for s in flow["stages"]] == [1.0, 1.0, 0.05]                  # shares only shrink; the first is 1
+    assert run({"type": "flow", "stages": [{"text": "one"}], **R})[0] is None
