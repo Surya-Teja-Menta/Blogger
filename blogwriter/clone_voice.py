@@ -32,6 +32,32 @@ def sentences(text: str):
     return out
 
 
+SMALL = {w: k for k, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+TENS = {w: 10 * k for k, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if k > 1}
+
+
+def tokens(text: str):
+    """Words for comparing a script with what was heard: lower case, no punctuation, numbers as digits."""
+    out = []
+    for w in re.findall(r"[a-z0-9']+", text.lower().replace("-", " ")):
+        if w in SMALL or w in TENS:
+            v = SMALL.get(w, TENS.get(w, 0))
+            if out and out[-1].isdigit() and int(out[-1]) % 10 == 0 and int(out[-1]) >= 20 and v < 10:
+                out[-1] = str(int(out[-1]) + v)       # "forty two" -> 42
+            else:
+                out.append(str(v))
+        else:
+            out.append(w)
+    return out
+
+
+def match(script: str, heard: str) -> float:
+    """How closely what was heard follows the script (1 = word for word)."""
+    import difflib
+    return difflib.SequenceMatcher(None, tokens(script), tokens(heard), autojunk=False).ratio()
+
+
 def main() -> int:
     jobs_path, reference = sys.argv[1], sys.argv[2]
     with open(jobs_path, encoding="utf-8") as f:
@@ -44,7 +70,8 @@ def main() -> int:
     t0 = time.time()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Turbo (the default) is the smaller, much faster model: it ignores the expressiveness settings
-    turbo = os.environ.get("CLONE_MODEL", "turbo").strip().lower() != "standard"
+    # the standard model (default) says the script word for word; Turbo is ~2.5x faster but garbles some words
+    turbo = os.environ.get("CLONE_MODEL", "standard").strip().lower() == "turbo"
     if turbo:
         from chatterbox.tts_turbo import ChatterboxTurboTTS
         tts = ChatterboxTurboTTS.from_pretrained(device=device)
@@ -61,27 +88,43 @@ def main() -> int:
     speak = (lambda s: tts.generate(s)) if turbo else (lambda s: tts.generate(s, exaggeration=exaggeration, cfg_weight=cfg))
     print(f"[clone] models ready in {time.time() - t0:.0f}s", flush=True)
     gap = torch.zeros(1, int(tts.sr * 0.18))           # a breath between sentences
+    # how closely a line must say its script: a clean take scores ~1.0, one misheard word ~0.95, a garbled take
+    # with invented words ~0.85 (measured on real takes)
+    need = float(os.environ.get("CLONE_MATCH", "0.92"))
+    tries = int(os.environ.get("CLONE_TRIES", "3"))
+
+    def say(text):
+        """One take of a line: its audio and the words heard in it (timed from the samples themselves: reading the
+        file back would go through PyAV, whose newer versions refuse an option faster-whisper passes)."""
+        pieces = []
+        for s in sentences(text):
+            pieces += [speak(s), gap]
+        audio = torch.cat(pieces[:-1], dim=1)
+        mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
+        segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
+                                 vad_filter=False, condition_on_previous_text=False)
+        words = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
+                 for seg in segs for w in (seg.words or []) if w.word.strip()]
+        return audio, words
+
     for k, job in enumerate(jobs):
         job["ok"] = False
         try:
-            pieces = []
-            for s in sentences(job["text"]):
-                wav = speak(s)
-                pieces += [wav, gap]
-            audio = torch.cat(pieces[:-1], dim=1)
+            best = None                 # a take that garbles or adds words is spoken again; the closest is kept
+            for attempt in range(max(1, tries)):
+                audio, words = say(job["text"])
+                score = match(job["text"], " ".join(w[2] for w in words))
+                if best is None or score > best[0]:
+                    best = (score, audio, words)
+                if score >= need:
+                    break
+            score, audio, words = best
             torchaudio.save(job["out"], audio, tts.sr)
-            # the words are timed from the audio itself, handed over as 16 kHz samples (reading the file back would
-            # go through PyAV, whose newer versions refuse an option faster-whisper passes)
-            mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
-            segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
-                                     vad_filter=False, condition_on_previous_text=False)
-            job["words"] = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
-                            for seg in segs for w in (seg.words or []) if w.word.strip()]
-            job["ok"] = bool(job["words"])
+            job.update(words=words, match=round(score, 3), ok=bool(words))
         except Exception as exc:                        # one line must not sink the rest
             job["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
         print(f"[clone] {k + 1}/{len(jobs)} {'ok' if job['ok'] else 'FAILED ' + job.get('error', '')} "
-              f"({time.time() - t0:.0f}s)", flush=True)
+              f"match {job.get('match', 0):.2f} ({time.time() - t0:.0f}s)", flush=True)
         with open(jobs_path, "w", encoding="utf-8") as f:   # progress is kept even if the process dies later
             json.dump(jobs, f, ensure_ascii=False)
     return 0

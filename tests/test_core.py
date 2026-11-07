@@ -2057,6 +2057,19 @@ def test_captions_keep_the_script_words_timed_by_the_cloned_voice(monkeypatch, t
     assert video.speak_cloned([("Hi.", "v", str(tmp_path / "b.mp3"))], Settings(), str(tmp_path), logs.append) and not logs
 
 
+def test_a_cloned_take_that_garbles_its_script_is_caught():
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location("clone_voice", os.path.join("blogwriter", "clone_voice.py"))
+    cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cv)                       # no models are loaded: only the checking helpers are used
+    script = "Ever notice how your pizza app promises thirty minutes, and somehow it is always forty?"
+    assert cv.match(script, "Ever notice how your pizza app promises 30 minutes and somehow it is always 40?") == 1.0
+    assert cv.match(script, "Ever notice how your PISA app promises 30 minutes and somehow it is always 4D.") < 0.92
+    assert cv.tokens("forty two and a hundred") == ["42", "and", "a", "hundred"]
+    assert cv.sentences("One. Two? Three!") == ["One.", "Two?", "Three!"]
+
+
 def test_cloning_that_would_take_too_long_is_stopped_and_the_standard_voice_speaks(monkeypatch, tmp_path):
     import sys
     from blogwriter import video
