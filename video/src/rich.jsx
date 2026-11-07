@@ -249,7 +249,7 @@ export const Tree = ({e, rect, frame, end, seed = 0, vertical}) => {
       const padX = 70, padY = 54;
       d3tree().size([W - 2 * padX, H - 2 * padY - 40])(root);
       const slot = (W - 2 * padX) / leaves;
-      const fs = clamp(slot / 7.2, 16, fs0);
+      const fs = clamp(slot / 7.2, vertical ? 21 : 18, fs0);
       return {nodes: root.descendants().map((n) => ({id: n.id, text: n.data.text || "", x: x0 + padX + n.x, y: y0 + padY + n.y, depth: n.depth, parent: n.parent && n.parent.id})), fs, depth};
     } catch (err) { return {nodes: [], fs: fs0, depth: 1}; }
   }, [JSON.stringify(e.nodes), W, H]);
