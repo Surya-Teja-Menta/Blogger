@@ -28,7 +28,9 @@ def _write(path: str, stereo: np.ndarray) -> None:
 
 
 def _reverb_lowpass(x: np.ndarray, cutoff: float, seconds: float = 1.8, wet: float = 0.35) -> np.ndarray:
-    """Soft room reverb (decaying noise impulse) and a gentle low-pass, both done in one FFT pass."""
+    """A gentle low-pass and, added to it at `wet` of its own level, a soft room reverb (decaying noise impulse),
+    both done in one FFT pass. (The bed's reverb used to be louder than the music itself: a wash that sounded like an
+    echo under the voice.)"""
     rng = np.random.default_rng(3)
     n_ir = int(seconds * SR)
     ir = rng.normal(0, 1, n_ir) * np.exp(-np.arange(n_ir) / (SR * seconds / 5))
@@ -39,7 +41,7 @@ def _reverb_lowpass(x: np.ndarray, cutoff: float, seconds: float = 1.8, wet: flo
     X = np.fft.rfft(x, size) * lp
     y = np.fft.irfft(X * np.fft.rfft(ir, size), size)[:len(x)]
     dry = np.fft.irfft(X, size)[:len(x)]
-    return dry * (1 - wet) + y * wet * 3
+    return dry + y * wet
 
 
 def music(seconds: float, path: str, seed: str = "") -> None:
@@ -61,6 +63,7 @@ def _bed(seed: str) -> np.ndarray:
     n = int((period + bar + 4) * SR)            # one more chord and room for the reverb tail, wrapped round below
     t = np.arange(n) / SR
     left, right = np.zeros(n), np.zeros(n)
+    pl_l, pl_r, beat_hb = np.zeros(n), np.zeros(n), np.zeros(n)     # plucks and heartbeat stay out of the reverb
     for k in range(1, int(period / bar) + 1):   # chord 4 is chord 0 again: its body wraps to the loop's start
         a, b = k * bar - 1.5, (k + 1) * bar + 1.5          # each chord fades over its neighbours
         i0, i1 = max(0, int(a * SR)), min(n, int(b * SR))
@@ -83,15 +86,16 @@ def _bed(seed: str) -> np.ndarray:
         f = chord[j % 3] * 2
         i0 = int(start * SR)
         i1 = min(n, i0 + pluck_len)
-        tone = 0.03 * np.exp(-pl_t * 7)[: i1 - i0] * np.sin(2 * np.pi * f * pl_t[: i1 - i0])
+        tone = 0.034 * np.exp(-pl_t * 9)[: i1 - i0] * np.sin(2 * np.pi * f * pl_t[: i1 - i0])
         pan = 0.5 + 0.3 * np.sin(j)
-        left[i0:i1] += tone * (1 - pan)
-        right[i0:i1] += tone * pan
+        pl_l[i0:i1] += tone * (1 - pan)
+        pl_r[i0:i1] += tone * pan
         if j % 2 == 0:                          # heartbeat on every beat
-            thump = 0.09 * np.exp(-pl_t * 9)[: i1 - i0] * np.sin(2 * np.pi * (48 + 30 * np.exp(-pl_t * 30)[: i1 - i0]) * pl_t[: i1 - i0])
-            left[i0:i1] += thump
-            right[i0:i1] += thump
-    left, right = _reverb_lowpass(left, 2600), _reverb_lowpass(right, 2600)
+            thump = 0.05 * np.exp(-pl_t * 9)[: i1 - i0] * np.sin(2 * np.pi * (48 + 30 * np.exp(-pl_t * 30)[: i1 - i0]) * pl_t[: i1 - i0])
+            beat_hb[i0:i1] += thump
+    pad_l, pad_r = _reverb_lowpass(left, 2600, 1.4, 0.3), _reverb_lowpass(right, 2600, 1.4, 0.3)
+    left = pad_l + _reverb_lowpass(pl_l, 5200, 0.35, 0.08) + beat_hb
+    right = pad_r + _reverb_lowpass(pl_r, 5200, 0.35, 0.08) + beat_hb
     out = np.stack([left, right], axis=1)
     p = int(period * SR)
     loop = out[:p].copy()
@@ -130,13 +134,13 @@ def hit(path: str) -> None:
 def bed_level() -> float:
     """The music's volume under the narration (repository variable MUSIC_LEVEL; 0 = no music)."""
     try:
-        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.12)))
+        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.2)))
     except ValueError:
-        return 0.12
+        return 0.2
 
 
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
-               tempos: Optional[List[float]] = None) -> Tuple[str, int]:
+               tempos: Optional[List[float]] = None, final: bool = True) -> Tuple[str, int]:
     """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit] -> [out]. The voice is cleaned up,
     the music ducks under it, the effects are placed, and the whole is mastered to -14 LUFS (YouTube).
     No "|" anywhere: on Windows the npx shim would read it as a pipe."""
@@ -151,7 +155,7 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     # voice (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
     # background noise), pushed down further while the voice speaks. MUSIC_LEVEL=0 removes it altogether.
     parts.append(f"[{m}:a]volume={bed_level():.3f}[bedraw]")
-    parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=900[bed]")
+    parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=700[bed]")
     sfx = []
     for name, idx, times, vol in (("w", w, whoosh_at, 0.12), ("h", h, hit_at, 0.22)):
         if not times:
@@ -162,5 +166,25 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
             parts.append(f"[{name}{k}r]adelay=delays={max(0, int(t * 1000))}:all=1[{name}{k}]")
             sfx.append(f"[{name}{k}]")
     parts.append(f"[voice][bed]{''.join(sfx)}amix=inputs={2 + len(sfx)}:normalize=0,"
-                 "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[out]")
+                 + ("loudnorm=I=-14:TP=-1.5:LRA=11," if final else "") + "aresample=48000[out]")
     return ";".join(parts), 3
+
+
+def two_pass_filter(report: str) -> str:
+    """The loudnorm filter for a second pass, fed with what the first pass measured (read from its report): the whole
+    soundtrack is then raised or lowered by one fixed amount, instead of loudnorm's single-pass habit of riding the
+    gain, which lifts the room tone after every sentence (a breathing, echoing sound). Plain loudnorm if the report
+    cannot be read."""
+    import json
+    import re as _re
+    plain = "loudnorm=I=-14:TP=-1.5:LRA=11"
+    m = _re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", report or "", _re.S)
+    try:
+        d = json.loads(m.group(0))
+        vals = {k: float(d[k]) for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return plain
+    if any(v != v or abs(v) == float("inf") for v in vals.values()):
+        return plain
+    return (f"{plain}:measured_I={vals['input_i']}:measured_TP={vals['input_tp']}:measured_LRA={vals['input_lra']}"
+            f":measured_thresh={vals['input_thresh']}:offset={vals['target_offset']}:linear=true")

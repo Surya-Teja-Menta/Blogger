@@ -2263,11 +2263,11 @@ def test_the_cinematic_design_is_the_default_and_a_film_look_only_when_asked(mon
 def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monkeypatch):
     from blogwriter import sound
     monkeypatch.delenv("MUSIC_LEVEL", raising=False)
-    assert sound.bed_level() == 0.12 and "volume=0.120[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    assert sound.bed_level() == 0.2 and "volume=0.200[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "0")
     assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "loud")
-    assert sound.bed_level() == 0.12
+    assert sound.bed_level() == 0.2
 
 
 class _FakeBucket:
@@ -2514,3 +2514,31 @@ def test_the_second_batch_of_rich_parts_is_checked_and_normalised():
     flow, _ = run({"type": "flow", "stages": [{"text": "visitors", "share": 4}, {"text": "buyers", "share": 9}, {"text": "fans", "share": 0}], **R})
     assert [s["share"] for s in flow["stages"]] == [1.0, 1.0, 0.05]                  # shares only shrink; the first is 1
     assert run({"type": "flow", "stages": [{"text": "one"}], **R})[0] is None
+
+
+def test_the_cloned_voice_is_dried_and_the_mix_is_levelled_by_one_fixed_gain():
+    import importlib.util
+    import os
+    import numpy as np
+    from blogwriter import sound
+    spec = importlib.util.spec_from_file_location("clone_voice", os.path.join("blogwriter", "clone_voice.py"))
+    cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cv)
+    sr = 24000
+    t = np.arange(int(0.5 * sr)) / sr
+    burst = np.sin(2 * np.pi * 220 * t) * np.hanning(len(t))                       # a word
+    tail = np.exp(-np.arange(int(0.6 * sr)) / (0.12 * sr)) * np.random.default_rng(1).normal(0, 0.08, int(0.6 * sr))
+    x = np.concatenate([burst, np.zeros(int(0.6 * sr))])
+    x[len(burst):len(burst) + len(tail)] += tail                                    # its room, ringing on after it
+    y = cv.dry(x, sr)
+    assert len(y) == len(x) and y.dtype == np.float32
+    after = slice(len(burst) + int(0.1 * sr), len(burst) + int(0.5 * sr))
+    assert np.sqrt((y[after] ** 2).mean()) < 0.75 * np.sqrt((x[after] ** 2).mean())   # the tail is reduced
+    assert np.sqrt((y[:len(burst)] ** 2).mean()) > 0.7 * np.sqrt((burst ** 2).mean())  # the word itself stays
+    pre = sound.mix_filter([1.0], [], [], None, final=False)[0]
+    assert "loudnorm" not in pre and "loudnorm" in sound.mix_filter([1.0], [], [])[0]
+    report = 'x\n{\n "input_i" : "-19.50",\n "input_tp" : "-6.05",\n "input_lra" : "3.50",\n "input_thresh" : "-30.32",\n "target_offset" : "-0.15"\n}'
+    f = sound.two_pass_filter(report)
+    assert "measured_I=-19.5" in f and "linear=true" in f and "offset=-0.15" in f
+    assert sound.two_pass_filter("garbage") == "loudnorm=I=-14:TP=-1.5:LRA=11"
+    assert sound.two_pass_filter(report.replace("-19.50", "-inf")) == "loudnorm=I=-14:TP=-1.5:LRA=11"

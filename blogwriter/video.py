@@ -846,10 +846,19 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
     voice_at = [(st + LEAD) / FPS for st in starts]
     whoosh_at = [st / FPS - 0.25 for st in starts[1:]]
     hit_at = [(st + 14) / FPS for st, k in zip(starts, kinds) if k in CHART_KINDS]
-    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos)
+    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos, final=False)
     inputs = sum((["-i", c] for c in clips), []) + ["-i", assets["music"], "-i", assets["whoosh"], "-i", assets["hit"]]
-    ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", "-t", f"{total / FPS:.3f}", "-ac", "2",
-            "-b:a", "192k", dest])
+    pre = dest + ".pre.wav"
+    ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", "-t", f"{total / FPS:.3f}", "-ac", "2", pre])
+    try:        # two passes: measure the mix, then set it to -14 LUFS by one fixed gain (no pumping between sentences)
+        r = subprocess.run([ffmpeg_exe(), "-hide_banner", "-nostats", "-i", pre, "-af",
+                            "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
+        loud = sound.two_pass_filter(r.stderr)
+    except (OSError, subprocess.SubprocessError):
+        loud = sound.two_pass_filter("")
+    ffmpeg(["-i", pre, "-af", loud, "-ar", "48000", "-ac", "2", "-b:a", "192k", dest])
+    os.remove(pre)
 
 
 # The long video's resolution: its 1920x1080 layout is rendered at a higher device scale, so text, formulas and thin

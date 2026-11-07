@@ -58,6 +58,36 @@ def match(script: str, heard: str) -> float:
     return difflib.SequenceMatcher(None, tokens(script), tokens(heard), autojunk=False).ratio()
 
 
+def dry(x, sr, rt60=0.6, strength=1.1, floor=0.3, delay=0.045):
+    """Take the room out of a voice: late-reverberation suppression (after Lebart et al.). The part of each frame that
+    is the decaying tail of what was said `delay` seconds earlier is estimated from the spectrum then and taken
+    away, so words end where they end. The owner's recording carries some room (the haze between its words), and a
+    cloned voice repeats the room it was given: it sounded like an echo."""
+    import numpy as np
+    n = 1024 if sr >= 20000 else 512
+    hop = n // 4
+    win = np.hanning(n + 1)[:-1]
+    pad = np.concatenate([np.zeros(n), x, np.zeros(2 * n)])
+    count = 1 + (len(pad) - n) // hop
+    idx = np.arange(n)[None, :] + hop * np.arange(count)[:, None]
+    X = np.fft.rfft(pad[idx] * win, axis=1)
+    P = np.abs(X) ** 2 + 1e-12
+    d = max(1, int(round(delay * sr / hop)))
+    R = np.zeros_like(P)
+    R[d:] = np.exp(-13.8155 * (d * hop / sr) / rt60) * P[:-d]
+    G = np.sqrt(np.clip(1 - strength * R / P, floor ** 2, 1.0))
+    k = np.ones(5) / 5                                    # smooth across frequency; the gain rises at once, falls slowly
+    G = np.apply_along_axis(lambda r: np.convolve(r, k, mode="same"), 1, G)
+    for t in range(1, count):
+        G[t] = np.maximum(G[t], G[t - 1] * 0.6)
+    Y = np.fft.irfft(X * G, n=n, axis=1) * win
+    out, norm = np.zeros(len(pad)), np.zeros(len(pad))
+    for t in range(count):
+        out[t * hop:t * hop + n] += Y[t]
+        norm[t * hop:t * hop + n] += win ** 2
+    return (out / np.maximum(norm, 1e-6))[n:n + len(x)].astype("float32")
+
+
 def main() -> int:
     jobs_path, reference = sys.argv[1], sys.argv[2]
     with open(jobs_path, encoding="utf-8") as f:
@@ -68,6 +98,11 @@ def main() -> int:
 
     torch.set_num_threads(os.cpu_count() or 4)
     t0 = time.time()
+    drying = os.environ.get("CLONE_DRY", "1").strip() != "0"
+    if drying:                          # the recording with its room taken out: the clone then speaks in a dry room
+        wav, sr_ref = torchaudio.load(reference)
+        reference = reference + ".dry.wav"
+        torchaudio.save(reference, torch.from_numpy(dry(wav.mean(0).numpy(), sr_ref))[None], sr_ref)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Turbo (the default) is the smaller, much faster model: it ignores the expressiveness settings
     # the standard model (default) says the script word for word; Turbo is ~2.5x faster but garbles some words
@@ -100,6 +135,8 @@ def main() -> int:
         for s in sentences(text):
             pieces += [speak(s), gap]
         audio = torch.cat(pieces[:-1], dim=1)
+        if drying:
+            audio = torch.from_numpy(dry(audio.squeeze(0).numpy(), tts.sr))[None]
         mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
         segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
                                  vad_filter=False, condition_on_previous_text=False)
