@@ -9,12 +9,14 @@ import {Backdrop, Camera, Title, clamp, ease} from "./fx";
 import {Focus, Pen, Stamp, focusPlan, headlineShown, useFocus} from "./direct";
 import {Icon} from "./graphics";
 import {Physics, Samples, seedOf} from "./stats";
+import {Cursor, Cycle, Grid, Network, Plot, Tree, Venn} from "./rich";
 import {HandText} from "./hand";
 import {Tex, useMathFonts} from "./math";
 import {delay, glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 
 const col = (name) => ({accent: C.accent, hot: C.hot, cool: C.cool, violet: C.violet, text: C.text, muted: C.muted}[name] || C.accent);
+const RICH = {plot: Plot, network: Network, tree: Tree, grid: Grid, venn: Venn, cycle: Cycle};      // parts that fill a region (rich.jsx)
 const TexFonts = () => { useMathFonts(); return null; };
 
 // a smooth path through points (Catmull-Rom as cubic Beziers)
@@ -147,7 +149,7 @@ export const DiagramScene = ({s, i, vertical}) => {
     if (t === "line" || t === "arrow") return pts([[X(e.x1), Y(e.y1)], [X(e.x2), Y(e.y2)]]);
     if (t === "bar") return [X(e.x), Y(e.y) - (e.h * (box.y1 - box.y0)) / 100, X(e.x + e.w), Y(e.y)];
     if (t === "icon") return around(X(e.x), Y(e.y), ((e.size || 8) * u) / 2);
-    if (t === "samples" || t === "physics" || t === "crowd") return [X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)];
+    if (t === "samples" || t === "physics" || t === "crowd" || RICH[t]) return [X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)];
     if (t === "shape") return around(X(e.x), Y(e.y), (e.size || 10) * u);
     if (t === "stamp") return around(X(e.x), Y(e.y), String(e.text || "").length * 30 + 60, 70);
     if (t === "label" || t === "tex" || t === "counter") {
@@ -181,7 +183,7 @@ export const DiagramScene = ({s, i, vertical}) => {
       const g = e.move && e.move.at != null && e.move.at <= e.glow.at ? boxOf(moved(e)) || b0 : b0;
       keys.push({at: e.glow.at, box: g});
       const gone = e.hide && e.hide.at != null ? clamp((frame - e.hide.at) / 12) : 0;
-      if (e.type !== "crowd") {
+      if (e.type !== "crowd" && !RICH[e.type]) {       // a rich part's glow word is its own moment (the wave, the path, the area)
         pens.push(<g key={`pen${k}`} opacity={1 - gone}><Pen box={g} at={e.glow.at} seed={k * 31 + (i || 0)}
                                                         color={e.color === "hot" ? C.accent : C.hot}/></g>);
       }
@@ -194,10 +196,15 @@ export const DiagramScene = ({s, i, vertical}) => {
       pens.push(<g key={`mark${k}`} opacity={1 - gone}><Pen box={g} at={e.mark.at} seed={k * 37 + (i || 0)} kind={e.mark.style}
                                                        color={e.color === "hot" ? C.accent : C.hot}/></g>);
     }
+    if (e.click && e.click.at != null) {
+      keys.push({at: e.click.at, box: b0});
+      const gone = e.hide && e.hide.at != null ? clamp((frame - e.hide.at) / 12) : 0;
+      pens.push(<g key={`click${k}`} opacity={1 - gone}><Cursor box={b0} at={e.click.at}/></g>);
+    }
     if (e.fit && e.fit.at != null) keys.push({at: e.fit.at, box: b0});           // in close as the bell appears
   });
   // while a live part (samples, physics) is running it is the main event: every framing keeps it in view
-  const live = els.filter((e) => e.type === "samples" || e.type === "physics").map((e) => ({at: e.at ?? 0, box: boxOf(e)}));
+  const live = els.filter((e) => e.type === "samples" || e.type === "physics" || RICH[e.type]).map((e) => ({at: e.at ?? 0, box: boxOf(e)}));
   const framed = keys.map((key) => live.reduce((kk, l) => (key.at >= l.at
     ? {at: kk.at, box: [Math.min(kk.box[0], l.box[0]), Math.min(kk.box[1], l.box[1]), Math.max(kk.box[2], l.box[2]), Math.max(kk.box[3], l.box[3])]}
     : kk), key));
@@ -293,6 +300,10 @@ export const DiagramScene = ({s, i, vertical}) => {
       texts.push({k, x: X(e.x), y: Y(e.y), center: true, p: 1, op,
                   node: <Stamp text={e.text} at={e.at ?? 0} color={e.color === "accent" ? C.hot : c} seed={k + (i || 0)}
                                size={(fs[e.size] || fs.l) * fScale * 1.5}/>});
+    } else if (RICH[e.type]) {
+      const Part = RICH[e.type];
+      shapes.push(<g key={k} opacity={op}><Part e={{...e, color: c}} rect={[X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)]} frame={frame}
+                                                end={s.frames || 300} seed={k * 101 + (i || 0)} vertical={vertical}/></g>);
     } else if (e.type === "crowd") {
       texts.push({k, x: X(e.x), y: Y(e.y), corner: true, p: 1, op,
                   node: <Crowd e={e} w={X(e.x + e.w) - X(e.x)} h={Y(e.y + e.h) - Y(e.y)} frame={frame} color={c}/>});

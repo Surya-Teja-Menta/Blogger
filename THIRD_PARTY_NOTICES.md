@@ -25,3 +25,8 @@ watermark (Resemble AI PerTh) in every output.
 SVG fonts (SIL Open Font License 1.1; EMS Tech is a derivative of Architects Daughter by Kimberly Geswein; SVG
 conversion by Windell H. Oskay, Evil Mad Scientist) as shipped in the hersheytext package (MIT, Copyright (c) 2014
 James T). The handwriting technique follows the Lemo-Opuscar chalkboard and whiteboard films.
+
+## Diagram parts: d3-force, d3-hierarchy, d3-scale, d3-random (ISC License, Mike Bostock / Observable)
+
+`video/src/rich.jsx` lays out its networks with d3-force (a seeded, deterministic simulation), its trees with
+d3-hierarchy, and draws axes with d3-scale. Copyright (c) 2010-2021 Mike Bostock; ISC License.

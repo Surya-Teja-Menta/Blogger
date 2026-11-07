@@ -2416,3 +2416,49 @@ def test_lines_the_farm_did_not_deliver_are_cloned_here_and_all_else_is_standard
     monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: {1: {"ok": True, "words": [[0, 1, "b"]], "out": str(second)}})
     out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
     assert out == [[(0.0, 1.0, "a")], [(0.0, 1.0, "a")]]               # both lines in the owner's voice
+
+
+def test_rich_parts_are_checked_before_they_are_drawn():
+    from blogwriter import diagram
+    from blogwriter.video import _verified, tex_complete
+    scene = {"headline": "A knob", "narration": "A bigger knob makes the curve steeper and friends spread news to strangers in a loop."}
+    R = {"x": 8, "y": 8, "w": 84, "h": 76}
+
+    def run(el):
+        why = []
+        d = diagram.check({"elements": [el, {"type": "label", "x": 50, "y": 94, "text": "steeper"},
+                                        {"type": "dot", "x": 20, "y": 95}]}, scene, _verified, tex_complete, why)
+        return (d["elements"][0] if d else None), why
+
+    plot, why = run({"type": "plot", "expr": "1/(1+exp(-a*x))", "lo": -6, "hi": 6, "sweep": {"from": 0.5, "to": 4}, "trace": True,
+                     "xlabel": "input", "ylabel": "steeper", "shade": [4, -2], **R})
+    assert plot and plot["sweep"] == {"from": 0.5, "to": 4.0, "name": "a"} and plot["shade"] == [-2.0, 4.0] and plot["trace"]
+    bad, why = run({"type": "plot", "expr": "__import__('os')", **R})
+    assert bad is None and any("not a curve" in w for w in why)                   # nothing but the maths grammar
+    bad, why = run({"type": "plot", "expr": "log(x)", "lo": -9, "hi": -1, **R})
+    assert bad is None and any("not a real number" in w for w in why)
+    bad, why = run({"type": "plot", "expr": "x^2", "xlabel": "9000 wells", **R})
+    assert bad is None and any("axis name" in w for w in why)                      # a number in a label must be in the narration
+    net, _ = run({"type": "network", "layout": "layers", "start": "a", **R,
+                  "nodes": [{"id": "a", "text": "friends", "layer": 0}, {"id": "b", "text": "strangers", "layer": 1},
+                            {"id": "c", "text": "77 unicorns", "layer": 1}],
+                  "edges": [["a", "b"], ["a", "c"], ["a", "zzz"], ["a", "a"]]})
+    assert net["layout"] == "layers" and net["edges"] == [["a", "b"], ["a", "c"]]
+    assert [n["text"] for n in net["nodes"]] == ["friends", "strangers", ""]       # an invented figure in a label is left out
+    assert run({"type": "network", "nodes": [{"id": "a"}, {"id": "b"}], "edges": [["a", "b"]], **R})[0] is None
+    tree, _ = run({"type": "tree", "path": "c", **R, "nodes": [{"id": "r", "parent": ""}, {"id": "b", "parent": "r"}, {"id": "c", "parent": "b"}]})
+    assert tree["path"] == "c"
+    assert run({"type": "tree", **R, "nodes": [{"id": "r", "parent": ""}, {"id": "b", "parent": "x"}, {"id": "c", "parent": "b"}]})[0] is None
+    assert run({"type": "tree", **R, "nodes": [{"id": "r", "parent": ""}, {"id": "s", "parent": ""}, {"id": "c", "parent": "r"}]})[0] is None
+    grid, _ = run({"type": "grid", "rows": 5, "cols": 5, "scan": 3, "op": "mean", "cells": [[1, 1], [9, 9]], **R})
+    assert grid["scan"] == 3 and len(grid["values"]) == 25 and grid["cells"] == [[1, 1], [4, 4]] and grid["op"] == "mean"
+    assert run({"type": "grid", "rows": 3, "cols": 3, "scan": 3, **R})[0]["scan"] == 0     # a window must fit inside the board
+    venn, _ = run({"type": "venn", "overlap": 5, "sets": [{"text": "friends"}, {"text": "strangers"}], **R})
+    assert venn["overlap"] == 0.7 and len(venn["sets"]) == 2
+    assert run({"type": "venn", "sets": [{"text": "friends"}], **R})[0] is None
+    cyc, _ = run({"type": "cycle", "nodes": ["friends", "news", "strangers"], **R})
+    assert cyc["nodes"] == ["friends", "news", "strangers"]
+    assert run({"type": "cycle", "nodes": ["friends", "news"], **R})[0] is None
+    clicked = diagram.timed({"elements": [{"type": "box", "x": 30, "y": 30, "w": 20, "h": 20, "text": "", "on": "", "click": {"on": "steeper"}}]},
+                            [(0.0, 0.3, "A"), (2.0, 2.4, "steeper")], 300, 30, 10)
+    assert clicked["elements"][0]["click"]["at"] == 70

@@ -10,14 +10,17 @@ import re
 from typing import Callable, Dict, List, Optional
 
 from . import graphics
+from .mathexpr import compile_expr, finite_share
 
 TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex",
-         "samples", "physics", "counter", "shape", "crowd", "stamp")
-REGIONS = ("samples", "physics", "crowd")          # parts that fill a box of the canvas
+         "samples", "physics", "counter", "shape", "crowd", "stamp",
+         "plot", "network", "tree", "grid", "venn", "cycle")
+RICH = ("plot", "network", "tree", "grid", "venn", "cycle")     # moving pictures of how a thing works (rich.jsx)
+REGIONS = ("samples", "physics", "crowd") + RICH   # parts that fill a box of the canvas
 SOURCES = ("uniform", "skewed", "exponential", "bimodal", "normal", "dice", "coin")
 SHAPES = ("circle", "square", "triangle", "diamond", "hexagon", "star", "heart")
 MARKS = ("circle", "underline", "box", "cross")
-MOTIONS = ("move", "glow", "hide", "mark", "fit")
+MOTIONS = ("move", "glow", "hide", "mark", "fit", "click")
 COLOURS = ("accent", "hot", "cool", "violet", "text", "muted")
 ANIMS = ("pop", "draw", "fade", "grow")
 SIZES = ("s", "m", "l")
@@ -63,6 +66,38 @@ narration at which it appears, copied exactly from the narration, or "" for the 
   the bottom (0 = none; with pegs there is one bin per landing spot); "drop": "center" (one stream) or "spread"
   (rain over the width); "text": what is counted (max 4 words). Use it for many small random pushes adding up,
   things piling up, filling, overflowing or sorting by chance.
+- "plot": x, y, w, h (a big region: w at least 40, h at least 45): a function drawn live on axes. "expr": the curve in
+  x, e.g. "x^2", "sin(x)", "1/(1+exp(-x))", "exp(-x^2/2)", "a*x^2" (numbers, x, one parameter a, + - * / ^, brackets,
+  sin cos tan exp log sqrt abs, pi, e; nothing else); "lo", "hi": the x range; optional "expr2": a second curve to
+  compare; optional "sweep": {{"from": number, "to": number}}: the parameter a slides from one value to the other
+  with a slider on screen while the curve bends (what a knob DOES: slope, rate, width, strength); optional
+  "trace": true: a point travels along the curve with its tangent line and its distances to the axes (slope,
+  rate of change, a derivative); optional "shade": [x0, x1]: the area under the curve there fills in on the
+  element's "glow" word (an integral, a probability, a total); "xlabel", "ylabel": axis names (max 3 words each).
+- "network": region (w at least 40, h at least 45): connected things. "nodes": [{{"id": "a", "text": "name" (max 2
+  words)}}, ...] 3 to 12; "edges": [["a", "b"], ...] up to 24; "layout": "force" (default, finds its own shape) or
+  "layers" (give each node "layer": 0, 1, 2 ...: a neural net, a pipeline); optional "start": the node a wave
+  starts from. On the element's "glow" word a WAVE spreads from the start through the connections with pulses
+  riding the lines and each node lighting in turn (news spreading, a disease, a signal, influence, a forward pass).
+- "tree": region (w at least 40, h at least 40): a hierarchy that grows level by level. "nodes": [{{"id": "r",
+  "parent": "" (the root; exactly one), "text": max 2 words}}, ...] up to 15, each parent given before its
+  children; optional "path": a node id: on the element's "glow" word the route from the root to it lights up
+  (a decision path, a chain of choices, a branch of probability, recursion, categories inside categories).
+- "grid": region (w at least 30, h at least 35): a board of cells. "rows", "cols" (2 to 10); optional "values": a
+  list of rows*cols numbers (0 to 9 reads best; else made up); "show": numbers, heat or both; optional "scan": 2 or
+  3: on the element's "glow" word a window of that size slides over the board and the result of each position (op:
+  sum, max or mean) fills an output grid beside it (a convolution, pooling, a moving average, a sliding window,
+  pixels of an image); optional "cells": [[row, col], ...] lit on the "glow" word (a pattern, a winner, an error).
+- "venn": region (w at least 35, h at least 45): "sets": 2 or 3 of {{"text": max 2 words}}; the circles start apart
+  and drift together on the element's "glow" word; "overlap": 0.15 to 0.7 (how much they end up overlapping);
+  optional "both": what the overlap is (max 3 words). For what is shared, what is common, and, or, intersection.
+- "cycle": region (w at least 40, h at least 50): a loop of 3 to 7 stages, "nodes": ["plan", "build", ...] (each max
+  2 words, in order), with a comet circling the loop and lighting each stage in turn; optional "text": the loop's
+  name in the middle (max 2 words). For repeating processes, feedback, orbits, routines, life cycles.
+These moving parts fill the picture: use at most ONE per shot, with a few labels, arrows or a stamp around it.
+Choose one whenever the sentence is about a function or how a knob changes it (plot), connections or spreading
+(network), choices or hierarchy (tree), a board, image or sliding window (grid), what two things share (venn), or
+something that repeats (cycle): the viewer SEES how it works, which a static drawing cannot show.
 MOTION (optional on any element, each with its own "on" word, which must come after the element's own "on" word):
 - "move": {{"on": word, then the new x, y (or x1, y1, x2, y2 for a line or arrow; h for a bar; r for a circle)}}
   A "curve" or "dots" can RESHAPE: give the new "points" (same count) and the shape morphs into them (a straight
@@ -73,6 +108,8 @@ MOTION (optional on any element, each with its own "on" word, which must come af
 - "mark": {{"on": word, "style": circle, underline, box or cross}}: a hand-drawn pen mark on it, like a teacher on a
   board (cross = this is wrong)
 - "fit": {{"on": word}} (samples and physics only): the pile melts into the smooth bell curve that fits it
+- "click": {{"on": word}}: a mouse pointer glides to the piece and clicks it, a ripple spreads (an interface, a
+  button, choosing something, "tap here"; makes the picture feel operated)
 - A "shape" can MORPH: "move" with a new "shape" (and size) turns it into that shape (an idea becoming another).
 CAMERA: the camera pushes in on each piece as its word is spoken and pulls back to the whole picture at the end, so
 give each new idea its own piece and its own word; samples and physics run for the rest of the shot, so they start
@@ -115,6 +152,15 @@ Two examples of the standard expected (do not copy them; draw what YOUR sentence
  {{"type": "arrow", "color": "accent", "x1": 20, "y1": 20, "x2": 32, "y2": 50, "bend": -0.2, "on": "downhill", "text": "downhill"}},
  {{"type": "line", "color": "accent", "x1": 38, "y1": 82, "x2": 62, "y2": 82, "on": "flat", "glow": {{"on": "flat"}}}},
  {{"type": "label", "color": "hot", "x": 50, "y": 93, "text": "the slope is flat", "size": "m", "on": "flat"}}]
+
+"A bigger knob makes the curve steeper, so the output reacts faster" ->
+[{{"type": "plot", "color": "accent", "x": 8, "y": 8, "w": 84, "h": 76, "expr": "1/(1+exp(-a*x))", "lo": -6, "hi": 6,
+  "sweep": {{"from": 0.5, "to": 4}}, "trace": true, "xlabel": "input", "ylabel": "output", "on": "knob"}},
+ {{"type": "label", "color": "hot", "x": 50, "y": 94, "text": "steeper", "size": "m", "on": "steeper"}}]
+
+The moving parts (plot, network, tree, grid, venn, cycle, samples, physics, crowd, counter) are what make the video
+worth watching: use one wherever the sentence fits one, and "click", "mark" and "glow" to point at what matters. A
+shot with only labels and arrows is the last resort.
 
 Shots (index | headline | narration | WANTED: the picture the writer asked for, when given; build that):
 {shots}
@@ -279,6 +325,158 @@ def _overlap(a: tuple, b: tuple) -> float:
     return w * h / small
 
 
+def _ident(v, n: int = 12) -> str:
+    return re.sub(r"[^\w-]", "", str(v if v is not None else ""))[:n]
+
+
+def _rich(el: dict, e: dict, allowed: str, verified: Callable[[str, str], bool], why: List[str]) -> bool:
+    """Fill the rich part's own fields into el; True when it cannot be drawn (and say why)."""
+    t = el["type"]
+    if t == "plot":
+        expr = str(e.get("expr") or "").strip()[:60]
+        lo, hi = _num(e.get("lo"), -1e4, 1e4, -5), _num(e.get("hi"), -1e4, 1e4, 5)
+        if hi <= lo:
+            lo, hi = -5, 5
+        sweep = None
+        sw = e.get("sweep")
+        if isinstance(sw, dict):
+            try:
+                sweep = {"from": float(sw["from"]), "to": float(sw["to"]), "name": "a"}
+            except (KeyError, TypeError, ValueError):
+                sweep = None
+        a = _num(e.get("a"), -1e3, 1e3, 1.0)
+        params = [sweep["from"], sweep["to"]] if sweep else [a]
+        try:
+            f = compile_expr(expr)
+        except ValueError:
+            why.append(f'plot "expr" {expr[:40]!r} is not a curve in x (use numbers, x, a, + - * / ^, sin cos tan exp log sqrt abs, pi, e)')
+            return True
+        if finite_share(f, lo, hi, params) < 0.8:
+            why.append(f'plot "{expr[:40]}" is not a real number across {lo} to {hi}; pick another range or curve')
+            return True
+        el.update(expr=expr, lo=lo, hi=hi, a=a, trace=bool(e.get("trace")), xlabel=_words(e.get("xlabel"), 3),
+                  ylabel=_words(e.get("ylabel"), 3))
+        if sweep and re.search(r"(?<![a-z])a(?![a-z])", expr.lower()):
+            el["sweep"] = sweep
+        expr2 = str(e.get("expr2") or "").strip()[:60]
+        if expr2:
+            try:
+                if finite_share(compile_expr(expr2), lo, hi, params) >= 0.8:
+                    el["expr2"] = expr2
+            except ValueError:
+                pass
+        shade = e.get("shade")
+        if isinstance(shade, (list, tuple)) and len(shade) == 2:
+            try:
+                s0, s1 = sorted(float(v) for v in shade)
+                if hi >= s0 and lo <= s1 and s1 > s0:
+                    el["shade"] = [max(lo, s0), min(hi, s1)]
+            except (TypeError, ValueError):
+                pass
+        return False
+    if t in ("network", "tree"):
+        nodes, seen = [], set()
+        for n in (e.get("nodes") or [])[:15 if t == "tree" else 12]:
+            if not isinstance(n, dict):
+                continue
+            nid = _ident(n.get("id"))
+            if not nid or nid in seen:
+                continue
+            seen.add(nid)
+            text = _words(n.get("text"), 2)
+            if text and not verified(text, allowed):
+                why.append(f'{t} node "{text}" uses a number the narration never says; its label is left out')
+                text = ""
+            item = {"id": nid, "text": text}
+            if t == "network" and isinstance(n.get("layer"), (int, float)):
+                item["layer"] = int(_num(n.get("layer"), 0, 6, 0))
+            if t == "tree":
+                item["parent"] = _ident(n.get("parent"))
+            nodes.append(item)
+        ids = {n["id"] for n in nodes}
+        if t == "network":
+            edges, have = [], set()
+            for pair in (e.get("edges") or [])[:24]:
+                if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                    a, b = _ident(pair[0]), _ident(pair[1])
+                    if a in ids and b in ids and a != b and (a, b) not in have and (b, a) not in have:
+                        have.add((a, b))
+                        edges.append([a, b])
+            if len(nodes) < 3 or not edges:
+                why.append("a network needs at least 3 nodes and some edges between their ids")
+                return True
+            layered = e.get("layout") == "layers" and all("layer" in n for n in nodes)
+            start = _ident(e.get("start"))
+            el.update(nodes=nodes, edges=edges, layout="layers" if layered else "force", start=start if start in ids else "")
+            return False
+        roots = [n for n in nodes if not n["parent"]]
+        by = {n["id"]: n for n in nodes}
+
+        def reaches_root(n: dict) -> bool:
+            seen_ids = set()
+            while n["parent"]:
+                if n["id"] in seen_ids or n["parent"] not in by:
+                    return False
+                seen_ids.add(n["id"])
+                n = by[n["parent"]]
+            return True
+        if len(nodes) < 3 or len(roots) != 1 or not all(reaches_root(n) for n in nodes):
+            why.append('a tree needs 3 or more nodes with exactly one root (parent "") and every parent an existing id')
+            return True
+        path = _ident(e.get("path"))
+        el.update(nodes=nodes, path=path if path in ids else "")
+        return False
+    if t == "grid":
+        rows, cols = int(_num(e.get("rows"), 2, 10, 5)), int(_num(e.get("cols"), 2, 10, 5))
+        scan = int(_num(e.get("scan"), 0, 3, 0))
+        scan = scan if scan in (2, 3) and rows > scan and cols > scan else 0
+        vals = e.get("values")
+        if isinstance(vals, list) and len(vals) == rows * cols:
+            try:
+                vals = [round(float(v), 1) for v in vals]
+            except (TypeError, ValueError):
+                vals = None
+        else:
+            vals = None
+        if vals is None:                     # illustrative numbers, fixed by the board's size
+            vals = [(r * 5 + c * 3 + (r * c) % 4) % 10 for r in range(rows) for c in range(cols)]
+        cells = []
+        for rc in (e.get("cells") or [])[:6]:
+            if isinstance(rc, (list, tuple)) and len(rc) == 2:
+                cells.append([int(_num(rc[0], 0, rows - 1, 0)), int(_num(rc[1], 0, cols - 1, 0))])
+        show = e.get("show") if e.get("show") in ("numbers", "heat", "both") else "both"
+        el.update(rows=rows, cols=cols, values=[int(v) if v == int(v) else v for v in vals], scan=scan, show=show,
+                  op=e.get("op") if e.get("op") in ("sum", "max", "mean") else "sum", cells=cells)
+        return False
+    if t == "venn":
+        sets = []
+        for s in (e.get("sets") or [])[:3]:
+            text = _words(s.get("text") if isinstance(s, dict) else s, 2)
+            if not text:
+                continue
+            if not verified(text, allowed):
+                why.append(f'venn set "{text}" uses a number the narration never says')
+                return True
+            sets.append({"text": text})
+        if len(sets) < 2:
+            why.append("a venn needs 2 or 3 sets with a short text each")
+            return True
+        el.update(sets=sets, overlap=_num(e.get("overlap"), 0.15, 0.7, 0.35), both=_words(e.get("both"), 3))
+        return False
+    if t == "cycle":
+        nodes = [_words(n, 2) for n in (e.get("nodes") or [])[:7] if _words(n, 2)]
+        if len(nodes) < 3:
+            why.append("a cycle needs 3 to 7 stages (short texts)")
+            return True
+        bad = [n for n in nodes if not verified(n, allowed)]
+        if bad:
+            why.append(f'cycle stage "{bad[0]}" uses a number the narration never says')
+            return True
+        el.update(nodes=nodes, text=_words(e.get("text"), 2))
+        return False
+    return False
+
+
 def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool],
           why: Optional[List[str]] = None) -> Optional[dict]:
     """The diagram as the video can draw it, or None if it is too thin, too crowded or untrue. why, if given,
@@ -309,7 +507,9 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             if not el["text"] or any(o["type"] == "stamp" for o in out):
                 continue
         if t in REGIONS:
-            lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10)}[t]
+            lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10), "plot": (40, 45),
+                          "network": (40, 45), "tree": (40, 40), "grid": (30, 35), "venn": (35, 45),
+                          "cycle": (40, 50)}[t]
             el.update(x=_num(e.get("x"), 3, 97 - lo_w, 10), y=_num(e.get("y"), 3, 97 - lo_h, 10))
             el.update(w=_num(e.get("w"), lo_w, 97 - el["x"], max(lo_w, 60)), h=_num(e.get("h"), lo_h, 97 - el["y"], max(lo_h, 70)))
         if t == "samples":
@@ -328,6 +528,8 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             el.update(balls=int(_num(e.get("balls"), 20, 160, 110)), pegs=int(_num(e.get("pegs"), 0, 12, 10)),
                       bins=0 if bins in (0, False, "0") else int(_num(bins, 3, 15, 9)),
                       drop="spread" if e.get("drop") == "spread" else "center", text=_words(e.get("text"), 4))
+        if t in RICH and _rich(el, e, allowed, verified, why):
+            continue
         if t == "counter":
             try:
                 el.update(to=float(e.get("to")), **{"from": float(e.get("from") or 0)})
@@ -390,6 +592,9 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             el.update(tex=tex, size=e.get("size") if e.get("size") in SIZES else "m")
         if not _text_ok(el.get("text", ""), allowed, verified):
             why.append(f'{t} "{el["text"]}" uses words or numbers the narration never says')
+            continue
+        if any(not _text_ok(el.get(k, ""), allowed, verified) for k in ("xlabel", "ylabel", "both")):
+            why.append(f"{t}: an axis name or overlap name uses a number the narration never says")
             continue
         for motion in MOTIONS:
             m = e.get(motion)
