@@ -2268,3 +2268,151 @@ def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monk
     assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "loud")
     assert sound.bed_level() == 0.12
+
+
+class _FakeBucket:
+    """Just enough of an S3 client for the voice farm."""
+    def __init__(self):
+        self.objects = {}
+        self.on_put = None
+
+    def put_object(self, Bucket, Key, Body):
+        self.objects[Key] = Body
+        if self.on_put:
+            self.on_put(Key)
+
+    def upload_file(self, path, Bucket, Key):
+        with open(path, "rb") as f:
+            self.objects[Key] = f.read()
+
+    def download_file(self, Bucket, Key, path):
+        with open(path, "wb") as f:
+            f.write(self.objects[Key])
+
+    def get_object(self, Bucket, Key):
+        import io
+        return {"Body": io.BytesIO(self.objects[Key])}
+
+    def get_paginator(self, name):
+        outer = self
+
+        class P:
+            def paginate(self, Bucket, Prefix=""):
+                yield {"Contents": [{"Key": k} for k in sorted(outer.objects) if k.startswith(Prefix)]}
+        return P()
+
+    def delete_objects(self, Bucket, Delete):
+        for o in Delete["Objects"]:
+            self.objects.pop(o["Key"], None)
+
+
+def test_the_narration_is_split_into_even_chunks_for_the_voice_farm():
+    from blogwriter import voicefarm
+    runs = voicefarm.split([100] * 83, 12)
+    assert len(runs) == 12 and runs[0].start == 0 and runs[-1].stop == 83
+    assert all(a.stop == b.start for a, b in zip(runs, runs[1:])) and min(len(r) for r in runs) >= 6
+    assert [(r.start, r.stop) for r in voicefarm.split([10, 200, 10, 10, 10], 4)] == [(0, 2), (2, 3), (3, 4), (4, 5)]
+    assert [(r.start, r.stop) for r in voicefarm.split([5, 5], 12)] == [(0, 1), (1, 2)]      # never an empty chunk
+
+
+def test_the_voice_farm_clones_in_parallel_and_hands_back_what_a_machine_missed(monkeypatch, tmp_path):
+    import json
+    import zipfile
+    from blogwriter import storage, voicefarm
+    from blogwriter.config import Settings
+    bucket = _FakeBucket()
+    monkeypatch.setattr(storage, "_client", lambda settings: bucket)
+    s = Settings(s3_endpoint="e", s3_bucket="b", s3_access_key="k", s3_secret_key="s")
+    monkeypatch.setenv("ACTIONS_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("VOICE_FARM_CHUNKS", "3")
+    assert voicefarm.available(s)
+    monkeypatch.setenv("VOICE_FARM", "off")
+    assert not voicefarm.available(s)
+    monkeypatch.setenv("VOICE_FARM", "on")
+    asked = []
+
+    def dispatch(prefix, index):
+        asked.append(index)
+        spec = json.loads(bucket.objects[f"{prefix}/spec-{index}.json"])
+        if index == 2:                                            # this machine dies and leaves its marker
+            bucket.objects[f"{prefix}/err-{index}.txt"] = b"gone"
+            return None
+        zp = tmp_path / f"w{index}.zip"
+        with zipfile.ZipFile(zp, "w") as z:
+            z.writestr("jobs.json", json.dumps([{"ok": True, "words": [[0, 1, it["text"].split()[0]]], "match": 1.0}
+                                                 for it in spec]))
+            for j in range(len(spec)):
+                z.writestr(f"{j}.wav", b"RIFF")
+        bucket.objects[f"{prefix}/out-{index}.zip"] = zp.read_bytes()
+        return None
+    monkeypatch.setattr(voicefarm, "dispatch", dispatch)
+    logs = []
+    texts = ["one a", "two b", "three c", "four d", "five e", "six f"]
+    items = voicefarm.clone(texts, s, str(tmp_path), logs.append, sleep=lambda x: None)
+    assert asked == [0, 1, 2] and [bool(i.get("missing")) for i in items] == [False] * 4 + [True] * 2
+    assert items[0]["ok"] and items[0]["words"] == [[0, 1, "one"]] and open(items[3]["out"], "rb").read() == b"RIFF"
+    assert not bucket.objects                                       # nothing is left in the bucket
+    assert any("2 of 3 machines delivered" in m for m in logs)
+    monkeypatch.setattr(voicefarm, "dispatch", lambda p, i: "HTTP 403")
+    assert voicefarm.clone(texts, s, str(tmp_path), logs.append, sleep=lambda x: None) is None   # nothing started
+
+
+def test_a_voice_farm_machine_clones_its_chunk_and_reports_failure(monkeypatch, tmp_path):
+    import json
+    import sys
+    import zipfile
+    from blogwriter import storage, video, voice_worker
+    bucket = _FakeBucket()
+    monkeypatch.setattr(storage, "_client", lambda settings: bucket)
+    monkeypatch.setenv("S3_ENDPOINT", "e")
+    monkeypatch.setenv("S3_BUCKET", "b")
+    monkeypatch.setenv("VOICE_PYTHON", sys.executable)
+    bucket.objects["voice-farm/ab12cd34/spec-1.json"] = json.dumps([{"text": "Hello there."}, {"text": "Bye."}]).encode()
+
+    def sample(settings, work, log):
+        ref = tmp_path / "ref.wav"
+        ref.write_bytes(b"x")
+        return str(ref)
+
+    def clone(python, spec, ref, texts, log):
+        jobs = json.load(open(spec, encoding="utf-8"))
+        for j in jobs:
+            open(j["out"], "wb").write(b"RIFF")
+            j.update(ok=True, words=[[0, 1, "hi"]], match=1.0)
+        json.dump(jobs, open(spec, "w", encoding="utf-8"))
+        return False
+    monkeypatch.setattr(video, "voice_sample", sample)
+    monkeypatch.setattr(video, "clone_with_budget", clone)
+    assert voice_worker.main(["voice-farm/ab12cd34", "1"]) == 0
+    z = zipfile.ZipFile(__import__("io").BytesIO(bucket.objects["voice-farm/ab12cd34/out-1.zip"]))
+    assert sorted(z.namelist()) == ["0.wav", "1.wav", "jobs.json"]
+    assert "text" not in json.loads(z.read("jobs.json"))[0]           # the script stays out of the hand-over
+    monkeypatch.setattr(video, "voice_sample", lambda *a: None)       # no recording: say so, so the make job moves on
+    assert voice_worker.main(["voice-farm/ab12cd34", "1"]) == 1 and "voice-farm/ab12cd34/err-1.txt" in bucket.objects
+    assert voice_worker.main(["../../etc", "1"]) == 2                  # the inputs are checked
+
+
+def test_lines_the_farm_did_not_deliver_are_cloned_here_and_all_else_is_standard(monkeypatch, tmp_path):
+    from blogwriter import video, voicefarm
+    from blogwriter.config import Settings
+    monkeypatch.setattr(voicefarm, "available", lambda s: True)
+    wav = tmp_path / "f.wav"
+    wav.write_bytes(b"x")
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [
+        {"ok": True, "words": [[0, 1, "a"]], "out": str(wav)}, {"missing": True}])
+    monkeypatch.setattr(video, "ffmpeg", lambda args, **k: None)
+    monkeypatch.setattr(video, "align_words", lambda text, words: [(0.0, 1.0, "a")])
+    monkeypatch.setattr(video, "speak_all", lambda jobs: [[(0.0, 2.0, "std")] for _ in jobs])
+    monkeypatch.setenv("VOICE_PYTHON", __import__("sys").executable)
+    asked = []
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: asked.append(which) or None)
+    jobs = [("one", "v", str(tmp_path / "1.mp3")), ("two", "v", str(tmp_path / "2.mp3"))]
+    out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
+    assert asked == [[1]] and out == [[(0.0, 2.0, "std")], [(0.0, 2.0, "std")]]   # budget stopped it: one voice, standard
+    wav.write_bytes(b"x")
+    second = tmp_path / "g.wav"
+    second.write_bytes(b"x")
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: {1: {"ok": True, "words": [[0, 1, "b"]], "out": str(second)}})
+    out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
+    assert out == [[(0.0, 1.0, "a")], [(0.0, 1.0, "a")]]               # both lines in the owner's voice

@@ -29,7 +29,7 @@ from .critic import review, summary
 from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
-from . import design, diagram, graphics, looks, mathexpr
+from . import design, diagram, graphics, looks, mathexpr, voicefarm
 from .research import domain
 from .storage import prune_prefix, upload_run
 from .web import UA
@@ -513,43 +513,67 @@ def clone_with_budget(python: str, spec: str, ref: str, texts: List[str], log: C
     return aborted
 
 
+def clone_here(python: str, jobs: List[tuple], which: List[int], settings: Settings, job: str,
+               log: Callable[[str], None]) -> Optional[Dict[int, dict]]:
+    """The lines `which` cloned on this machine (within the time budget). {line: result}; None when the sample is
+    missing or the budget stopped it."""
+    ref = voice_sample(settings, job, log)
+    if not ref:
+        return None
+    spec = os.path.join(job, "clone_jobs.json")
+    try:
+        with open(spec, "w", encoding="utf-8") as f:
+            json.dump([{"text": jobs[k][0], "out": jobs[k][2][:-4] + ".clone.wav"} for k in which], f, ensure_ascii=False)
+        if clone_with_budget(python, spec, ref, [jobs[k][0] for k in which], log):
+            return None
+        with open(spec, encoding="utf-8") as f:
+            return dict(zip(which, json.load(f)))
+    except (OSError, ValueError):
+        return {}
+    finally:
+        os.remove(ref)
+
+
 def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
-    """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default) and
-    the cloning environment (VOICE_PYTHON) and the voice sample are there; any line that fails, or everything when
-    they are not, is spoken by the standard voice. Returns each line's word timings, like speak_all."""
+    """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default): on
+    the voice farm's parallel machines (voicefarm.py) when that is available, else, or for any chunk the farm did
+    not deliver, on this machine (VOICE_PYTHON, within the time budget). A line that fails, or everything when
+    cloning cannot be done, is spoken by the standard voice. Returns each line's word timings, like speak_all."""
     results: List[Optional[list]] = [None] * len(jobs)
     python = os.environ.get("VOICE_PYTHON", "")
     if os.environ.get("NARRATOR_VOICE", "clone").strip().lower() == "clone" and jobs:
-        ref = voice_sample(settings, job, log) if python and os.path.exists(python) else None
-        if not python or not os.path.exists(python):
-            log("[voice] the cloning environment is not installed (VOICE_PYTHON): using the standard voice")
-        if ref:
-            spec = os.path.join(job, "clone_jobs.json")
-            with open(spec, "w", encoding="utf-8") as f:
-                json.dump([{"text": t, "out": p[:-4] + ".clone.wav"} for t, _, p in jobs], f, ensure_ascii=False)
-            t0 = time.time()
-            aborted = clone_with_budget(python, spec, ref, [t for t, _, _ in jobs], log)
-            try:
-                with open(spec, encoding="utf-8") as f:
-                    done = [] if aborted else json.load(f)
-            except (OSError, ValueError):
-                done = []
-            for k, (item, (text, _, path)) in enumerate(zip(done, jobs)):
-                if not item.get("ok") or not os.path.exists(item["out"]):
-                    continue
-                try:             # the pipeline's own audio format (mp3_seconds relies on it)
-                    ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-b:a", "48k", path])
-                    results[k] = align_words(text, item["words"]) or None
-                except RuntimeError:
-                    pass
-                finally:
-                    os.remove(item["out"])
+        t0 = time.time()
+        items: Dict[int, dict] = {}
+        farmed = voicefarm.clone([t for t, _, _ in jobs], settings, job, log) if voicefarm.available(settings) else None
+        if farmed:
+            items = {k: it for k, it in enumerate(farmed) if not it.get("missing")}
+        left = [k for k in range(len(jobs)) if k not in items]
+        if left:
+            if not python or not os.path.exists(python):
+                log("[voice] the cloning environment is not installed (VOICE_PYTHON): using the standard voice")
+            else:
+                made = clone_here(python, jobs, left, settings, job, log)
+                if made is None:
+                    items = {}                       # never half one voice and half another: the standard voice speaks all
+                else:
+                    items.update(made)
+        for k, item in sorted(items.items()):
+            text, _, path = jobs[k]
+            if not item.get("ok") or not os.path.exists(item.get("out", "")):
+                continue
+            try:                 # the pipeline's own audio format (mp3_seconds relies on it)
+                ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-b:a", "48k", path])
+                results[k] = align_words(text, item["words"]) or None
+            except RuntimeError:
+                pass
+            finally:
+                os.remove(item["out"])
+        if items:
             cloned = sum(r is not None for r in results)
             spoken_s = sum(r[-1][1] for r in results if r)
             took = time.time() - t0
             log(f"[voice] {cloned} of {len(jobs)} lines spoken in the owner's voice ({took:.0f}s; "
                 f"{spoken_s / max(1.0, took):.2f}x real time)")
-            os.remove(ref)
     missing = [k for k, r in enumerate(results) if r is None]
     if missing:
         for k, words in zip(missing, speak_all([jobs[k] for k in missing])):
