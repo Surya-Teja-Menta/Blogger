@@ -2234,3 +2234,17 @@ def test_a_course_is_planned_sized_and_handed_out_in_waves(tmp_path, monkeypatch
     assert "Machine Learning from Zero" in c.summary(course)
     with pytest.raises(ValueError):
         c.plan("X", "basic", "", lambda *a, **k: {"modules": []})
+
+
+def test_each_film_look_cuts_in_its_own_medium_and_tells_the_designer_its_language():
+    from blogwriter import design, diagram, looks
+    for key, L in looks.LOOKS.items():
+        t = looks.theme_for(key, next(iter(L["accents"].values())), design._finish, design.check_fx, "s")
+        named = [c for c in t["cuts"] if isinstance(c, str)]
+        assert named == list(L["cuts_native"]) and all(c in design.CUTS for c in named)
+        assert any(isinstance(c, dict) for c in t["cuts"])            # the look's own shaped cuts stay too
+        assert L["moves"] in looks.moves_text(t)
+    assert looks.moves_text(None) == "" and looks.moves_text({"look": {"slug": "nope"}}) == ""
+    t = looks.theme_for("halftone-dossier", "#c0392b", design._finish, design.check_fx, "s")
+    p = diagram.prompt([{"headline": "h", "narration": "n"}], [0], "T", "m", looks.moves_text(t))
+    assert "stamp slammed on the verdict" in p and "native move" in p

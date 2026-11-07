@@ -79,7 +79,9 @@ give each new idea its own piece and its own word; samples and physics run for t
 on an early word.
 
 RULES: labels use words from the narration, placed right next to what they name; never write a number that is not
-in the narration; text never overlaps other text or shapes; one idea per diagram; the eye follows the sentence."""
+in the narration; text never overlaps other text or shapes; one idea per diagram; the eye follows the sentence;
+the subject is big (at least a third of the canvas height), never a tiny drawing in a corner; never a colour drawn on
+the same colour (muted on muted, a label inside a box of its own colour)."""
 
 PROMPT = """You are the visual explainer of a channel like 3Blue1Brown, Kurzgesagt and StatQuest. For each shot
 below, design ONE animated diagram that SHOWS what the narration says: the mechanism, the relationship, the change.
@@ -88,7 +90,7 @@ sentence, and what would MOVE while it is said? Every diagram is drawn fresh for
 different from the others.
 
 Video: {title}  |  Mood: {mood}
-
+{style}
 """ + SPEC + """
 
 Two examples of the standard expected (do not copy them; draw what YOUR sentence needs):
@@ -156,10 +158,11 @@ def refine_prompt(scene: dict, d: dict, icons: str) -> str:
                          diagram=_json.dumps(plain), icons=icons)
 
 
-def prompt(scenes: List[dict], idx: List[int], title: str, mood: str) -> str:
+def prompt(scenes: List[dict], idx: List[int], title: str, mood: str, style: str = "") -> str:
     rows = "\n".join(f"{i} | {scenes[i].get('headline', '')} | {scenes[i].get('narration', '')}"
                      + (f" | WANTED: {scenes[i]['picture']}" if scenes[i].get("picture") else "") for i in idx)
-    return PROMPT.format(title=title, mood=mood or "-", icons=" ".join(sorted(graphics.ICONS)), shots=rows)
+    return PROMPT.format(title=title, mood=mood or "-", icons=" ".join(sorted(graphics.ICONS)), shots=rows,
+                         style=style + "\n" if style else "")
 
 
 ICON_LIST = " ".join(sorted(graphics.ICONS))
@@ -458,7 +461,8 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
 
 
 def design(complete_json: Callable, scenes: List[dict], idx: List[int], title: str, mood: str,
-           verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool], log: Callable[[str], None]) -> int:
+           verified: Callable[[str, str], bool], tex_ok: Callable[[str], bool], log: Callable[[str], None],
+           style: str = "") -> int:
     """Design diagrams for the shots in idx (a few per request); a design the checks refuse is asked for once more,
     with the reason. Returns how many were usable."""
     made = 0
@@ -467,7 +471,7 @@ def design(complete_json: Callable, scenes: List[dict], idx: List[int], title: s
     for attempt in range(2):
         for part, note in batches:
             try:
-                reply = complete_json(prompt(scenes, part, title, mood) + note, max_tokens=8000, temperature=0.8)
+                reply = complete_json(prompt(scenes, part, title, mood, style) + note, max_tokens=8000, temperature=0.8)
             except Exception as exc:          # diagrams are an upgrade; a failed request leaves the shots as they are
                 log(f"[diagram] no designs for shots {part}: {str(exc)[:100]}")
                 continue

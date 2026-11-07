@@ -11,6 +11,7 @@ from typing import Callable, Dict, Optional
 # palette keys: bg, panel, line, text, muted, accent, hot, cool, violet (see design.py)
 LOOKS: Dict[str, dict] = {
     "chalkboard": {
+        "cuts_native": ('wipe', 'slideBlur'), "moves": "write the claim people believe, then cross it out or stamp it MYTH and write the true one beside it; circle in the accent chalk the one part the lesson tracks; few words, big letters",
         "name": "Chalkboard", "uses": "lessons, myth-busting, a misconception set right, a worked problem",
         "line": "chalk writes itself on a deep green slate: white for every structure, one accent chalk for the one thing tracked",
         "surface": "slate", "stroke": "chalk", "overlay": "", "display": "Kalam", "body": "Kalam", "hand": "Kalam",
@@ -19,6 +20,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"orange chalk": "#f2a45a", "pink chalk": "#f48fb1", "green chalk": "#8fd3a0", "yellow chalk": "#f4dc78"},
         "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "split"), "handwrite": "readability"},
     "whiteboard": {
+        "cuts_native": ('slideBlur', 'pushCut'), "moves": "a map of connected ideas drawn by hand: boxes, arrows and little icons joined across the board; circle and underline what matters",
         "name": "Whiteboard Explainer", "uses": "explainers, online courses, science, how something works",
         "line": "a glossy dry-erase board, marker lines with a hand's wobble, three marker colours with fixed meanings",
         "surface": "whiteboard", "stroke": "marker", "overlay": "", "display": "ArchitectsDaughter", "body": "Kalam",
@@ -28,6 +30,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"orange marker": "#d9603b", "red marker": "#d63a3a", "green marker": "#2f9e6b", "purple marker": "#8f5bd1"},
         "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "diagonal"), "handwrite": "tech"},
     "blueprint": {
+        "cuts_native": ('slideBlur', 'wipe'), "moves": "technical drawings: dimension lines with measured labels, an exploded view (pieces moving apart), callout arrows; one red stamp for the verdict",
         "name": "Blueprint", "uses": "engineering, machines, hardware, tech explainers, how a system is built",
         "line": "white technical line work on Prussian-blue cyanotype paper with a drafting grid; one red stamp for the verdict",
         "surface": "blueprint", "stroke": "technical", "overlay": "", "display": "ArchitectsDaughter", "body": "ArchitectsDaughter",
@@ -37,6 +40,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"white": "#ffffff"},
         "enter": "write", "ease": "inOutSine", "cards": "outline", "cuts": ("fade", "split"), "handwrite": "tech"},
     "dataviz": {
+        "cuts_native": ('slideBlur', 'wipe'), "moves": "the data drawn mark by mark (live samples, bars, curves) with a handwritten note pinned to the number that matters",
         "name": "Data Storytelling", "uses": "data journalism, reports, climate and science, statistics, numbers that tell a story",
         "line": "charts drawn mark by mark on cream paper by a red and blue pencil, with handwritten notes on the numbers",
         "surface": "paper", "stroke": "", "overlay": "", "display": "LibreBaskerville", "body": "IBMPlexSans", "hand": "Caveat",
@@ -45,6 +49,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"red pencil": "#c23b31", "blue pencil": "#2a64b0"},
         "enter": "rise", "ease": "outQuart", "cards": "solid", "cuts": ("fade", "corner")},
     "dark-keynote": {
+        "cuts_native": ('zoomBlur', 'slideBlur'), "moves": "one giant number on its own; interface-like cards that snap into a grid; light that reveals the protagonist",
         "name": "Dark Tech Keynote", "uses": "technology, AI, software, product and platform explainers",
         "line": "near-black stage, hairline grid, soft light, one luminous accent reserved for the protagonist",
         "surface": "keynote", "stroke": "", "overlay": "", "display": "Inter", "body": "Inter", "hand": "Inter",
@@ -53,6 +58,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"electric blue": "#5b8cff", "violet": "#8f6bff", "mint": "#2fd3a0", "amber": "#ffb020"},
         "enter": "blur", "ease": "snap", "cards": "glass", "cuts": ("fade", "diagonal")},
     "newsreel": {
+        "cuts_native": ('iris', 'wipe'), "moves": "place-and-date cards, a map with a moving arrow, a headline that spins in; everything in silver",
         "name": "1920s Newsreel", "uses": "history stories, eras, anniversaries, how something began",
         "line": "a monochrome silver newsreel: cream type on near-black, Art Deco titles, vignette and film grain",
         "surface": "film", "stroke": "", "overlay": "film", "mono": True, "display": "Limelight", "body": "Oswald",
@@ -62,6 +68,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"silver": "#efe7d6"},
         "enter": "scale", "ease": "outCirc", "cards": "outline", "cuts": ("fade", "circle"), "upper": True},
     "risograph": {
+        "cuts_native": ('pushCut', 'slideBlur'), "moves": "flat shapes in two or three overprinting inks, bold type, a few big simple pictures per idea",
         "name": "Risograph Print", "uses": "lifestyle, culture, creative and indie subjects, light-hearted explainers",
         "line": "two or three translucent spot inks overprinted on warm paper, halftone dots, plates that never quite line up",
         "surface": "paper", "stroke": "ink", "overlay": "halftone", "misregister": "accent", "display": "BricolageGrotesque",
@@ -71,6 +78,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"fluorescent pink": "#ff48b0", "orange": "#ff6c2f", "teal": "#00a0a0"},
         "enter": "drop", "ease": "outBack", "cards": "solid", "cuts": ("split", "bars")},
     "halftone-dossier": {
+        "cuts_native": ('pushCut', 'flip'), "moves": "a case file read exhibit by exhibit: labelled exhibits, a stamp slammed on the verdict, typewritten notes",
         "name": "Halftone Dossier", "uses": "investigations, case files, humour, surprising facts, myths and scams",
         "line": "a retro case file: cream archive paper, halftone dots in flat inks, heavy headlines with misregistered shadows",
         "surface": "paper", "stroke": "ink", "overlay": "halftone", "misregister": "cool", "display": "RobotoSlab",
@@ -80,6 +88,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"mustard": "#e0a526", "red stamp": "#d1495b"},
         "enter": "type", "ease": "outBack", "cards": "outline", "cuts": ("bars", "split")},
     "ascii-crt": {
+        "cuts_native": ('wipe', 'sweep'), "moves": "typed lines and counters, boxes drawn like terminal windows, one soft second colour for the one thing that matters",
         "name": "ASCII / CRT Terminal", "uses": "programming, computers, hacking, the internet, developer topics",
         "line": "everything is a character on a monospace grid, lit by one phosphor on an old monochrome screen",
         "surface": "crt", "stroke": "", "overlay": "scanlines", "display": "VT323", "body": "VT323", "hand": "VT323",
@@ -88,6 +97,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"green phosphor": "#c8ffd6"},
         "enter": "type", "ease": "snap", "cards": "outline", "cuts": ("fade", "bars"), "upper": True},
     "swiss-motion": {
+        "cuts_native": ('slideBlur', 'wipe'), "moves": "a strict grid, huge numbers and short words flush left, one signal-coloured shape as the protagonist",
         "name": "Swiss Motion Graphics", "uses": "design, ideas and concepts, clean explainers of a single big idea",
         "line": "a modular grid, one typeface, ink and greys and ONE signal colour, movement as exact as a printing press",
         "surface": "paper", "stroke": "", "overlay": "", "display": "Archivo", "body": "Archivo", "hand": "Archivo",
@@ -96,6 +106,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"signal red": "#e30613", "signal orange": "#ff5a00", "ultramarine": "#1f3fff", "green": "#00954f"},
         "enter": "slide", "ease": "snap", "cards": "solid", "cuts": ("split", "corner")},
     "engraving": {
+        "cuts_native": ('iris', 'wipe'), "moves": "a plate built up line by line: outline first, then hatching; labelled parts with leader lines; a magnified detail",
         "name": "Copperplate Engraving", "uses": "science explainers, natural history, anatomy, heritage, how a thing is made",
         "line": "an intaglio plate: ink line work and hatching on buff paper, roman capitals, a transparent wash on one part",
         "surface": "paper", "stroke": "ink", "overlay": "", "display": "CormorantGaramond", "body": "Lora",
@@ -105,6 +116,7 @@ LOOKS: Dict[str, dict] = {
         "accents": {"amber wash": "#a8571c", "madder rose": "#9b4a5a", "sea green": "#4f8a73"},
         "enter": "rise", "ease": "inOutSine", "cards": "outline", "cuts": ("fade", "circle"), "upper": True},
     "watercolor": {
+        "cuts_native": ('iris', 'zoomBlur'), "moves": "soft painted shapes that bloom in, handwritten notes beside what is painted, colour that carries the meaning",
         "name": "Watercolor Brush", "uses": "nature, travel, biology, earth science, gentle science explainers",
         "line": "a hand-painted journal page: translucent brush colour on warm cotton paper, handwritten notes beside it",
         "surface": "watercolor", "stroke": "brush", "overlay": "", "display": "CormorantGaramond", "body": "Lora",
@@ -168,6 +180,21 @@ def theme_for(key: str, accent: str, finish: Callable, check_fx: Callable, seed:
     theme = finish(pal, L["display"], L["body"], bool(L.get("upper")), "paper", ["wipe", "pushCut"], "steady",
                    f"look:{key}", "left", "rule", fx)
     theme["hand"] = L["hand"]
+    # transitions native to the medium (a board pans, an eraser wipes, a newsreel irises) alternate with the look's
+    # own shaped cuts
+    shaped = list(theme.get("cuts") or [])
+    theme["cuts"] = [c for k, n in enumerate(L["cuts_native"]) for c in (n, shaped[k % len(shaped)] if shaped else None)
+                     if c is not None]
     theme["look"] = {"slug": key, "surface": L["surface"], "stroke": L["stroke"], "overlay": L["overlay"],
                      "misregister": L.get("misregister", ""), "mono": bool(L.get("mono")), "hand": L.get("handwrite", "")}
     return theme
+
+
+def moves_text(theme: Optional[dict]) -> str:
+    """What the diagram designer is told about the video's film look: its world and its native moves."""
+    look = (theme or {}).get("look") or {}
+    L = LOOKS.get(look.get("slug", ""))
+    if not L:
+        return ""
+    return (f"This video is drawn as {L['name']}: {L['line']}. Speak its language: {L['moves']}. Somewhere at the "
+            "video's peak, use the style's one native move that nothing else can do.")

@@ -29,7 +29,7 @@ from .critic import review, summary
 from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
-from . import design, diagram, graphics, mathexpr
+from . import design, diagram, graphics, looks, mathexpr
 from .research import domain
 from .storage import prune_prefix, upload_run
 from .web import UA
@@ -1680,6 +1680,7 @@ class VideoMaker:
                 and not s.get("video") and i > 0}
         if brief["style"] in ("education", "concept") and bare:
             self.art_direct(scenes, only=bare)      # in a lesson every idea gets a picture, not just its words
+        brief["look"] = looks.moves_text(theme)       # the film look's own language, for the diagram designer
         self.draw_diagrams(scenes, brief, plan["title"])
         if brief["style"] in ("education", "concept"):
             n = graphics.no_stock_photos(scenes)
@@ -2050,7 +2051,7 @@ class VideoMaker:
             room = cap - len(asked)
             idx = sorted(asked + [rest[int(k * len(rest) / room)] for k in range(room)] if room > 0 else asked)
         made = diagram.design(self.design_json, scenes, idx, title, f"{brief['mood']} {brief['tone']}", _verified,
-                              tex_complete, self.log)
+                              tex_complete, self.log, brief.get("look", ""))
         bad = typeset_errors([el["tex"] for s in scenes for el in (s.get("diagram") or {}).get("elements", [])
                               if el["type"] == "tex"])
         for s in scenes:
