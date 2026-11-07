@@ -12,7 +12,7 @@ from typing import Callable, Dict, List, Optional
 from . import graphics
 
 TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex",
-         "samples", "physics", "counter", "shape", "crowd")
+         "samples", "physics", "counter", "shape", "crowd", "stamp")
 REGIONS = ("samples", "physics", "crowd")          # parts that fill a box of the canvas
 SOURCES = ("uniform", "skewed", "exponential", "bimodal", "normal", "dice", "coin")
 SHAPES = ("circle", "square", "triangle", "diamond", "hexagon", "star", "heart")
@@ -43,6 +43,10 @@ narration at which it appears, copied exactly from the narration, or "" for the 
 - "icon": x, y, "name" (one of: {icons}), size
 - "tex": x, y, "tex" (KaTeX, short), "size": s, m or l
 - "shape": x, y, size, "shape": circle, square, triangle, diamond, hexagon, star or heart, "fill": true/false
+- "stamp": x, y, "text": a verdict of 1 or 2 words (MYTH, BUSTED, TRUE, PROVEN, WRONG, NOT QUITE, CONFIRMED...),
+  "size": s, m or l: a rubber stamp that SLAMS onto the picture on its word, red ink, tilted. It may sit over another
+  piece on purpose (a stamp across a wrong claim). Use it for a verdict: a myth busted, a guess proven, a claim
+  checked. At most one per diagram.
 - "counter": x, y, "from", "to" (numbers the narration says), optional "text" after the number (max 3 words), "size":
   the number counts from "from" to "to" when it appears (a total climbing, a price falling)
 - "crowd": x, y (top-left), w, h, "name" (an icon from the list, e.g. user), "count": 4 to 100 icons in a grid,
@@ -295,8 +299,12 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
         el = {"type": t, "color": e.get("color") if e.get("color") in COLOURS else ("accent" if t != "label" else "text"),
               "on": _on(e.get("on"), narration), "anim": e.get("anim") if e.get("anim") in ANIMS else ""}
         xy = lambda k, d=50: _num(e.get(k), 3, 97, d)          # noqa: E731
-        if t in ("dot", "circle", "label", "icon", "tex", "shape", "counter"):
+        if t in ("dot", "circle", "label", "icon", "tex", "shape", "counter", "stamp"):
             el.update(x=xy("x"), y=xy("y"))
+        if t == "stamp":
+            el.update(text=_words(e.get("text"), 2).upper()[:16], size=e.get("size") if e.get("size") in SIZES else "l")
+            if not el["text"] or any(o["type"] == "stamp" for o in out):
+                continue
         if t in REGIONS:
             lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10)}[t]
             el.update(x=_num(e.get("x"), 3, 97 - lo_w, 10), y=_num(e.get("y"), 3, 97 - lo_h, 10))

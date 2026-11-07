@@ -2168,7 +2168,20 @@ def test_a_film_look_from_the_library_is_chosen_for_the_subject(monkeypatch):
     assert looks.choose(lambda *a, **k: {"look": "volcano"}, "t", "news", "", logs.append) is None
     t = looks.theme_for("chalkboard", "#f48fb1", design._finish, design.check_fx, "seed")
     assert t["look"] == {"slug": "chalkboard", "surface": "slate", "stroke": "chalk", "overlay": "", "misregister": "",
-                         "mono": False}
+                         "mono": False, "hand": "readability"}                  # the chalk writes by hand
+    assert looks.theme_for("ascii-crt", "#c8ffd6", design._finish, design.check_fx, "s")["fx"]["text"]["enter"] == "type"
+    import os
+    for key in {L.get("handwrite") for L in looks.LOOKS.values()} - {None}:      # every hand has its font file
+        assert os.path.exists(os.path.join("video", "src", "handfonts", key + ".json")), key
+    from blogwriter.video import _verified, tex_complete
+    stamped = design.__name__ and __import__("blogwriter.diagram", fromlist=["check"]).check(
+        {"elements": [{"type": "label", "x": 30, "y": 40, "text": "averages are always normal"},
+                      {"type": "stamp", "x": 32, "y": 42, "text": "myth busted now", "on": "myth"},
+                      {"type": "stamp", "x": 70, "y": 70, "text": "twice"},
+                      {"type": "dot", "x": 80, "y": 20}, {"type": "dot", "x": 90, "y": 20}]},
+        {"headline": "A myth", "narration": "People say averages are always normal. That is a myth."}, _verified, tex_complete)
+    kinds = [e["type"] for e in stamped["elements"]]
+    assert kinds.count("stamp") == 1 and stamped["elements"][1]["text"] == "MYTH BUSTED"    # one stamp, over the claim
     assert t["accent"] == "#f48fb1" and t["display"] == "Kalam" and t["hand"] == "Kalam" and t["light"] is False
     assert t["fx"]["text"]["enter"] == "write" and {c["shape"] for c in t["fx"]["transitions"]} == {"fade", "split"}
     news = looks.theme_for("newsreel", "#efe7d6", design._finish, design.check_fx, "s")

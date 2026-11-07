@@ -17,7 +17,7 @@ LOOKS: Dict[str, dict] = {
         "palette": {"bg": "#1f3a31", "panel": "#264438", "line": "#5c7b6f", "text": "#f3f1ea", "muted": "#c8cfc5",
                     "accent": "#f2a45a", "hot": "#f4dc78", "cool": "#a9d6e5", "violet": "#eab0cc"},
         "accents": {"orange chalk": "#f2a45a", "pink chalk": "#f48fb1", "green chalk": "#8fd3a0", "yellow chalk": "#f4dc78"},
-        "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "split")},
+        "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "split"), "handwrite": "readability"},
     "whiteboard": {
         "name": "Whiteboard Explainer", "uses": "explainers, online courses, science, how something works",
         "line": "a glossy dry-erase board, marker lines with a hand's wobble, three marker colours with fixed meanings",
@@ -26,7 +26,7 @@ LOOKS: Dict[str, dict] = {
         "palette": {"bg": "#f6f7f8", "panel": "#ffffff", "line": "#d7dbe0", "text": "#23262c", "muted": "#5d636d",
                     "accent": "#d9603b", "hot": "#2a5cb3", "cool": "#2f9e6b", "violet": "#8f5bd1"},
         "accents": {"orange marker": "#d9603b", "red marker": "#d63a3a", "green marker": "#2f9e6b", "purple marker": "#8f5bd1"},
-        "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "diagonal")},
+        "enter": "write", "ease": "outSine", "cards": "outline", "cuts": ("fade", "diagonal"), "handwrite": "tech"},
     "blueprint": {
         "name": "Blueprint", "uses": "engineering, machines, hardware, tech explainers, how a system is built",
         "line": "white technical line work on Prussian-blue cyanotype paper with a drafting grid; one red stamp for the verdict",
@@ -35,7 +35,7 @@ LOOKS: Dict[str, dict] = {
         "palette": {"bg": "#1b3d78", "panel": "#214785", "line": "#5e86c3", "text": "#e9f1fa", "muted": "#b7cbe6",
                     "accent": "#ffffff", "hot": "#ff6b6b", "cool": "#9cc8ff", "violet": "#ffe08a"},
         "accents": {"white": "#ffffff"},
-        "enter": "write", "ease": "inOutSine", "cards": "outline", "cuts": ("fade", "split")},
+        "enter": "write", "ease": "inOutSine", "cards": "outline", "cuts": ("fade", "split"), "handwrite": "tech"},
     "dataviz": {
         "name": "Data Storytelling", "uses": "data journalism, reports, climate and science, statistics, numbers that tell a story",
         "line": "charts drawn mark by mark on cream paper by a red and blue pencil, with handwritten notes on the numbers",
@@ -78,7 +78,7 @@ LOOKS: Dict[str, dict] = {
         "palette": {"bg": "#f2e8d5", "panel": "#f8f1e3", "line": "#d6c7a8", "text": "#1f2a44", "muted": "#4b5670",
                     "accent": "#e0a526", "hot": "#d1495b", "cool": "#2a9d8f", "violet": "#7a5c99"},
         "accents": {"mustard": "#e0a526", "red stamp": "#d1495b"},
-        "enter": "slide", "ease": "outBack", "cards": "outline", "cuts": ("bars", "split")},
+        "enter": "type", "ease": "outBack", "cards": "outline", "cuts": ("bars", "split")},
     "ascii-crt": {
         "name": "ASCII / CRT Terminal", "uses": "programming, computers, hacking, the internet, developer topics",
         "line": "everything is a character on a monospace grid, lit by one phosphor on an old monochrome screen",
@@ -86,7 +86,7 @@ LOOKS: Dict[str, dict] = {
         "palette": {"bg": "#040804", "panel": "#0a120a", "line": "#1b3a1b", "text": "#8dffa8", "muted": "#4fbf6c",
                     "accent": "#c8ffd6", "hot": "#ff9ec4", "cool": "#5fd77a", "violet": "#2e8c47"},
         "accents": {"green phosphor": "#c8ffd6"},
-        "enter": "mask", "ease": "snap", "cards": "outline", "cuts": ("fade", "bars"), "upper": True},
+        "enter": "type", "ease": "snap", "cards": "outline", "cuts": ("fade", "bars"), "upper": True},
     "swiss-motion": {
         "name": "Swiss Motion Graphics", "uses": "design, ideas and concepts, clean explainers of a single big idea",
         "line": "a modular grid, one typeface, ink and greys and ONE signal colour, movement as exact as a printing press",
@@ -169,5 +169,5 @@ def theme_for(key: str, accent: str, finish: Callable, check_fx: Callable, seed:
                    f"look:{key}", "left", "rule", fx)
     theme["hand"] = L["hand"]
     theme["look"] = {"slug": key, "surface": L["surface"], "stroke": L["stroke"], "overlay": L["overlay"],
-                     "misregister": L.get("misregister", ""), "mono": bool(L.get("mono"))}
+                     "misregister": L.get("misregister", ""), "mono": bool(L.get("mono")), "hand": L.get("handwrite", "")}
     return theme

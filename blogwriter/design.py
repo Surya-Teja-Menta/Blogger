@@ -124,7 +124,7 @@ def _weight(font: str, want: int) -> int:
 SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob")
 DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
-ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write")
+ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type")
 CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
 # how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
 EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart", "outBack", "outElastic",

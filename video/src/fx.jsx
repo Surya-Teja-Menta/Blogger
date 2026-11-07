@@ -7,6 +7,7 @@ import {pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
 import {Surface} from "./looks";
+import {HandText} from "./hand";
 
 export const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 export const ease = (t) => 1 - Math.pow(1 - clamp(t), 3);
@@ -36,6 +37,26 @@ export const Words = ({text = "", highlight = "", size = 110, delay = 0, color, 
   const display = !font || font === FONT.display;
   const marks = new Set(highlight.toLowerCase().split(/\s+/).filter(Boolean));
   const words = text.split(/\s+/).filter(Boolean);
+  if (((C.fx || {}).text || {}).enter === "type") {
+    // typed, a letter at a time, with a block cursor (terminal and case-file looks)
+    const typed = Math.max(0, Math.floor((frame - delay) * 1.1));
+    let used = 0;
+    const done = typed >= text.length;
+    return (
+      <div style={{fontFamily: font || FONT.display, fontSize: size, lineHeight, color: color || C.text, textAlign: align, maxWidth,
+                   fontWeight: weight || (display ? C.weight : 700), textTransform: display && C.upper ? "uppercase" : "none"}}>
+        {words.map((w, i) => {
+          const start = used;
+          used += w.length + 1;
+          const part = w.slice(0, Math.max(0, typed - start));
+          const marked = marks.has(w.toLowerCase().replace(/[^\p{L}\p{N}$%.]/gu, ""));
+          return part && <span key={i} style={{color: marked ? C.accent : undefined}}>{part}{" "}</span>;
+        })}
+        <span style={{display: "inline-block", width: size * 0.45, height: size * 0.78, marginLeft: size * 0.05,
+                      background: C.accent, verticalAlign: "-0.08em", opacity: done && Math.floor(frame / 15) % 2 ? 0 : 1}}/>
+      </div>
+    );
+  }
   return (
     <div style={{fontFamily: font || FONT.display, fontSize: size, lineHeight, color: color || C.text, textAlign: align, maxWidth,
                  fontWeight: weight || (display ? C.weight : 700), letterSpacing: display && C.upper ? 1 : -0.5,
@@ -98,8 +119,14 @@ export const Title = ({s, vertical, top, size, maxWidth}) => {
     <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: top ?? (vertical ? 250 : 112),
                  display: "flex", flexDirection: "column", alignItems: center ? "center" : "flex-start"}}>
       <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
-      <Words text={s.headline} highlight={s.highlight} size={size || (vertical ? 84 : 78)} delay={2} markAt={s.hcue}
-             maxWidth={maxWidth || (vertical ? 940 : 1600)} align={center ? "center" : "left"}/>
+      {C.look && C.look.hand ? (            // a board look writes its headline by hand, stroke by stroke
+        <HandText text={s.headline} highlight={s.highlight} size={(size || (vertical ? 84 : 78)) * 1.05} at={2}
+                  font={C.look.hand} color={C.text} accent={C.accent} maxWidth={maxWidth || (vertical ? 940 : 1600)}
+                  align={center ? "center" : "left"}/>
+      ) : (
+        <Words text={s.headline} highlight={s.highlight} size={size || (vertical ? 84 : 78)} delay={2} markAt={s.hcue}
+               maxWidth={maxWidth || (vertical ? 940 : 1600)} align={center ? "center" : "left"}/>
+      )}
     </div>
   );
 };

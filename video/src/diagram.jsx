@@ -6,9 +6,10 @@ import {AbsoluteFill, useCurrentFrame, useVideoConfig} from "remotion";
 import {getLength, getPointAtLength} from "@remotion/paths";
 import {interpolate as morphPath} from "flubber";
 import {Backdrop, Camera, Title, clamp, ease} from "./fx";
-import {Focus, Pen, focusPlan, headlineShown, useFocus} from "./direct";
+import {Focus, Pen, Stamp, focusPlan, headlineShown, useFocus} from "./direct";
 import {Icon} from "./graphics";
 import {Physics, Samples, seedOf} from "./stats";
+import {HandText} from "./hand";
 import {Tex, useMathFonts} from "./math";
 import {delay, glide, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
@@ -148,6 +149,7 @@ export const DiagramScene = ({s, i, vertical}) => {
     if (t === "icon") return around(X(e.x), Y(e.y), ((e.size || 8) * u) / 2);
     if (t === "samples" || t === "physics" || t === "crowd") return [X(e.x), Y(e.y), X(e.x + e.w), Y(e.y + e.h)];
     if (t === "shape") return around(X(e.x), Y(e.y), (e.size || 10) * u);
+    if (t === "stamp") return around(X(e.x), Y(e.y), String(e.text || "").length * 30 + 60, 70);
     if (t === "label" || t === "tex" || t === "counter") {
       const size = (fs[e.size] || fs.m) * fScale * (t === "tex" ? 1.25 : t === "counter" ? 1.6 : 1);
       const chars = t === "tex" ? texLen(e.tex) : t === "counter" ? String(e.to).length + 1 + String(e.text || "").length : String(e.text || "").length;
@@ -261,8 +263,11 @@ export const DiagramScene = ({s, i, vertical}) => {
                         fill={c} opacity={op} style={{filter: shadow(c, st.glow)}}/>);
       if (e.text) texts.push({k, x: X(e.x) + w / 2, y: Y(e.y) + 34, text: e.text, size: fs.s, color: C.muted, p: st.draw, op, center: true});
     } else if (e.type === "label") {
-      texts.push({k, x: X(st.v("x")), y: Y(st.v("y")), text: e.text, size: fs[e.size] || fs.m, color: c, p: st.p, op,
-                  align: e.align, display: e.size === "l", glow: st.glow});
+      const handed = C.look && C.look.hand;     // a board look writes its labels by hand, from the label's own word
+      texts.push({k, x: X(st.v("x")), y: Y(st.v("y")), text: handed ? undefined : e.text, size: fs[e.size] || fs.m, color: c,
+                  p: handed ? 1 : st.p, op, align: e.align, display: e.size === "l", glow: st.glow,
+                  node: handed ? <HandText text={e.text} size={(fs[e.size] || fs.m) * fScale * 1.15} at={e.at ?? 0}
+                                           font={C.look.hand} color={c} align={e.align || "center"} maxWidth={900}/> : undefined});
     } else if (e.type === "icon") {
       const sz = e.size * u;
       texts.push({k, x: X(st.v("x")), y: Y(st.v("y")), node: <Icon name={e.name} size={sz} color={c} draw={st.draw}/>,
@@ -284,6 +289,10 @@ export const DiagramScene = ({s, i, vertical}) => {
       shapes.push(<MorphShape key={k} from={e.shape} to={e.move && e.move.shape} cx={X(st.v("x"))} cy={Y(st.v("y"))}
                               r={st.v("size") * u * (e.anim === "fade" ? 1 : 0.5 + 0.5 * st.p)} q={st.q} color={c} fill={e.fill}
                               op={op} glow={shadow(c, st.glow)} draw={st.draw}/>);
+    } else if (e.type === "stamp") {          // a verdict slammed onto the picture on its word
+      texts.push({k, x: X(e.x), y: Y(e.y), center: true, p: 1, op,
+                  node: <Stamp text={e.text} at={e.at ?? 0} color={e.color === "accent" ? C.hot : c} seed={k + (i || 0)}
+                               size={(fs[e.size] || fs.l) * fScale * 1.5}/>});
     } else if (e.type === "crowd") {
       texts.push({k, x: X(e.x), y: Y(e.y), corner: true, p: 1, op,
                   node: <Crowd e={e} w={X(e.x + e.w) - X(e.x)} h={Y(e.y + e.h) - Y(e.y)} frame={frame} color={c}/>});

@@ -77,6 +77,41 @@ export const headlineShown = (view) => 1 - clamp((view.z - 1.03) / 0.1);
 
 const gen = rough.generator();
 
+// a rubber stamp (after the Lemo-Opuscar dossier and blueprint verdicts): it slams onto the picture from above on
+// its word, overshoots, lands tilted, and leaves inked letters in a hand-pressed double border with an ink texture
+export const Stamp = ({text, at, color, size = 64, seed = 1}) => {
+  const frame = useCurrentFrame();
+  const t = frame - at;
+  const word = String(text || "").toUpperCase();
+  const w = Math.max(2, word.length) * size * 0.68 + size * 1.1, h = size * 1.7;
+  const borders = useMemo(() => {
+    const opt = {seed: 3 + (seed % 991), roughness: 1.8, bowing: 0.6, strokeWidth: 6, stroke: "x"};
+    return [gen.rectangle(4, 4, w - 8, h - 8, opt), gen.rectangle(14, 14, w - 28, h - 28, {...opt, seed: opt.seed + 1})]
+      .flatMap((d) => gen.toPaths(d).map((p) => p.d));
+  }, [w, h, seed]);
+  if (t < 0) return null;
+  const land = clamp(t / 6);                                    // falls in 6 frames, then a short settle
+  const scale = t < 6 ? 2.6 - 1.6 * inOut(land) : 1 + 0.06 * Math.exp(-(t - 6) / 3) * Math.cos((t - 6) * 1.4);
+  const col = color || C.hot;
+  return (
+    <div style={{position: "relative", width: w, height: h, transform: `rotate(${-10 + 3 * (seed % 3)}deg) scale(${scale})`,
+                 opacity: clamp(t / 3), mixBlendMode: C.light ? "multiply" : "normal",
+                 filter: "url(#look-stamp)"}}>
+      <svg width={0} height={0} style={{position: "absolute"}}>
+        <filter id="look-stamp"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="21" result="n"/>
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 2.2 -0.2" result="m"/>
+          <feComposite in="SourceGraphic" in2="m" operator="in"/></filter>
+      </svg>
+      <svg width={w} height={h} style={{position: "absolute", inset: 0, overflow: "visible"}}>
+        {borders.map((d, k) => <path key={k} d={d} fill="none" stroke={col} strokeWidth={k ? 3 : 6} strokeLinejoin="round"/>)}
+      </svg>
+      <div style={{position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                   fontFamily: "Impact, 'Arial Black', sans-serif", fontWeight: 900, fontSize: size, letterSpacing: size * 0.08,
+                   color: col}}>{word}</div>
+    </div>
+  );
+};
+
 // a hand-drawn mark around box [x0, y0, x1, y1], drawn on from `at`: a loose double circle (or an underline for a
 // long flat piece), or as asked: "underline", "box", "cross". The strokes are the same in every frame (seeded).
 export const Pen = ({box, at, color, seed = 1, kind}) => {
