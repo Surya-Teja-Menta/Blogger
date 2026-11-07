@@ -1746,7 +1746,9 @@ def test_long_lessons_are_written_part_by_part_from_an_outline():
               "previous": [{"title": "Cost functions", "key_ideas": ["squared error"]}], "next": "Learning rates"}
     plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("Gradient descent", [], [], "education", brief,
                                                                          lesson=lesson)
-    assert len(plan["scenes"]) == 7 and plan["scenes"][3]["chapter"]["title"] == "The step"   # 6 shots + outro
+    # 10 minutes need ~70 shots: part 1 (2 of 3 beats) is written in 4 pieces, part 2 in 2, at most 14 shots a request
+    assert len(plan["scenes"]) == 19 and plan["scenes"][12]["chapter"]["title"] == "The step"   # 6 x 3 shots + outro
+    assert sum("Now write ONLY part" in p for p in asked if "piece" in p) >= 6
     assert any('lesson 3 of 20 in the course "Machine Learning"' in p and "Cost functions" in p and "Learning rates" in p
                for p in asked)
     assert plan["short"][0] == {"scene": 1, "narration": "Watch the ball roll."}
@@ -1775,7 +1777,7 @@ def test_a_thin_outline_still_gives_a_full_length_lesson():
     brief = check_brief({"minutes": 10, "acts": [{"title": "One"}]}, "education")
     plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("CLT", [], [], "education", brief)
     parts = [p for p in asked if "Now write ONLY part" in p]
-    assert "Write 35 to 46 shots" in parts[0]                      # its share of ~70 shots, not its 2 beats
+    assert "Write 12 to 16 shots" in parts[0] and "piece 1 of 3" in parts[0]   # 35 shots: three requests
     assert any("far too short: 4 shots" in p for p in parts) and len(plan["scenes"]) >= 64
 
 

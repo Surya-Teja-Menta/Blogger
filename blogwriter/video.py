@@ -46,6 +46,7 @@ MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
 SHORT_MAX_SECONDS = 58
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
+SHOTS_PER_REQUEST = 14    # the most shots one request is asked to write (asked for 70 at once, a model returns ~18)
 MAX_SCENES = 110          # shots in one video
 DIAGRAM_MAX = 18          # bespoke diagrams per video (each costs several vision-model calls) ...
 DIAGRAM_MAX_LONG = 30     # ... and in a long video, where most shots are pictures of the idea
@@ -295,9 +296,10 @@ SHORT_OUTRO = "Full story, with every source, on {channel}."
 OUTLINE = """
 
 THIS IS A LONG VIDEO, so plan it before writing it: about [minutes] minutes, [words] spoken words, [shots] shots.
-Break it into the parts of the plan, in order, and each part into beats. One beat is one thing the viewer SEES and
-learns (it becomes one or two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w
-slides, its lowest point marked" or "check: which way does w move if the slope is negative?". About [shots] beats.
+Break it into the parts of the plan, in order: ONE entry in "parts" for EACH part of the plan (never a single part
+for the whole video), and each part into beats. One beat is one thing the viewer SEES and learns (it becomes one or
+two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w slides, its lowest point marked"
+or "check: which way does w move if the slope is negative?". About [shots] beats in all.
 Reply with JSON: {"title": "YouTube title, max 70 characters, specific and curious, no clickbait words or ALL CAPS",
  "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
  "description": "2 or 3 plain sentences on what the video covers", "tags": ["8 to 12 search tags"],
@@ -1258,17 +1260,27 @@ class VideoMaker:
             self.log(f"[video] the outline has {total} beats for about {n_shots} shots: each part is written longer")
         scenes = []
         words_of = lambda shots: sum(len(str(s.get("narration", "")).split()) for s in shots)      # noqa: E731
+        # each request writes at most SHOTS_PER_REQUEST shots (a model asked for 70 at once returns ~18): a part whose
+        # share of the planned length is bigger is written in pieces, each continuing where the last one ended
+        jobs = []
         for k, part in enumerate(parts):
             beats = [str(b) for b in part["beats"]][:16]
             name = " ".join(str(part.get("title") or f"Part {k + 1}").split()[:4])
-            # the part's share of the planned length, however thin its outline: a beat may need several shots
-            lo = max(len(beats), round(n_shots * len(beats) / total))
-            target = round(words_needed * len(beats) / total)
-            ask = rules + fill(ACT, outline=listing, k=k + 1, n=len(parts), title=name,
+            share_shots = max(len(beats), round(n_shots * len(beats) / total))
+            share_words = round(words_needed * len(beats) / total)
+            m = max(1, math.ceil(share_shots / SHOTS_PER_REQUEST))
+            for r in range(m):
+                a, b = r * len(beats) // m, max((r + 1) * len(beats) // m, r * len(beats) // m + 1)
+                jobs.append((k, name, beats[a:b], round(share_shots / m), round(share_words / m), r, m))
+        for k, name, beats, lo, target, r, m in jobs:
+            piece = (f" (piece {r + 1} of {m} of this part: continue exactly where the last piece ended, never repeat "
+                     "it, and go deeper into the same beats with new pictures and examples)") if m > 1 else ""
+            first = ('Its first shot is the opening (see "Opening") and has "act": "".' if k == 0 and r == 0 else
+                     f'Its first shot has "act": "{name}"; every other shot has "act": "".' if r == 0 else
+                     'Every shot has "act": "".')
+            ask = rules + fill(ACT, outline=listing, k=k + 1, n=len(parts), title=name + piece,
                                beats="\n".join(f"- {b}" for b in beats), lo=lo, hi=lo + max(3, lo // 3),
-                               words=target,
-                               first='Its first shot is the opening (see "Opening") and has "act": "".' if k == 0 else
-                               f'Its first shot has "act": "{name}"; every other shot has "act": "".',
+                               words=target, first=first,
                                prev=f'The part before ended with: "{scenes[-1].get("narration", "")}"' if scenes else "")
             got, note = [], ""
             for _ in range(3):            # a part that comes back empty or far too short is asked for again
@@ -1286,11 +1298,13 @@ class VideoMaker:
                     note = (f"\n\nYour last version of this part was far too short: {len(got)} shots and "
                             f"{words_of(got)} words. Write {lo} to {lo + max(3, lo // 3)} shots and about {target} "
                             "words: split each beat into several shots, one sentence and one picture each.")
-            if got and k:
+            for sc in got:
+                sc["act"] = ""
+            if got and k and r == 0:
                 got[0]["act"] = name
             scenes += got
-            self.log(f"[video] part {k + 1}/{len(parts)} \"{name}\": {len(got)} shots, "
-                     f"{sum(len(str(s['narration']).split()) for s in got)} words")
+            self.log(f"[video] part {k + 1}/{len(parts)} \"{name}\"" + (f" piece {r + 1}/{m}" if m > 1 else "") +
+                     f": {len(got)} shots, {words_of(got)} words")
         if len(scenes) < 5:
             self.log(f"[video] the parts gave only {len(scenes)} shots: writing in one go instead")
             return None
