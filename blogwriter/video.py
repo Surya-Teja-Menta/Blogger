@@ -156,6 +156,10 @@ VOICE = r"""
   clear, and explained in the same sentence ("this is called the standard error: how much the average wobbles").
 - REAL LIFE: show every idea first in a real-life situation the viewer has lived, then generalise it. Use these, and
   keep the first one running through the whole video, coming back to it as the ideas grow: [examples].
+- HISTORY: viewers care what an idea does for them, not who found it in which year. Do not walk through
+  scientists, dates and earlier versions. Give a discovery's importance in one line, in terms of what it lets us do
+  ("this is why a small poll can speak for a whole country"), with at most one name and no list of years.
+  Tell the history fully only when the subject itself is historical or the idea cannot be understood without it.
 - CINEMA: open cold on a real-life moment, never on a definition; raise a question, hold it, then reveal; vary the
   rhythm (a few quick punchy lines, then one slow reveal shot); end every part on a hook into the next.
 - PICTURES: most shots are "diagram" shots or maths shots (graph, surface, derive, equation, check). A "diagram"
@@ -416,6 +420,106 @@ async def _speak(text: str, voice: str, path: str, gate: asyncio.Semaphore) -> L
                 await asyncio.sleep(5 * (attempt + 1))
 
 
+VOICE_SAMPLE_KEY = "voices/narrator.m4a"     # the owner's recording, in the private storage bucket (never in git)
+CLONE_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clone_voice.py")
+
+
+def align_words(text: str, heard: List[list]) -> List[tuple]:
+    """The script's own words, timed by when they were heard (speech recognition can mishear a number or a name;
+    the captions keep the exact wording): matched words take their heard times, the rest are spread between."""
+    import difflib
+    script = text.split()
+    if not script or not heard:
+        return []
+    norm = lambda w: re.sub(r"[^a-z0-9]", "", str(w).lower())          # noqa: E731
+    times: List[Optional[tuple]] = [None] * len(script)
+    sm = difflib.SequenceMatcher(None, [norm(w) for w in script], [norm(h[2]) for h in heard], autojunk=False)
+    for blk in sm.get_matching_blocks():
+        for j in range(blk.size):
+            times[blk.a + j] = (float(heard[blk.b + j][0]), float(heard[blk.b + j][1]))
+    k = 0
+    while k < len(script):                # a run of unmatched words shares the time between its neighbours
+        if times[k] is not None:
+            k += 1
+            continue
+        end = k
+        while end < len(script) and times[end] is None:
+            end += 1
+        a = times[k - 1][1] if k else float(heard[0][0])
+        b = times[end][0] if end < len(script) else float(heard[-1][1])
+        step = max(0.0, b - a) / (end - k)
+        for j in range(k, end):
+            times[j] = (a + step * (j - k), a + step * (j - k + 1))
+        k = end
+    return [(s, e, w) for (s, e), w in zip(times, script)]
+
+
+def voice_sample(settings: Settings, job: str, log: Callable[[str], None]) -> Optional[str]:
+    """The owner's recording from the private bucket, as 24 kHz mono WAV for the cloning model; None if absent."""
+    if not settings.storage_configured:
+        return None
+    key = os.environ.get("VOICE_SAMPLE_KEY") or VOICE_SAMPLE_KEY
+    raw, ref = os.path.join(job, "narrator_sample" + os.path.splitext(key)[1]), os.path.join(job, "narrator_ref.wav")
+    try:
+        from .storage import _client
+        _client(settings).download_file(settings.s3_bucket, key, raw)
+        ffmpeg(["-i", raw, "-ac", "1", "-ar", "24000", "-af", "loudnorm=I=-18:TP=-2", ref])
+        return ref
+    except Exception as exc:                     # no sample, no access: the usual voice speaks
+        log(f"[voice] no voice sample at {key} ({type(exc).__name__}): using the standard voice")
+        return None
+    finally:
+        if os.path.exists(raw):
+            os.remove(raw)                       # the recording is not kept in the job folder (or its artifacts)
+
+
+def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
+    """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default) and
+    the cloning environment (VOICE_PYTHON) and the voice sample are there; any line that fails, or everything when
+    they are not, is spoken by the standard voice. Returns each line's word timings, like speak_all."""
+    results: List[Optional[list]] = [None] * len(jobs)
+    python = os.environ.get("VOICE_PYTHON", "")
+    if os.environ.get("NARRATOR_VOICE", "clone").strip().lower() == "clone" and jobs:
+        ref = voice_sample(settings, job, log) if python and os.path.exists(python) else None
+        if not python or not os.path.exists(python):
+            log("[voice] the cloning environment is not installed (VOICE_PYTHON): using the standard voice")
+        if ref:
+            spec = os.path.join(job, "clone_jobs.json")
+            with open(spec, "w", encoding="utf-8") as f:
+                json.dump([{"text": t, "out": p[:-4] + ".clone.wav"} for t, _, p in jobs], f, ensure_ascii=False)
+            t0 = time.time()
+            try:
+                r = subprocess.run([python, CLONE_TOOL, spec, ref], capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=5 * 3600)
+                if r.returncode:
+                    log(f"[voice] the cloning tool stopped: {(r.stderr or r.stdout)[-400:]}")
+            except (OSError, subprocess.SubprocessError) as exc:
+                log(f"[voice] the cloning tool could not run: {type(exc).__name__}")
+            try:
+                with open(spec, encoding="utf-8") as f:
+                    done = json.load(f)
+            except (OSError, ValueError):
+                done = []
+            for k, (item, (text, _, path)) in enumerate(zip(done, jobs)):
+                if not item.get("ok") or not os.path.exists(item["out"]):
+                    continue
+                try:             # the pipeline's own audio format (mp3_seconds relies on it)
+                    ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-b:a", "48k", path])
+                    results[k] = align_words(text, item["words"]) or None
+                except RuntimeError:
+                    pass
+                finally:
+                    os.remove(item["out"])
+            cloned = sum(r is not None for r in results)
+            log(f"[voice] {cloned} of {len(jobs)} lines spoken in the owner's voice ({time.time() - t0:.0f}s)")
+            os.remove(ref)
+    missing = [k for k, r in enumerate(results) if r is None]
+    if missing:
+        for k, words in zip(missing, speak_all([jobs[k] for k in missing])):
+            results[k] = words
+    return results
+
+
 def speak_all(jobs: List[tuple]) -> List[List[tuple]]:
     """jobs: (text, voice, path). Spoken a few at a time, so the free voice service is not hammered."""
     async def run():
@@ -439,6 +543,34 @@ def tighten(path: str, words: List[tuple]) -> List[tuple]:
     except RuntimeError:
         return words
     return [(s - a, e - a, w) for s, e, w in words]
+
+
+QUIZ_STOP = {"the", "and", "its", "are", "was", "for", "with", "that", "this", "than", "not", "will", "you", "your",
+             "one", "all", "has", "have", "into", "from", "gets", "get"}
+
+
+def answer_moment(words: List[tuple], start: float, scene: dict) -> float:
+    """When the right option of a check is actually said: the first word from `start` on that belongs to the right
+    option's text (so the answer lights up on the voice, not before it); else `start`, where the answer begins."""
+    opts, k = scene.get("options") or [], scene.get("answer")
+    if not isinstance(k, int) or not 0 <= k < len(opts):
+        return start
+    want = {w for w in re.findall(r"[a-z0-9]+", str(opts[k]).lower()) if len(w) > 2 and w not in QUIZ_STOP}
+    for s, _, w in words:
+        if s >= start - 0.05 and re.sub(r"[^a-z0-9]", "", w.lower()) in want:
+            return s
+    return start
+
+
+def check_cues(line: str, words: List[tuple], scene: dict, frames: int) -> dict:
+    """think / reveal frames of a check spoken in one clip (the Short): the question ends at the line's last "?",
+    the answer shows when the right option is said."""
+    ask = line.rfind("?") + 1
+    n_q = len(line[:ask].split()) if ask else 0
+    if not words or not 0 < n_q < len(words):
+        return {"think": round(frames * 0.4), "reveal": round(frames * 0.6)}
+    return {"think": LEAD + round(words[n_q - 1][1] * FPS),
+            "reveal": LEAD + round(answer_moment(words, words[n_q][0], scene) * FPS)}
 
 
 def join_pause(first: str, second: str, pause: float, dest: str) -> float:
@@ -1214,6 +1346,9 @@ class VideoMaker:
         lesson brings its goal, what it must cover and its planned length."""
         short = "\n".join(f"- {f['claim'][:160]}" for f in facts[:30]) + lesson_text(lesson)
         rule = "pick the style that suits this subject best" if style not in VIDEO_STYLES else f'keep "{style}"'
+        if style in ("education", "concept"):
+            rule += ("; this is a lesson, so do not plan a part around the history of the idea (who discovered what, "
+                     "and when) unless the subject itself is historical: viewers want the idea and why it matters")
         try:
             raw = self.llm.complete_json(BRIEF_PROMPT.format(title=title, style=style, facts=short, style_rule=rule,
                                                              styles=", ".join(VIDEO_STYLES)),
@@ -1571,7 +1706,8 @@ class VideoMaker:
                     continue
                 kind, idx = ("long", i) if i < n_long else ("short", i - n_long)
                 path = os.path.join(job, f"{lang}_{kind}{idx}.mp3")
-                ask = line.find("?") + 1 if kind == "long" and scenes[idx]["kind"] == "check" else 0
+                # the quiz question is the LAST "?" (a rhetorical question before it must not start the answer early)
+                ask = line.rfind("?") + 1 if kind == "long" and scenes[idx]["kind"] == "check" else 0
                 if 0 < ask < len(line.rstrip()):   # a check: question and answer spoken apart, a pause between
                     jobs += [(line[:ask].strip(), VOICES[lang], path[:-4] + "_q.mp3"),
                              (line[ask:].strip(), VOICES[lang], path[:-4] + "_a.mp3")]
@@ -1579,7 +1715,7 @@ class VideoMaker:
                     continue
                 jobs.append((line, VOICES[lang], path))
                 keys.append((lang, kind, idx))
-        spoken = {k: v for k, v in zip(keys, speak_all(jobs)) if v is not None}
+        spoken = {k: v for k, v in zip(keys, speak_cloned(jobs, self.s, job, self.log)) if v is not None}
         with ThreadPoolExecutor(max_workers=6) as pool:
             trimmed = list(pool.map(lambda kv: tighten(jobs[keys.index(kv[0])][2], kv[1]), spoken.items()))
         spoken = dict(zip(spoken, trimmed))
@@ -1594,8 +1730,10 @@ class VideoMaker:
                                  os.path.join(job, f"{lang}_{kind}{idx}.mp3"))
             except RuntimeError:
                 continue
-            spoken[(lang, kind, idx)] = q + [(s + off, e + off, w) for s, e, w in a]
-            thinking[(lang, idx)] = (q[-1][1] if q else 0.0, off)
+            answer = [(s + off, e + off, w) for s, e, w in a]
+            spoken[(lang, kind, idx)] = q + answer
+            # the question ends, the pause runs, and the answer lights up when the right option is said
+            thinking[(lang, idx)] = (q[-1][1] if q else 0.0, answer_moment(answer, off, scenes[idx]))
         self.log(f"[video] {len(jobs)} narration clips spoken in {', '.join(texts)}")
 
         def clip(lang, kind, idx):
@@ -1720,6 +1858,8 @@ class VideoMaker:
                                                                fr[j], FPS, LEAD),
                                         parts=graphics.timed_parts(visual.get("parts", []), words, fr[j], FPS, LEAD),
                                         steps=graphics.timed_steps(visual.get("steps", []), words, fr[j], FPS, LEAD))
+                if visual["kind"] == "check":     # the Short's own voice decides when its answer shows
+                    short_scenes[-1].update(check_cues(texts[lang][n_long + b], words, visual, fr[j]))
                 for ca, cz, line in word_lines(words, 0, 30):
                     captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
                                      "text": line})
@@ -2024,6 +2164,9 @@ class VideoMaker:
                 f"DOWNLOAD (links work for 7 days; the files are deleted from storage after {KEEP_DAYS} days):\n"
                 f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
                 f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
+        block = youtube_block(os.path.join(out, "posting_guide.txt"))
+        if block:                         # the title and description, Gumroad link included, ready to paste
+            body += f"\nYOUTUBE TITLE AND DESCRIPTION (copy and paste):\n\n{block}\n"
         small = [os.path.join(out, n) for n in names if n.endswith((".txt", ".srt", ".png", ".jpg"))]
         send_email(self.s, f"[Video] {plan['title'][:120]}", body, small, self.log)
 
@@ -2031,11 +2174,22 @@ class VideoMaker:
 SR_SILENCE = sound.SR // 2
 
 
+def youtube_block(guide_path: str) -> str:
+    """The English title, description, study-notes link and sources from the posting guide (for the email)."""
+    try:
+        with open(guide_path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    m = re.search(r"===== ENGLISH =====\n(.*?)(?=Photo and footage credits|\n===== |\Z)", text, re.S)
+    return m.group(1).strip() if m else ""
+
+
 def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
                   meta: dict, sources: Optional[List[dict]] = None, lesson: Optional[dict] = None) -> str:
     credit_lines = "\n".join(f"- {c['subject']}: {c['author'] or 'see file page'}, {c['license']}, {c['file']}"
                              for c in credits) or "- none (no photos used)"
-    report = f"Full report: {product}\n" if product else ""
+    report = f"Full study notes (PDF): {product}\n" if product else ""
     links = list(dict.fromkeys(s.get("url", "") for s in sources or [] if str(s.get("url", "")).startswith("http")))
     listed = "".join(f"- {u}\n" for u in links[:15]) + (f"- and {len(links) - 15} more\n" if len(links) > 15 else "")
     dubbed = [lang for lang in texts if lang != "en"]

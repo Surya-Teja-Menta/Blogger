@@ -54,6 +54,30 @@ jobs:
         working-directory: video
         run: npm ci --no-audit --no-fund && npx remotion browser ensure
 
+      # the narration in the channel owner's own voice (Chatterbox + faster-whisper, MIT): its own environment,
+      # kept with the downloaded models between runs. The voice sample itself stays in the private storage bucket.
+      - name: Keep the voice environment between runs
+        if: inputs.video && vars.NARRATOR_VOICE != 'standard'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .voice
+            ~/.cache/huggingface
+          key: voice-chatterbox-0.1.7-fw-${{ runner.os }}-py313-v1
+
+      - name: Voice cloning environment
+        if: inputs.video && vars.NARRATOR_VOICE != 'standard'
+        continue-on-error: true       # without it the standard voice speaks: a video is never lost to this step
+        run: |
+          ready() { .voice/bin/python -c "import chatterbox, faster_whisper" 2>/dev/null; }
+          if ! ready; then
+            rm -rf .voice && python -m venv .voice
+            .voice/bin/pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+            .voice/bin/pip install -q chatterbox-tts==0.1.7 faster-whisper
+          fi
+          if ready; then echo "VOICE_PYTHON=$GITHUB_WORKSPACE/.voice/bin/python" >> "$GITHUB_ENV"
+          else echo "the voice environment did not install: the standard voice will speak"; fi
+
       # the delivered video is encoded with AV1 (small and sharp): Ubuntu's ffmpeg has the SVT-AV1 encoder
       - name: Video encoder (AV1)
         if: inputs.video
@@ -97,7 +121,7 @@ jobs:
         run: |
           export LLM_PROVIDERS="${LLM_PROVIDERS:-cerebras,groq,gemini,nvidia,openrouter,github}"  # no Ollama here
           export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
-          export GUMROAD_PRICE_CENTS="${GUMROAD_PRICE_CENTS:-390}"
+          export GUMROAD_PRICE="${GUMROAD_PRICE:-99 INR}"       # each document's price on Gumroad
           args=(--source "$RUN_SOURCE" --mode "$RUN_MODE" --level "$RUN_LEVEL")
           [ -z "$RUN_STYLE" ] || args+=(--style "$RUN_STYLE")
           [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)

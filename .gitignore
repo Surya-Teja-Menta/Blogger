@@ -16,3 +16,13 @@ legacy/
 video/node_modules/
 video/public/job/
 video/out/
+
+# a voice sample for cloning is private: it lives in the private storage bucket, never in this public repo
+/*.m4a
+/*.wav
+/*.mp3
+/*.flac
+/*.ogg
+/*.aac
+voices/
+.voice/

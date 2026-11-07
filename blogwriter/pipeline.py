@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from .config import MODES, Settings, mode_for_pages
-from .gumroad import list_product
+from .gumroad import list_product, parse_price
 from .history import History
 from .llm import LLMClient, LLMError
 from .mailer import send_email
@@ -70,10 +70,11 @@ def key_findings_md(dossier) -> str:
             "sources, Moderate = two, Low = one source only.*")
 
 
-def blog_cta(product: dict, price_cents: int, chapters: int, facts: int, pages: int) -> tuple:
+def blog_cta(product: dict, price_text: str, chapters: int, facts: int, pages: int) -> tuple:
     """(line after the opening paragraph, closing section) pointing blog readers to the full report on Gumroad.
     Built from the real numbers of this run, so it never promises more than the report contains."""
-    price = f"US${price_cents / 100:.2f}"
+    amount, currency = parse_price(price_text)
+    price = f"{'₹' if currency == 'inr' else currency.upper() + ' '}{amount:g}"
     size = f"{pages}-page " if pages else ""
     teaser = f"*This post is the short version. The full {size}documentary report is [here]({product['url']}).*"
     closing = (f"## Want the full story?\n\nThis post covers the main points. The full documentary report goes much "
@@ -222,15 +223,20 @@ class BlogPipeline:
     def run(self, topic: str, mode: str = "standard", days: int = 1, make_pdf: bool = True,
             email: bool = True, source: str = "news", pages: int = 0, level: str = "intermediate",
             niche: str = "general", lang: str = "en", publish: bool = True, video: bool = False,
-            style: str = "", lesson: Optional[dict] = None, report: Optional[bool] = None) -> dict:
+            style: str = "", lesson: Optional[dict] = None, report: Optional[bool] = None,
+            sell: Optional[bool] = None) -> dict:
         """source: 'news' writes about today's hottest story on the topic; 'topic' researches the topic itself.
         pages: a page target that overrides the mode's size (0 = the mode decides). level / niche: who the report
         is written for. lang: the language of the finished pieces. publish: list on Gumroad and post to the blogs
         (off for private orders, which are only emailed). video: also make the videos for review (never posted).
-        report: write the report, article and blog and email them. By default a video run does not (it only needs
-        the research; only the video is emailed), unless it publishes, which needs the report to sell and post."""
+        report: write the report, article and blog. sell: list the report on Gumroad (without posting anywhere).
+        A video run sells its document by default whenever a Gumroad key is set: the report is written and listed
+        first, so the video's description can link to it. Its only email is the video's; the "[Blog Writer]"
+        email is for report-only runs."""
+        if sell is None:
+            sell = publish or (video and bool(self.s.gumroad_token))
         if report is None:
-            report = not video or publish
+            report = not video or publish or sell
         for value, allowed, what in ((source, ("news", "topic"), "source"), (level, LEVELS, "level"),
                                      (niche, NICHES, "niche"), (lang, LANGS, "lang")):
             if value not in allowed:
@@ -238,7 +244,8 @@ class BlogPipeline:
         self.writer.reader = audience(level, niche)
         try:
             result = self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
-                               {"level": level, "niche": niche, "lang": lang, "pages_requested": pages}, report=report)
+                               {"level": level, "niche": niche, "lang": lang, "pages_requested": pages}, report=report,
+                               sell=sell, report_email=email and not video)
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
         if video:
@@ -293,7 +300,7 @@ class BlogPipeline:
 
     def _run(self, topic: str, mode: str, days: int, make_pdf: bool, email: bool, source: str = "news",
              target_pages: int = 0, lang: str = "en", publish: bool = True, order: Optional[dict] = None,
-             report: bool = True) -> dict:
+             report: bool = True, sell: bool = False, report_email: bool = True) -> dict:
         if mode not in MODES:
             raise PipelineError(f"unknown mode '{mode}' (choose from {', '.join(MODES)})")
         m, t0 = MODES[mode], time.time()
@@ -435,16 +442,18 @@ class BlogPipeline:
                         "article.md", "blog.md")
         # the product comes first, so the blog can link to it before it is stored, posted and emailed
         sellable = "documentary_report.pdf" if pdf else "documentary_report.html"
-        if not publish:
+        if not publish and not sell:
             self.log("[pipeline] private order: not listed on Gumroad and not posted anywhere")
-        product = publish and list_product(
+        elif not publish:
+            self.log("[pipeline] the document is sold on Gumroad; nothing is posted to the blogs")
+        product = (publish or sell) and list_product(
             self.s, title,
             f"{meta['description']}\n\n**Key findings**\n\n{key_findings_md(dossier)}\n\n"
             f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
             f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
             os.path.join(out, sellable), self.log) or {}
         if product and product.get("published"):
-            teaser, closing = blog_cta(product, self.s.gumroad_price_cents, len(chapters), len(dossier.facts), pages)
+            teaser, closing = blog_cta(product, self.s.gumroad_price, len(chapters), len(dossier.facts), pages)
             files["blog.md"] = add_cta(files["blog.md"], teaser, closing)
             with open(os.path.join(out, "blog.md"), "w", encoding="utf-8") as f:
                 f.write(files["blog.md"])
@@ -458,7 +467,7 @@ class BlogPipeline:
         links = upload_run(self.s, out, [bundle] + list(deliverables), self.log)
         posts = post_all(self.s, files["blog.md"], files["article.md"], meta, self.log) if publish else {}
         sent = False
-        if email:
+        if email and report_email:
             sent = send_email(self.s, f"[Blog Writer] {title[:120]}",
                               email_body(metadata, article, dossier, out, links, product, posts),
                               [os.path.join(out, n) for n in deliverables], self.log)

@@ -821,10 +821,13 @@ def test_zip_run_bundles_existing_files_only(tmp_path):
         assert z.read("documentary_report.pdf") == b"%PDF-1.4 x"
 
 
-def test_gumroad_price_defaults_to_3_90(monkeypatch):
+def test_gumroad_price_defaults_to_99_rupees(monkeypatch):
     from blogwriter.config import Settings
-    monkeypatch.delenv("GUMROAD_PRICE_CENTS", raising=False)
-    assert Settings().gumroad_price_cents == 390 and Settings.from_env().gumroad_price_cents == 390
+    from blogwriter.gumroad import parse_price
+    monkeypatch.delenv("GUMROAD_PRICE", raising=False)
+    assert Settings().gumroad_price == "99 INR" and Settings.from_env().gumroad_price == "99 INR"
+    assert parse_price("99 INR") == (99.0, "inr") and parse_price("3.90 usd") == (3.9, "usd")
+    assert parse_price("149") == (149.0, "inr") and parse_price("nonsense") == (99.0, "inr")
 
 
 def test_stock_phrases_detected_as_whole_words_only():
@@ -854,8 +857,8 @@ def test_key_findings_carry_counted_confidence_labels():
 
 def test_blog_cta_links_product_after_opening_and_at_the_end():
     from blogwriter.pipeline import add_cta, blog_cta
-    teaser, closing = blog_cta({"url": "https://x.gumroad.com/l/abc", "published": True}, 390, 9, 41, 18)
-    assert "US$3.90" in closing and "18-page" in closing and "9 chapters" in closing and "41 verified facts" in closing
+    teaser, closing = blog_cta({"url": "https://x.gumroad.com/l/abc", "published": True}, "99 INR", 9, 41, 18)
+    assert "₹99" in closing and "18-page" in closing and "9 chapters" in closing and "41 verified facts" in closing
     out = add_cta("# Headline\n\nFirst paragraph.\n\n## Section\n\nMore.", teaser, closing)
     paras = out.strip().split("\n\n")
     assert paras[0] == "# Headline" and paras[1] == "First paragraph." and paras[2] == teaser
@@ -2019,6 +2022,109 @@ def test_the_resolution_is_4k_by_default_and_8k_on_request(monkeypatch):
     finally:
         monkeypatch.delenv("VIDEO_RESOLUTION", raising=False)
         importlib.reload(video)
+
+
+def test_a_quiz_answer_lights_up_when_the_voice_says_it_not_before():
+    from blogwriter.video import FPS, LEAD, answer_moment, check_cues
+    scene = {"kind": "check", "options": ["It grows larger", "It shrinks", "It stays the same"], "answer": 1}
+    words = [(0.0, 0.3, "Sound"), (0.3, 0.6, "familiar?"), (0.7, 0.9, "What"), (0.9, 1.1, "happens"), (1.1, 1.3, "to"),
+             (1.3, 1.5, "the"), (1.5, 1.9, "spread?"), (2.0, 2.3, "Well,"), (2.3, 2.5, "here's"), (2.5, 2.7, "the"),
+             (2.7, 3.0, "twist:"), (3.0, 3.2, "it"), (3.2, 3.7, "shrinks.")]
+    assert answer_moment(words, 2.0, scene) == 3.2                     # on "shrinks", not on "Well,"
+    assert answer_moment(words, 2.0, {**scene, "answer": 9}) == 2.0     # no valid answer: where the answer starts
+    line = "Sound familiar? What happens to the spread? Well, here's the twist: it shrinks."
+    cues = check_cues(line, words, scene, 300)
+    assert cues["think"] == LEAD + round(1.9 * FPS)                    # after the LAST question mark
+    assert cues["reveal"] == LEAD + round(3.2 * FPS)
+    assert check_cues("No question here.", words, scene, 300) == {"think": 120, "reveal": 180}
+
+
+def test_captions_keep_the_script_words_timed_by_the_cloned_voice(monkeypatch, tmp_path):
+    from blogwriter import video
+    from blogwriter.config import Settings
+    heard = [[0.0, 0.4, "Averages"], [0.4, 0.6, "of"], [0.6, 1.0, "thirty"], [1.0, 1.5, "orders"], [1.5, 2.0, "pile"],
+             [2.0, 2.2, "up."]]
+    got = video.align_words("Averages of 30 orders pile up.", heard)
+    assert [w for _, _, w in got] == ["Averages", "of", "30", "orders", "pile", "up."]
+    assert got[2] == (0.6, 1.0, "30") and got[3][0] == 1.0             # "30" was heard as "thirty": it takes the gap
+    monkeypatch.setattr(video, "speak_all", lambda jobs: [[(0.0, 1.0, "x")] for _ in jobs])
+    logs = []
+    monkeypatch.delenv("VOICE_PYTHON", raising=False)
+    out = video.speak_cloned([("Hi there.", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), logs.append)
+    assert out == [[(0.0, 1.0, "x")]] and any("not installed" in m for m in logs)   # no clone: the standard voice
+    monkeypatch.setenv("NARRATOR_VOICE", "standard")
+    logs.clear()
+    assert video.speak_cloned([("Hi.", "v", str(tmp_path / "b.mp3"))], Settings(), str(tmp_path), logs.append) and not logs
+
+
+def test_the_document_is_sold_for_99_rupees_and_never_mispriced(monkeypatch):
+    from blogwriter import gumroad as G
+    from blogwriter.config import Settings
+    calls = []
+
+    class R:
+        def __init__(self, data, status=200):
+            self.data, self.status_code, self.text = data, status, json.dumps(data)
+
+        def json(self):
+            return self.data
+
+        def raise_for_status(self):
+            pass
+
+    def post(url, timeout=0, data=None, json=None):
+        calls.append(("POST", url, data))
+        return R({"success": True, "product": {"id": "p1", "short_url": "https://g.co/l/x", "currency": currency[0]}})
+
+    def put(url, timeout=0, data=None, json=None):
+        calls.append(("PUT", url, data or json))
+        return R({"success": True})
+    monkeypatch.setattr(G.requests, "post", post)
+    monkeypatch.setattr(G.requests, "put", put)
+    monkeypatch.setattr(G, "_upload", lambda token, path: "https://files/x.pdf")
+    monkeypatch.setattr(G, "convert", lambda amount, frm, to: 1.12)
+    s = Settings(gumroad_token="t", gumroad_publish=True)
+    currency = ["inr"]
+    assert G.list_product(s, "CLT notes", "d", "x.pdf", log=lambda m: None)["url"] == "https://g.co/l/x"
+    created = calls[0][2]
+    assert created["price"] == 9900 and created["price_currency_type"] == "inr"
+    assert not any(c[0] == "PUT" and isinstance(c[2], dict) and "price" in c[2] for c in calls)     # already right
+    calls.clear()
+    currency[0] = "usd"                                  # the account sells in dollars: converted, never $99
+    logs = []
+    G.list_product(s, "CLT notes", "d", "x.pdf", log=logs.append)
+    fixed = [c[2] for c in calls if c[0] == "PUT" and isinstance(c[2], dict) and "price" in c[2]]
+    assert fixed == [{"access_token": "t", "price": 112}] and any("sells in USD" in m for m in logs)
+
+
+def test_a_video_run_sells_its_document_but_sends_only_the_video_email(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from blogwriter import pipeline as P
+    from blogwriter import video
+    from blogwriter.config import Settings
+    seen = []
+    p = P.BlogPipeline.__new__(P.BlogPipeline)
+    p.writer, p.log = SimpleNamespace(reader=""), lambda m: None
+    monkeypatch.setattr(P.BlogPipeline, "_run", lambda self, *a, **k: seen.append((a, k)) or {"dir": "x"})
+    import blogwriter.video as V
+    monkeypatch.setattr(V.VideoMaker, "__init__", lambda self, *a: None)
+    monkeypatch.setattr(V.VideoMaker, "make", lambda self, d, **k: {})
+    for token, publish, video_on, sells, report, mails in (("t", False, True, True, True, False),   # the default
+                                                           ("", False, True, False, False, False),  # no Gumroad key
+                                                           ("t", True, True, True, True, False),    # also posts
+                                                           ("t", True, False, True, True, True)):   # report-only run
+        p.s = Settings(gumroad_token=token)
+        seen.clear()
+        P.BlogPipeline.run(p, "CLT", source="topic", publish=publish, video=video_on)
+        a, k = seen[0]
+        assert (k["sell"], k["report"], k["report_email"], a[8]) == (sells, report, mails, publish)
+    guide = tmp_path / "posting_guide.txt"
+    guide.write_text("POSTING GUIDE\n===== ENGLISH =====\nTitle: The CLT\nDescription:\nAverages behave.\n\n"
+                     "Full study notes (PDF): https://g.co/l/x\nSources: 3 sources.\n- https://a\n"
+                     "Photo and footage credits (required by the licences):\n- none\n", encoding="utf-8")
+    block = video.youtube_block(str(guide))
+    assert block.startswith("Title: The CLT") and "https://g.co/l/x" in block and "Photo and footage" not in block
+    assert video.youtube_block(str(tmp_path / "missing.txt")) == ""
 
 
 def test_a_long_render_is_split_evenly_into_parts_for_parallel_machines():

@@ -1,6 +1,7 @@
 """List a finished run on Gumroad: create the product, attach the report file, optionally publish it."""
 import math
 import os
+import re
 from typing import Callable, Dict
 
 import markdown
@@ -44,6 +45,22 @@ def _upload(token: str, path: str) -> str:
     return done.get("file_url") or pre["file_url"]
 
 
+def parse_price(text: str) -> tuple:
+    """ "99 INR" -> (99.0, "inr"); "3.90 usd" -> (3.9, "usd"); a bare number is in rupees."""
+    m = re.match(r"\s*([\d.]+)\s*([A-Za-z]{3})?\s*$", str(text or ""))
+    if not m:
+        return 99.0, "inr"
+    return float(m.group(1)), (m.group(2) or "inr").lower()
+
+
+def convert(amount: float, frm: str, to: str) -> float:
+    """amount in currency `frm` expressed in `to`, at today's reference rate (free ECB rates, no key)."""
+    r = requests.get("https://api.frankfurter.app/latest", params={"amount": amount, "from": frm.upper(),
+                                                                    "to": to.upper()}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return float(r.json()["rates"][to.upper()])
+
+
 def list_product(settings: Settings, title: str, description_md: str, file_path: str,
                  log: Callable[[str], None] = print) -> Dict[str, object]:
     """Returns {"url", "id", "published"}, or {} when not configured or on failure. Never raises - the files are
@@ -54,12 +71,22 @@ def list_product(settings: Settings, title: str, description_md: str, file_path:
         log("[gumroad] GUMROAD_ACCESS_TOKEN not set - skipping")
         return {}
     token, product_id = settings.gumroad_token, ""
+    amount, currency = parse_price(settings.gumroad_price)
     try:
         made = _json(requests.post(f"{API}/products", timeout=TIMEOUT, data={
-            "access_token": token, "name": title[:120], "price": settings.gumroad_price_cents}))["product"]
+            "access_token": token, "name": title[:120], "price": round(amount * 100),
+            "price_currency_type": currency}))["product"]
         product_id = made["id"]
         url = f"{API}/products/{requests.utils.quote(product_id, safe='')}"
         _json(requests.put(f"{url}/disable", timeout=TIMEOUT, data={"access_token": token}))
+        # the price is checked as Gumroad stored it: a product made in the account's own currency instead gets the
+        # same price converted at today's rate, so "99 INR" can never become 99 dollars
+        got = str(made.get("currency") or currency).lower()
+        if got != currency:
+            cents = round(convert(amount, currency, got) * 100)
+            _json(requests.put(url, timeout=TIMEOUT, data={"access_token": token, "price": cents}))
+            log(f"[gumroad] the account sells in {got.upper()}: {amount:g} {currency.upper()} set as "
+                f"{cents / 100:.2f} {got.upper()}")
         _json(requests.put(url, timeout=TIMEOUT, json={
             "access_token": token, "description": markdown.markdown(description_md),
             "files": [{"url": _upload(token, file_path)}]}))
