@@ -2570,3 +2570,15 @@ def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short
     assert abs(out[0][1][1] - 2.0 / 0.88) < 1e-6                      # the words move with the slowed voice
     assert "WHOLE" in video.SHORT_PICK and "30 seconds" in video.SHORT_PICK and "exactly 4 beats" in video.SHORT_PICK
     assert video.SHORT_MAX_SECONDS <= 40
+
+
+def test_the_transition_whoosh_is_off_because_it_was_heard_as_noise(monkeypatch):
+    from blogwriter import sound
+    monkeypatch.delenv("WHOOSH_LEVEL", raising=False)
+    assert sound.whoosh_level() == 0
+    graph = sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]
+    assert "[w0]" not in graph and "[h0]" in graph                  # no whoosh in the mix, the soft hit stays
+    monkeypatch.setenv("WHOOSH_LEVEL", "0.1")
+    assert "[w1]" in sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]  # an owner who wants it back can have it
+    monkeypatch.setenv("WHOOSH_LEVEL", "loud")
+    assert sound.whoosh_level() == 0

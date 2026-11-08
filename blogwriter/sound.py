@@ -139,6 +139,16 @@ def bed_level() -> float:
         return 0.2
 
 
+def whoosh_level() -> float:
+    """The volume of the transition whoosh (repository variable WHOOSH_LEVEL). It is filtered noise: a half second
+    burst of hiss at every scene change, sitting in the pauses of the narration, which the owner heard as the
+    soundtrack "showing noise and ending again". Off by default (0)."""
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("WHOOSH_LEVEL") or 0)))
+    except ValueError:
+        return 0.0
+
+
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
                tempos: Optional[List[float]] = None, final: bool = True) -> Tuple[str, int]:
     """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit] -> [out]. The voice is cleaned up,
@@ -157,7 +167,7 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     parts.append(f"[{m}:a]volume={bed_level():.3f}[bedraw]")
     parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=700[bed]")
     sfx = []
-    for name, idx, times, vol in (("w", w, whoosh_at, 0.12), ("h", h, hit_at, 0.22)):
+    for name, idx, times, vol in (("w", w, whoosh_at if whoosh_level() > 0 else [], whoosh_level()), ("h", h, hit_at, 0.18)):
         if not times:
             continue
         outs = "".join(f"[{name}{k}r]" for k in range(len(times)))
