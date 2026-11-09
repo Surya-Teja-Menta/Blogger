@@ -2260,14 +2260,78 @@ def test_the_cinematic_design_is_the_default_and_a_film_look_only_when_asked(mon
     assert design.design(picks, "Central Limit Theorem", "education", "", lambda m: None)["look"]["slug"] == "chalkboard"
 
 
+def test_the_music_is_composed_from_the_videos_own_mood_and_title():
+    from blogwriter import composer
+    dark = composer.feel("dark, tense, creeping mystery", "The fall of Rome")
+    bright = composer.feel("bright, hopeful, uplifting and clear", "The fall of Rome")
+    assert composer.SCALES[dark["scale"]][2] == 3 and dark["scale"] in ("phrygian", "minor", "dorian")
+    assert bright["scale"] in ("major", "lydian", "mixolydian") and bright["bright"] > dark["bright"]
+    assert composer.feel("calm, gentle, slow", "x")["bpm"] < composer.feel("urgent, fast, energetic", "x")["bpm"]
+    assert composer.feel("calm, gentle", "same") == composer.feel("calm, gentle", "same")     # the same seed, the same music
+    keys = {(composer.feel("curious", f"topic {k}")["root"], composer.feel("curious", f"topic {k}")["pattern"])
+            for k in range(12)}
+    assert len(keys) >= 6                                                                # titles choose key and chords
+    assert composer.feel("", "nothing to go on")["scale"] in composer.SCALES              # no words: still music
+
+
+def test_the_music_follows_the_story_and_is_playable_on_small_speakers(tmp_path):
+    import wave
+    import numpy as np
+    from blogwriter import composer, sound
+    sections = [(0, 10, "hook"), (10, 24, "stat"), (24, 34, "chapter"), (34, 44, "check"), (44, 56, "outro")]
+    out, note = composer.compose(56, "Central Limit Theorem|1", "curious, playful, bright", sections)
+    assert out.shape[0] == 2 and out.shape[1] == 58 * sound.SR and np.isfinite(out).all()
+    rms = lambda a, b: float(np.sqrt((out[:, int(a * sound.SR):int(b * sound.SR)] ** 2).mean()))
+    assert abs(rms(0, 56) - composer.TARGET_RMS) < 0.02 and rms(0, 8) > 0.3 * rms(0, 56)    # present from the first seconds
+    mono = out[0, :56 * sound.SR].astype("float64")
+    spec = np.abs(np.fft.rfft(mono)) ** 2
+    f = np.fft.rfftfreq(len(mono), 1 / sound.SR)
+    assert spec[(f >= 250) & (f < 3000)].sum() / spec.sum() > 0.5                          # not just low chords
+    top = lambda a, b: float((np.abs(np.fft.rfft(out[0, int(a * sound.SR):int(b * sound.SR)])) ** 2)
+                             [int((b - a) * 600):int((b - a) * 3000)].sum())
+    assert top(27, 33) < top(14, 22)                                                       # a chapter card: just the pad
+    other, _ = composer.compose(56, "Central Limit Theorem|2", "curious, playful, bright", sections)
+    assert not np.allclose(out, other)                                                     # never the same music twice
+    path = str(tmp_path / "bed.wav")
+    sound.music(12, path, seed="s", mood="calm")
+    with wave.open(path) as w:
+        assert w.getnchannels() == 2 and w.getframerate() == sound.SR and w.getnframes() == 14 * sound.SR
+
+
+def test_a_music_failure_never_costs_the_video(tmp_path, monkeypatch):
+    import wave
+    from blogwriter import composer, sound
+
+    def boom(*a, **k):
+        raise ValueError("no score")
+    monkeypatch.setattr(composer, "compose", boom)
+    path = str(tmp_path / "bed.wav")
+    note = sound.music(3, path, seed="s", mood="calm", sections=[(0, 3, "hook")])
+    assert "silent" in note
+    with wave.open(path) as w:
+        assert w.getnframes() == 5 * sound.SR
+
+
+def test_the_plan_carries_how_the_music_should_feel():
+    from blogwriter import video
+    assert video.check_brief({"sound": "slow, glassy"}, "education")["sound"] == "slow, glassy"
+    assert video.check_brief({}, "education")["sound"] == ""
+    assert "highpass=f=110,volume=0.280[bedraw]" in sound_mix()
+
+
+def sound_mix():
+    from blogwriter import sound
+    return sound.mix_filter([1.0], [], [])[0]
+
+
 def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monkeypatch):
     from blogwriter import sound
     monkeypatch.delenv("MUSIC_LEVEL", raising=False)
-    assert sound.bed_level() == 0.2 and "volume=0.200[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    assert sound.bed_level() == 0.28 and "volume=0.280[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "0")
     assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "loud")
-    assert sound.bed_level() == 0.2
+    assert sound.bed_level() == 0.28
 
 
 class _FakeBucket:

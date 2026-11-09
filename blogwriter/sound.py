@@ -1,7 +1,6 @@
-"""Sound for the videos, made in code so there is nothing to license: a calm music bed, a whoosh for
-transitions and a low hit for figures, plus the ffmpeg mix that ducks the music under the voice and masters
+"""Sound for the videos, made in code so there is nothing to license: a music bed composed for each video (see
+composer.py), a whoosh for transitions and a low hit for figures, plus the ffmpeg mix that ducks the music under the voice and masters
 the result to YouTube loudness."""
-import hashlib
 import os
 import wave
 from typing import List, Optional, Tuple
@@ -9,14 +8,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 SR = 48000
-
-# chord progressions (Hz of the triads); one is picked per video so channels do not sound identical
-PROGRESSIONS = [
-    [(220.00, 261.63, 329.63), (174.61, 220.00, 261.63), (130.81, 164.81, 196.00), (196.00, 246.94, 293.66)],  # Am F C G
-    [(146.83, 174.61, 220.00), (116.54, 146.83, 174.61), (174.61, 220.00, 261.63), (130.81, 164.81, 196.00)],  # Dm Bb F C
-    [(164.81, 196.00, 246.94), (130.81, 164.81, 196.00), (196.00, 246.94, 293.66), (146.83, 185.00, 220.00)],  # Em C G D
-]
-
 
 def _write(path: str, stereo: np.ndarray) -> None:
     pcm = (np.clip(stereo, -1, 1) * 32767).astype("<i2")
@@ -27,11 +18,11 @@ def _write(path: str, stereo: np.ndarray) -> None:
         w.writeframes(pcm.reshape(-1).tobytes())
 
 
-def _reverb_lowpass(x: np.ndarray, cutoff: float, seconds: float = 1.8, wet: float = 0.35) -> np.ndarray:
+def _reverb_lowpass(x: np.ndarray, cutoff: float, seconds: float = 1.8, wet: float = 0.35, seed: int = 3) -> np.ndarray:
     """A gentle low-pass and, added to it at `wet` of its own level, a soft room reverb (decaying noise impulse),
     both done in one FFT pass. (The bed's reverb used to be louder than the music itself: a wash that sounded like an
     echo under the voice.)"""
-    rng = np.random.default_rng(3)
+    rng = np.random.default_rng(seed)
     n_ir = int(seconds * SR)
     ir = rng.normal(0, 1, n_ir) * np.exp(-np.arange(n_ir) / (SR * seconds / 5))
     ir = ir / np.sqrt((ir ** 2).sum())
@@ -44,63 +35,21 @@ def _reverb_lowpass(x: np.ndarray, cutoff: float, seconds: float = 1.8, wet: flo
     return dry + y * wet
 
 
-def music(seconds: float, path: str, seed: str = "") -> None:
-    """An ambient bed: slow chords, a soft eighth-note pulse and a low heartbeat, in one of a few keys. One
-    32-second progression is made with its reverb tail wrapped around, so it loops without a seam."""
-    loop = _bed(seed)
-    n = int((seconds + 2) * SR)
-    out = np.tile(loop, (n // len(loop) + 1, 1))[:n]
-    t = np.arange(n) / SR
-    fade = np.minimum(1, np.minimum(t / 2.5, (t[-1] - t) / 3))[:, None]
-    _write(path, out * fade)
-
-
-def _bed(seed: str) -> np.ndarray:
-    pick = int(hashlib.md5(seed.encode()).hexdigest(), 16)
-    chords = PROGRESSIONS[pick % len(PROGRESSIONS)]
-    period = 32.0
-    bar = 8.0                                   # one chord every 8 seconds
-    n = int((period + bar + 4) * SR)            # one more chord and room for the reverb tail, wrapped round below
-    t = np.arange(n) / SR
-    left, right = np.zeros(n), np.zeros(n)
-    pl_l, pl_r, beat_hb = np.zeros(n), np.zeros(n), np.zeros(n)     # plucks and heartbeat stay out of the reverb
-    for k in range(1, int(period / bar) + 1):   # chord 4 is chord 0 again: its body wraps to the loop's start
-        a, b = k * bar - 1.5, (k + 1) * bar + 1.5          # each chord fades over its neighbours
-        i0, i1 = max(0, int(a * SR)), min(n, int(b * SR))
-        if i0 >= i1:
-            continue
-        seg = t[i0:i1]
-        env = np.sin(np.pi * np.clip((seg - a) / (b - a), 0, 1)) ** 2
-        for f in chords[k % len(chords)]:
-            left[i0:i1] += 0.05 * env * (np.sin(2 * np.pi * f * seg) + 0.25 * np.sin(4 * np.pi * f * seg))
-            right[i0:i1] += 0.05 * env * (np.sin(2 * np.pi * f * 1.003 * seg) + 0.25 * np.sin(4 * np.pi * f * 1.003 * seg))
-        root = chords[k % len(chords)][0] / 2
-        left[i0:i1] += 0.06 * env * np.sin(2 * np.pi * root * seg)
-        right[i0:i1] += 0.06 * env * np.sin(2 * np.pi * root * seg)
-    beat = 60 / 96                              # 96 bpm
-    pluck_len = int(0.5 * SR)
-    pl_t = np.arange(pluck_len) / SR
-    for j in range(int(period / (beat / 2))):
-        start = j * beat / 2
-        chord = chords[int(start // bar) % len(chords)]
-        f = chord[j % 3] * 2
-        i0 = int(start * SR)
-        i1 = min(n, i0 + pluck_len)
-        tone = 0.034 * np.exp(-pl_t * 9)[: i1 - i0] * np.sin(2 * np.pi * f * pl_t[: i1 - i0])
-        pan = 0.5 + 0.3 * np.sin(j)
-        pl_l[i0:i1] += tone * (1 - pan)
-        pl_r[i0:i1] += tone * pan
-        if j % 2 == 0:                          # heartbeat on every beat
-            thump = 0.05 * np.exp(-pl_t * 9)[: i1 - i0] * np.sin(2 * np.pi * (48 + 30 * np.exp(-pl_t * 30)[: i1 - i0]) * pl_t[: i1 - i0])
-            beat_hb[i0:i1] += thump
-    pad_l, pad_r = _reverb_lowpass(left, 2600, 1.4, 0.3), _reverb_lowpass(right, 2600, 1.4, 0.3)
-    left = pad_l + _reverb_lowpass(pl_l, 5200, 0.35, 0.08) + beat_hb
-    right = pad_r + _reverb_lowpass(pl_r, 5200, 0.35, 0.08) + beat_hb
-    out = np.stack([left, right], axis=1)
-    p = int(period * SR)
-    loop = out[:p].copy()
-    loop[: n - p] += out[p:]                    # the tail of the last chord rings into the first: no seam
-    return loop / (np.abs(loop).max() + 1e-9) * 0.5
+def music(seconds: float, path: str, seed: str = "", mood: str = "", sections=None) -> dict:
+    """The music bed of one video, composed for it (composer.py): its mode, key, tempo and instrument come from the
+    mood and title, its chords change with the shots, and how much music there is follows the story. `sections` is
+    [(start s, end s, kind of shot)]. Returns what was composed (mode, key, tempo...) for the log."""
+    from . import composer
+    try:
+        out, note = composer.compose(seconds, seed, mood, sections)
+    except Exception as exc:        # the music must never cost a finished video: a plainer score, then none at all
+        try:
+            out, note = composer.compose(seconds, seed, "", None)
+            note = {**note, "fallback": f"{type(exc).__name__}: {str(exc)[:120]}"}
+        except Exception as exc2:
+            out, note = np.zeros((2, int((seconds + 2) * SR)), dtype="float32"), {"silent": f"{type(exc2).__name__}: {str(exc2)[:120]}"}
+    _write(path, out.T)
+    return note
 
 
 def whoosh(path: str) -> None:
@@ -119,11 +68,11 @@ def whoosh(path: str) -> None:
     _write(path, np.stack([y * (1 - 0.6 * t), y * (0.4 + 0.6 * t)], axis=1) * 0.7)
 
 
-def hit(path: str) -> None:
-    """A low, short impact with a falling pitch: lands under a figure as it appears."""
+def hit(path: str, root_hz: float = 40.0) -> None:
+    """A low, short impact with a falling pitch (settling on the video's own key): lands under a figure as it appears."""
     n = int(1.0 * SR)
     t = np.arange(n) / SR
-    pitch = 40 + 70 * np.exp(-t * 12)
+    pitch = root_hz + 70 * np.exp(-t * 12)
     body = np.sin(2 * np.pi * np.cumsum(pitch) / SR) * np.exp(-t * 4.5)
     click = np.random.default_rng(9).normal(0, 1, n) * np.exp(-t * 90) * 0.4
     y = body + click
@@ -134,9 +83,9 @@ def hit(path: str) -> None:
 def bed_level() -> float:
     """The music's volume under the narration (repository variable MUSIC_LEVEL; 0 = no music)."""
     try:
-        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.2)))
+        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.28)))
     except ValueError:
-        return 0.2
+        return 0.28
 
 
 def whoosh_level() -> float:
@@ -164,8 +113,8 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     # the music is a faint floor under the narration, never a second thing to listen to: about 20 dB under the
     # voice (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
     # background noise), pushed down further while the voice speaks. MUSIC_LEVEL=0 removes it altogether.
-    parts.append(f"[{m}:a]volume={bed_level():.3f}[bedraw]")
-    parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=700[bed]")
+    parts.append(f"[{m}:a]highpass=f=110,volume={bed_level():.3f}[bedraw]")   # no rumble: small speakers cannot play it
+    parts.append("[bedraw][key]sidechaincompress=threshold=0.03:ratio=3.5:attack=25:release=800[bed]")
     sfx = []
     for name, idx, times, vol in (("w", w, whoosh_at if whoosh_level() > 0 else [], whoosh_level()), ("h", h, hit_at, 0.18)):
         if not times:

@@ -29,7 +29,7 @@ from .critic import review, summary
 from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
-from . import design, diagram, graphics, looks, mathexpr, voicefarm
+from . import composer, design, diagram, graphics, looks, mathexpr, voicefarm
 from .research import domain
 from .storage import prune_prefix, upload_run
 from .web import UA
@@ -114,6 +114,8 @@ Reply with JSON:
     shot; a question the viewer is asked to guess before each reveal; a wrong answer that gets corrected; a
     countdown; a letter; a then-and-now contrast)",
   "mood": "4 to 6 words about how the video should look and feel",
+  "sound": "3 to 5 words for how the MUSIC under this video should feel, as a composer would say it (e.g. 'slow,
+    glassy, quietly hopeful'; 'tense, low, creeping'; 'playful, bouncy, light'): chosen for this subject",
   "examples": "2 to 4 everyday real-life situations the viewer has lived that make this subject concrete (from food,
     phones, traffic, sport, exams, shopping, queues, weather...), the first one strong enough to run through the
     whole video",
@@ -1394,7 +1396,8 @@ def check_brief(raw, style: str) -> dict:
             "structure": s("structure", "whatever shape makes this subject clearest"),
             "opening": s("opening", "a question or a surprising fact the viewer already half-wonders about."),
             "ending": s("ending", "answer the opening question in one sentence."),
-            "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "minutes": minutes,
+            "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "sound": s("sound", ""),
+            "minutes": minutes,
             "narrator": narrator,
             "device": s("device", "one running example that grows with every shot."),
             "examples": s("examples", "an everyday situation the viewer has lived, chosen for this subject"),
@@ -1859,7 +1862,11 @@ class VideoMaker:
         assets = {"music": os.path.join(job, "music.wav"), "whoosh": os.path.join(job, "whoosh.wav"),
                   "hit": os.path.join(job, "hit.wav")}
         sound.whoosh(assets["whoosh"])
-        sound.hit(assets["hit"])
+        # the music is composed for this video alone: its mood words and a seed of its own (the same topic made
+        # twice still sounds different), the key and mode, tempo, instrument and the arrangement all follow from them
+        music_seed = f"{title}|{time.time_ns()}"
+        music_mood = f"{brief.get('sound', '')} {brief.get('sound', '')} {brief['mood']} {brief['tone']} {title}"
+        sound.hit(assets["hit"], composer.hz(composer.feel(music_mood, music_seed)["root"] - 24))
 
         # long video: the pictures follow the English narration. A dubbed line that runs longer is sped up (at
         # most MAX_TEMPO, pitch kept), and only what still does not fit lengthens the shot, so the English video
@@ -1874,7 +1881,9 @@ class VideoMaker:
         tempo = {key: max(1.0, v / longest[key[1]]) if longest[key[1]] else 1.0 for key, v in secs.items()}
         holds = [HOLD if i + 1 < n_long and scenes[i + 1].get("chapter") else 0 for i in range(n_long)]   # a beat before a new part
         frames, starts, total = timeline(longest, kinds, holds)
-        sound.music(total / FPS + 1, assets["music"], seed=title)
+        score = sound.music(total / FPS + 1, assets["music"], seed=music_seed, mood=music_mood,
+                            sections=[(st / FPS, (st + fr) / FPS, k) for st, fr, k in zip(starts, frames, kinds)])
+        self.log(f"[video] music composed for this video: {score}")
         long_scenes = [{**s, "frames": frames[i], "cue": cue(spoken.get(("en", "long", i), []), s.get("number", "")),
                         "hcue": cue(spoken.get(("en", "long", i), []), s.get("highlight", "")),
                         "graphic": graphics.timed(s.get("graphic"), s.get("headline", ""), spoken.get(("en", "long", i), []),
@@ -1977,7 +1986,10 @@ class VideoMaker:
                 json.dump({"scenes": short_scenes, "captions": captions, "channel": self.s.channel_name, "theme": theme},
                           f, ensure_ascii=False)
             track = os.path.join(job, f"short_{lang}.mp3")
-            master([clip(lang, "short", b) for b in order], st, sk, tot, assets, track, self.log)
+            short_music = os.path.join(job, f"short_music_{lang}.wav")
+            sound.music(tot / FPS + 1, short_music, seed=music_seed, mood=music_mood,
+                        sections=[(a / FPS, (a + f) / FPS, k) for a, f, k in zip(st, fr, sk)])
+            master([clip(lang, "short", b) for b in order], st, sk, tot, {**assets, "music": short_music}, track, self.log)
             self.log(f"[video] rendering the {LANGS[lang]} Short ({tot / FPS:.0f}s)")
             render("Short", path, track, os.path.join(out, f"short_{lang}.mp4"), self.log)
             files[f"short_{lang}.mp4"] = "short"
