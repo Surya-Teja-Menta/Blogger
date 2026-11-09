@@ -127,12 +127,14 @@ def best_window(x, sr, seconds=10.0):
     return at * n, min(len(x), (at + per) * n)
 
 
-def speech_end(x, sr, word_end, reach=0.3):
+def speech_end(x, sr, word_end, reach=0.5):
     """Sample where a spoken sentence really ends. After its last word the model sometimes adds a burst of hiss (a
-    breath, an "sss" that is not a word), a fraction of a second after a tiny gap: heard as a radio losing its signal
-    before the line goes dead. The speech ends at the first quiet gap after the recogniser's last word; a word's own
-    tail (a final "s" is loud but short) is below that gap, so it stays. No gap within `reach` seconds: 0.2 s past the
-    word, which is longer than any real tail."""
+    breath, an "sss" that is not a word), a fraction of a second after a gap of true silence: heard as a radio losing
+    its signal before the line goes dead. The speech ends at the first true silence after the recogniser's last word.
+    Silence means 40 dB under the sentence's own loud parts: a word's final "s", "v" or "f" decays slowly through
+    -20 to -35 dB (measured on real takes, and the recogniser ends the word before that tail is over), so a looser
+    threshold bit those last sounds off ("times" heard as "time", "curve" as "cub"). No silence within `reach`
+    seconds: 0.3 s past the word, which is longer than the tails measured."""
     import numpy as np
     step = max(1, int(0.01 * sr))
     frames = len(x) // step
@@ -141,11 +143,11 @@ def speech_end(x, sr, word_end, reach=0.3):
     rms = np.sqrt((x[:frames * step].reshape(frames, step) ** 2).mean(1))
     at = min(frames - 1, int(word_end * 100))
     ref = float(np.percentile(rms[:at + 1], 75)) if at > 0 else float(rms.max())
-    quiet = rms < ref * 0.12                                    # 18 dB under the sentence's own loud parts
-    for i in range(at + 6, min(frames - 3, at + int(reach * 100))):
+    quiet = rms < ref * 0.01                                    # 40 dB under the sentence's own loud parts
+    for i in range(at + 2, min(frames - 3, at + int(reach * 100))):
         if quiet[i:i + 4].all():
             return min(len(x), (i + 2) * step)
-    return min(len(x), int((word_end + 0.2) * sr))
+    return min(len(x), int((word_end + 0.3) * sr))
 
 
 def main() -> int:

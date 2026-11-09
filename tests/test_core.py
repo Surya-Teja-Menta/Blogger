@@ -2686,7 +2686,8 @@ def test_the_clone_is_given_the_cleanest_ten_seconds_of_the_recording_not_its_st
 
 def test_junk_after_a_sentence_is_cut_where_its_speech_really_ends():
     """The voice model adds a burst of hiss a moment after a sentence ("a radio losing its signal"): the line is cut
-    at the first quiet gap after its last word, while a loud but short final sound is kept."""
+    at the first true silence after its last word, while the word's own slowly fading last sound is kept (a looser
+    cut turned "times" into "time" and "curve" into "cub")."""
     import importlib.util
     import os
     import numpy as np
@@ -2701,12 +2702,12 @@ def test_junk_after_a_sentence_is_cut_where_its_speech_really_ends():
     quiet = lambda s: rng.normal(0, 0.0005, int(s * sr))
     x = np.concatenate([speech, quiet(0.12), hiss, quiet(0.3)])                   # words end at 1.0 s, hiss at 1.12-1.37 s
     cut = cv.speech_end(x, sr, 1.0) / sr
-    assert 1.05 <= cut <= 1.13                                                    # in the gap, before the hiss
-    sss = rng.normal(0, 0.06, int(0.12 * sr))                                     # a real final "s" runs on after the word
-    y = np.concatenate([speech, sss, quiet(0.4)])
-    assert 1.12 <= cv.speech_end(y, sr, 1.0) / sr <= 1.25                         # kept
-    z = np.concatenate([speech, hiss, hiss])                                      # no gap at all: 0.2 s past the word, at most
-    assert cv.speech_end(z, sr, 1.0) / sr <= 1.21
+    assert 1.0 <= cut <= 1.13                                                     # in the gap, before the hiss
+    fade = rng.normal(0, 1, int(0.25 * sr)) * np.linspace(0.02, 0.008, int(0.25 * sr))   # an "s": 20 to 30 dB down
+    y = np.concatenate([speech, fade, quiet(0.4)])                                # real tails measured: -20 to -35 dB
+    assert 1.25 <= cv.speech_end(y, sr, 1.0) / sr <= 1.3                          # kept to the end
+    z = np.concatenate([speech, hiss, hiss])                                      # no silence at all: 0.3 s past the word
+    assert cv.speech_end(z, sr, 1.0) / sr <= 1.31
     assert cv.speech_end(np.zeros(100), sr, 0.0) == 100                           # nothing to cut in a tiny clip
 
 
@@ -2776,6 +2777,14 @@ def test_the_video_email_describes_the_notes_and_attaches_the_pdf(tmp_path):
     assert "attached as study_notes.pdf" in text and "29 pages, 8,891 words, 2 chapters, 63 verified facts" in text
     assert "PRICE: Free" in text and "LIVE" in text and "1. At a glance; 2. The idea" in text
     assert "DRAFT" in video.notes_section({**meta, "gumroad": {**meta["gumroad"], "published": False}})
+    from blogwriter.storage import link_for
+    pub = SimpleNamespace(storage_configured=True, s3_public_url="https://pub.example.dev")
+    assert link_for(pub, "reports/x/documentary_report.pdf") == "https://pub.example.dev/reports/x/documentary_report.pdf"
+    assert link_for(SimpleNamespace(storage_configured=False, s3_public_url=""), "k") == "" and link_for(pub, "") == ""
+    url = "https://pub.example.dev/reports/x/documentary_report.pdf"
+    assert f"PDF download (Cloudflare): {url}" in video.notes_section(meta, url)           # the Cloudflare link, not Gumroad's
+    assert "link works 7 days" in video.notes_section(meta, url + "?X-Amz-Signature=abc")
+    assert "PDF download" not in video.notes_section(meta)
     assert "Not listed" in video.notes_section({**meta, "gumroad": {}}) and video.notes_section({}) == ""
     assert video.notes_key("output/20261109_x", {"stored": {"documentary_report.pdf": "https://signed"}}) == \
         "reports/20261109_x/documentary_report.pdf"

@@ -32,7 +32,7 @@ from .mailer import send_email
 from .pricing import label
 from . import composer, design, diagram, graphics, looks, mathexpr, voicefarm
 from .research import domain
-from .storage import prune_prefix, upload_run
+from .storage import link_for, prune_prefix, upload_run
 from .web import UA
 from .writer import LANGS, strip_unsupported_numbers
 
@@ -2293,12 +2293,15 @@ class VideoMaker:
         if not email:
             return
         listing = "\n".join(f"  {n}: {links[n]}" for n in names if n in links) or f"  saved in {out}"
+        pdf_url = link_for(self.s, notes_at)      # the study notes in Cloudflare storage; made here, never in the artifact
+        if pdf_url:
+            listing += f"\n  study_notes.pdf: {pdf_url}"
         body = (f"Your videos for \"{plan['title']}\" are ready to review. Nothing has been posted.\n\n"
                 f"{summary(verdict or {})}\n(contact_sheet.jpg shows 12 frames at a glance)\n\n"
                 f"DOWNLOAD (links work for 7 days; the files are deleted from storage after {KEEP_DAYS} days):\n"
                 f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
                 f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
-        body += notes_section(meta or {})
+        body += notes_section(meta or {}, pdf_url)
         block = youtube_block(os.path.join(out, "posting_guide.txt"))
         if block:                         # the title and description, Gumroad link included, ready to paste
             body += f"\nYOUTUBE TITLE AND DESCRIPTION (copy and paste):\n\n{block}\n"
@@ -2340,7 +2343,7 @@ def fetch_notes(settings, key: str, dest: str, log) -> str:
         return ""
 
 
-def notes_section(meta: dict) -> str:
+def notes_section(meta: dict, pdf_url: str = "") -> str:
     """The email's account of the study notes: what is in them, what they cost and why, where they are sold."""
     if not meta.get("report_words"):
         return ""
@@ -2352,6 +2355,8 @@ def notes_section(meta: dict) -> str:
              f"  {size}{meta['report_words']:,} words, {len(chapters)} chapters, "
              f"{meta.get('verified_facts', '?')} verified facts from {meta.get('sources', '?')} sources",
              f"  Written for: {meta.get('level', 'intermediate')} level, {meta.get('niche', 'general')} reader"]
+    if pdf_url:
+        lines.append(f"  PDF download (Cloudflare{', link works 7 days' if 'X-Amz-Signature' in pdf_url else ''}): {pdf_url}")
     if g.get("url"):
         lines += [f"  PRICE: {label(g.get('price', 0), g.get('currency', 'inr'))}  ({meta.get('price_reason', 'see above')})",
                   f"  Gumroad: {g['url']}  "

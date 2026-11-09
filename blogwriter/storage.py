@@ -18,6 +18,20 @@ def _client(settings: Settings):
                         config=Config(signature_version="s3v4", retries={"max_attempts": 3}))
 
 
+def link_for(settings: Settings, key: str, s3=None) -> str:
+    """A download link for one stored file: its public URL when S3_PUBLIC_URL is set, otherwise a 7-day signed link
+    ('' when storage is not set up or the link cannot be made)."""
+    if not key or not settings.storage_configured:
+        return ""
+    if settings.s3_public_url:
+        return f"{settings.s3_public_url}/{key}"
+    try:
+        return (s3 or _client(settings)).generate_presigned_url(
+            "get_object", Params={"Bucket": settings.s3_bucket, "Key": key}, ExpiresIn=SIGNED_LINK_SECONDS)
+    except Exception:
+        return ""
+
+
 def zip_run(run_dir: str, files: List[str]) -> str:
     """Bundle `files` (names inside run_dir) into <run folder>.zip inside run_dir; returns the zip's name."""
     name = os.path.basename(os.path.normpath(run_dir)) + ".zip"
@@ -52,9 +66,7 @@ def upload_run(settings: Settings, run_dir: str, files: List[str],
             if mime in ("text/html", "application/json"):
                 mime += "; charset=utf-8"
             s3.upload_file(path, settings.s3_bucket, key, ExtraArgs={"ContentType": mime})
-            links[name] = (f"{settings.s3_public_url}/{key}" if settings.s3_public_url else
-                           s3.generate_presigned_url("get_object", Params={"Bucket": settings.s3_bucket, "Key": key},
-                                                     ExpiresIn=SIGNED_LINK_SECONDS))
+            links[name] = link_for(settings, key, s3)
         log(f"[storage] uploaded {len(links)} file(s) to {settings.s3_bucket}/{prefix}/")
     except Exception as exc:          # credentials, network, missing bucket, boto3 not installed ...
         log(f"[storage] FAILED: {type(exc).__name__}: {str(exc)[:200]}")
