@@ -133,7 +133,7 @@ Verified facts (number, [source], claim | supporting quote):
 THE PLAN FOR THIS VIDEO (follow it; it was made for this subject)
 - Shape: {structure}
 - Parts, in order: {acts}
-- Opening: {opening} At most 28 words. No greeting, no "in this video".
+- Opening: {opening_rule}
 - Ending: {ending} This is the last shot before the outro.
 - Tone: {tone}
 - Teach or tell one idea per shot and build each shot on the one before. Analogies are welcome, but every number
@@ -169,7 +169,7 @@ VOICE = r"""
   scientists, dates and earlier versions. Give a discovery's importance in one line, in terms of what it lets us do
   ("this is why a small poll can speak for a whole country"), with at most one name and no list of years.
   Tell the history fully only when the subject itself is historical or the idea cannot be understood without it.
-- CINEMA: open cold on a real-life moment, never on a definition; raise a question, hold it, then reveal; vary the
+- CINEMA: once the welcome and the definition are done, move into a real-life moment; raise a question, hold it, then reveal; vary the
   rhythm (a few quick punchy lines, then one slow reveal shot); end every part on a hook into the next.
 - PICTURES: most shots are "diagram" shots or maths shots (graph, surface, derive, equation, check). A "diagram"
   shot is an animated picture of the idea built for that sentence, described in its "picture". Simulate whatever
@@ -1333,6 +1333,24 @@ LEVEL_RULES = {
 }
 
 
+WELCOME = ("""The video does NOT start straight at the point: it welcomes the viewer and eases them in, in its first three
+  shots (about 60 to 80 words in all, each shot at most 30, calm and warm, a touch of dry humour allowed):
+  1. welcome the viewer to {channel} in one short, friendly line, and say in plain words what today's video is
+     about, naming the topic ("Welcome to {channel}. Today, {topic}.");
+  2. define the topic in one or two simple sentences, helped by a small everyday comparison, with a picture of it;
+  3. say in one sentence where we are going (the road: first this, then that), and only then start the first part.
+  In an outline the first part is "Welcome" with exactly these three beats. The second and third shots are
+  pictures of the idea (a diagram or the steps), not a talking head or a repeated title.""")
+
+
+def opening_rule(brief: dict, style: str, title: str) -> str:
+    """How the video opens: a lesson or a concept video welcomes the viewer, names the topic, defines it and says where
+    it is going before it begins (the owner: it must not start straight at the point); other styles open cold."""
+    if style in ("education", "concept"):
+        return WELCOME.format(channel=brief.get("channel") or "the channel", topic=title)
+    return f"{brief['opening']} At most 28 words. No greeting, no \"in this video\"."
+
+
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
     """The writer's brief: the style's voice plus the plan made for this subject (braces escaped for the
     script prompt), and the number of shots that fits the planned length."""
@@ -1340,8 +1358,8 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
     minutes = brief["minutes"]
     text = SHAPE.format(persona=STYLES[style], minutes=f"{minutes:g}", title=title, facts=facts, acts=acts,
                         narrator=brief["narrator"], device=brief["device"],
-                        structure=brief["structure"], opening=brief["opening"], ending=brief["ending"],
-                        tone=brief["tone"])
+                        structure=brief["structure"], opening_rule=opening_rule(brief, style, title),
+                        ending=brief["ending"], tone=brief["tone"])
     if brief.get("maths"):
         text += MATHS_RULES
     if style == "education":
@@ -1720,6 +1738,7 @@ class VideoMaker:
         style = "education" if lesson else style
         brief = self.brief(title, facts, style, lesson)
         brief["level"] = meta.get("level") or "intermediate"         # who the lesson is for (the run's --level)
+        brief["channel"] = self.s.channel_name                       # named once, in the welcome
         plan = self.script(title, facts, sources, brief["style"], brief,
                            report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
         scenes, beats = plan["scenes"], plan["short"]

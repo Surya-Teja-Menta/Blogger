@@ -2582,3 +2582,15 @@ def test_the_transition_whoosh_is_off_because_it_was_heard_as_noise(monkeypatch)
     assert "[w1]" in sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]  # an owner who wants it back can have it
     monkeypatch.setenv("WHOOSH_LEVEL", "loud")
     assert sound.whoosh_level() == 0
+
+
+def test_a_lesson_opens_with_a_welcome_a_definition_and_the_road_ahead():
+    from blogwriter import video
+    brief = {"opening": "a surprising fact", "channel": "Adyora"}
+    edu = video.opening_rule(brief, "education", "Central Limit Theorem")
+    assert "Welcome to Adyora" in edu and "Central Limit Theorem" in edu and "define the topic" in edu
+    assert "does NOT start straight at the point" in edu and "exactly these three beats" in edu
+    assert video.opening_rule(brief, "concept", "Entropy").startswith("The video does NOT start straight")
+    news = video.opening_rule(brief, "news", "A story")
+    assert news.startswith("a surprising fact") and "No greeting" in news       # news still opens cold
+    assert "open cold" not in video.VOICE
