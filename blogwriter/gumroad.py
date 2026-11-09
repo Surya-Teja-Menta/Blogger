@@ -62,7 +62,7 @@ def convert(amount: float, frm: str, to: str) -> float:
 
 
 def list_product(settings: Settings, title: str, description_md: str, file_path: str,
-                 log: Callable[[str], None] = print) -> Dict[str, object]:
+                 log: Callable[[str], None] = print, price_text: str = "") -> Dict[str, object]:
     """Returns {"url", "id", "published"}, or {} when not configured or on failure. Never raises - the files are
     already saved and emailed, so a Gumroad problem must not lose the run.
     The API publishes a new product at once, so it is disabled again straight away; it only goes live again when
@@ -71,18 +71,31 @@ def list_product(settings: Settings, title: str, description_md: str, file_path:
         log("[gumroad] GUMROAD_ACCESS_TOKEN not set - skipping")
         return {}
     token, product_id = settings.gumroad_token, ""
-    amount, currency = parse_price(settings.gumroad_price)
+    amount, currency = parse_price(price_text or settings.gumroad_price)
     try:
-        made = _json(requests.post(f"{API}/products", timeout=TIMEOUT, data={
-            "access_token": token, "name": title[:120], "price": round(amount * 100),
-            "price_currency_type": currency}))["product"]
+        made, refused = None, None
+        # Gumroad may refuse a very low price (its own minimum); then the next price up is tried, never past 99 rupees
+        from .pricing import LADDER
+        for tried in [amount] + ([float(p) for p in LADDER if amount < p <= 99] if amount and currency == "inr" else []):
+            try:
+                made = _json(requests.post(f"{API}/products", timeout=TIMEOUT, data={
+                    "access_token": token, "name": title[:120], "price": round(tried * 100),
+                    "price_currency_type": currency}))["product"]
+                if tried != amount:
+                    log(f"[gumroad] {amount:g} {currency.upper()} was refused ({refused}); listed at {tried:g}")
+                amount = tried
+                break
+            except GumroadError as exc:
+                refused = str(exc)[:80]
+        if made is None:
+            raise GumroadError(f"the price was refused: {refused}")
         product_id = made["id"]
         url = f"{API}/products/{requests.utils.quote(product_id, safe='')}"
         _json(requests.put(f"{url}/disable", timeout=TIMEOUT, data={"access_token": token}))
         # the price is checked as Gumroad stored it: a product made in the account's own currency instead gets the
         # same price converted at today's rate, so "99 INR" can never become 99 dollars
         got = str(made.get("currency") or currency).lower()
-        if got != currency:
+        if got != currency and amount:
             cents = round(convert(amount, currency, got) * 100)
             _json(requests.put(url, timeout=TIMEOUT, data={"access_token": token, "price": cents}))
             log(f"[gumroad] the account sells in {got.upper()}: {amount:g} {currency.upper()} set as "
@@ -93,7 +106,8 @@ def list_product(settings: Settings, title: str, description_md: str, file_path:
         if settings.gumroad_publish:
             _json(requests.put(f"{url}/enable", timeout=TIMEOUT, data={"access_token": token}))
         log(f"[gumroad] {'published' if settings.gumroad_publish else 'draft created'}: {made['short_url']}")
-        return {"url": made["short_url"], "id": product_id, "published": settings.gumroad_publish}
+        return {"url": made["short_url"], "id": product_id, "published": settings.gumroad_publish,
+                "price": amount, "currency": currency}
     except Exception as exc:          # network, bad token, rejected file ...
         log(f"[gumroad] FAILED: {type(exc).__name__}: {str(exc)[:200]}")
         if product_id:                # do not leave a half-made product behind

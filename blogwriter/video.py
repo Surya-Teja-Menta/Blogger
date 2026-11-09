@@ -29,6 +29,7 @@ from .critic import review, summary
 from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, find_clip, gemini_json, photo_fits
 from .llm import LLMClient, LLMError
 from .mailer import send_email
+from .pricing import label
 from . import composer, design, diagram, graphics, looks, mathexpr, voicefarm
 from .research import domain
 from .storage import prune_prefix, upload_run
@@ -171,7 +172,7 @@ VOICE = r"""
   scientists, dates and earlier versions. Give a discovery's importance in one line, in terms of what it lets us do
   ("this is why a small poll can speak for a whole country"), with at most one name and no list of years.
   Tell the history fully only when the subject itself is historical or the idea cannot be understood without it.
-- CINEMA: once the welcome and the definition are done, move into a real-life moment; raise a question, hold it, then reveal; vary the
+- CINEMA: only once the welcome, the definition and why it matters are done, move into a real-life moment of today; raise a question, hold it, then reveal; vary the
   rhythm (a few quick punchy lines, then one slow reveal shot); end every part on a hook into the next.
 - PICTURES: most shots are "diagram" shots or maths shots (graph, surface, derive, equation, check). A "diagram"
   shot is an animated picture of the idea built for that sentence, described in its "picture". Simulate whatever
@@ -1339,14 +1340,21 @@ LEVEL_RULES = {
 }
 
 
-WELCOME = ("""The video does NOT start straight at the point: it welcomes the viewer and eases them in, in its first three
-  shots (about 60 to 80 words in all, each shot at most 30, calm and warm, a touch of dry humour allowed):
-  1. welcome the viewer to {channel} in one short, friendly line, and say in plain words what today's video is
-     about, naming the topic ("Welcome to {channel}. Today, {topic}.");
-  2. define the topic in one or two simple sentences, helped by a small everyday comparison, with a picture of it;
-  3. say in one sentence where we are going (the road: first this, then that), and only then start the first part.
-  In an outline the first part is "Welcome" with exactly these three beats. The second and third shots are
-  pictures of the idea (a diagram or the steps), not a talking head or a repeated title.""")
+WELCOME = ("""The video does NOT start straight at the point, and it does NOT start with a story or a joke. It welcomes the
+  viewer, says plainly what the topic is and why it matters, and only THEN moves into a real-life moment. Its first four
+  shots (about 90 to 120 words in all, each shot at most 35, calm and warm, a touch of dry humour allowed):
+  1. welcome the viewer to {channel} in one short, friendly line and name the topic ("Welcome to {channel}. Today,
+     {topic}.");
+  2. WHAT IT IS: define the topic literally, in one or two simple sentences ("{topic} is ..."), helped by a small
+     everyday comparison, with a picture of the idea. This shot is a real definition, never a quip about the topic;
+  3. WHY IT MATTERS: its importance in plain words: what it lets us do, what goes wrong without it, and where it quietly
+     works in the viewer's world today (their phone, their feed, the shops, the hospital, the news). No history;
+  4. THE ROAD: one sentence on where we are going (first this, then that).
+  In an outline the first part is "Welcome" with exactly these four beats. Shots 2 to 4 are pictures of the idea (a
+  diagram, the steps), not a talking head or a repeated title.
+  Only after shot 4 does the first real part begin, and it opens inside a real situation from today's world that the
+  viewer is living right now, told in the present tense ("you are in the queue, your phone is at 14 percent ..."),
+  and the video then keeps narrating that live situation while it teaches.""")
 
 
 def opening_rule(brief: dict, style: str, title: str) -> str:
@@ -2002,7 +2010,8 @@ class VideoMaker:
         shutil.copy(os.path.join(job, "long_en.mp3"), os.path.join(out, SOUNDTRACK))
         state = {"run_dir": os.path.abspath(run_dir), "files": files, "plan": plan, "texts": texts, "credits": credits,
                  "n_lines": n_long + n_short + sum(per_beat), "product": (meta.get("gumroad") or {}).get("url", ""),
-                 "meta": meta, "sources": sources, "email": email, "total": total, "t0": t0, "lesson": lesson}
+                 "meta": {k: v for k, v in meta.items() if k != "stored"},      # no signed links in a public artifact
+                 "notes_key": notes_key(run_dir, meta), "sources": sources, "email": email, "total": total, "t0": t0, "lesson": lesson}
         with open(os.path.join(out, "finish.json"), "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
         parts = render_parts(total)
@@ -2052,7 +2061,7 @@ class VideoMaker:
         shutil.rmtree(os.path.join(out, "parts"), ignore_errors=True)
         shutil.rmtree(os.path.join(VIDEO_APP, "public", "job"), ignore_errors=True)
         self.log(f"[video] done in {time.time() - st['t0']:.0f}s: {', '.join(files)}")
-        self.deliver(st["run_dir"], out, files, plan, st["email"], verdict)
+        self.deliver(st["run_dir"], out, files, plan, st["email"], verdict, st["meta"], st.get("notes_key", ""))
         return {name: os.path.join(out, name) for name in files}
 
     def design_json(self, prompt: str, **kw):
@@ -2275,7 +2284,7 @@ class VideoMaker:
         self.log(f"[graphics] {n} motion graphic(s): {kinds}")
 
     def deliver(self, run_dir: str, out: str, files: Dict[str, str], plan: dict, email: bool,
-                verdict: Optional[dict] = None) -> None:
+                verdict: Optional[dict] = None, meta: Optional[dict] = None, notes_at: str = "") -> None:
         """Store the videos (deleted after KEEP_DAYS) and email the links plus the small files. Never posts."""
         names = list(files) + ["posting_guide.txt"]
         prune_prefix(self.s, "videos/", KEEP_DAYS, self.log)
@@ -2289,14 +2298,69 @@ class VideoMaker:
                 f"DOWNLOAD (links work for 7 days; the files are deleted from storage after {KEEP_DAYS} days):\n"
                 f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
                 f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
+        body += notes_section(meta or {})
         block = youtube_block(os.path.join(out, "posting_guide.txt"))
         if block:                         # the title and description, Gumroad link included, ready to paste
             body += f"\nYOUTUBE TITLE AND DESCRIPTION (copy and paste):\n\n{block}\n"
         small = [os.path.join(out, n) for n in names if n.endswith((".txt", ".srt", ".png", ".jpg"))]
+        pdf = fetch_notes(self.s, notes_at, os.path.join(out, "study_notes.pdf"), self.log)
+        if pdf:
+            small.append(pdf)
         send_email(self.s, f"[Video] {plan['title'][:120]}", body, small, self.log)
 
 
 SR_SILENCE = sound.SR // 2
+NOTES_MAX_MB = 20            # an email's attachments must stay under the mail server's limit
+
+
+def notes_key(run_dir: str, meta: dict) -> str:
+    """Where the study-notes PDF was stored (its object-storage key), so the last stage can attach it without the
+    PDF (which may be for sale) travelling in a public artifact."""
+    if not (meta.get("stored") or {}).get("documentary_report.pdf"):
+        return ""
+    return f"reports/{os.path.basename(os.path.normpath(run_dir))}/documentary_report.pdf"
+
+
+def fetch_notes(settings, key: str, dest: str, log) -> str:
+    """The study-notes PDF downloaded from storage to `dest` ('' when there is none or it is too big to email)."""
+    if not key or not settings.storage_configured:
+        return ""
+    try:
+        from .storage import _client
+        _client(settings).download_file(settings.s3_bucket, key, dest)
+        mb = os.path.getsize(dest) / 1e6
+        if mb > NOTES_MAX_MB:
+            os.remove(dest)
+            log(f"[notes] the PDF is {mb:.0f} MB, too big to attach")
+            return ""
+        log(f"[notes] study notes attached ({mb:.1f} MB)")
+        return dest
+    except Exception as exc:
+        log(f"[notes] could not attach the PDF: {type(exc).__name__}: {str(exc)[:120]}")
+        return ""
+
+
+def notes_section(meta: dict) -> str:
+    """The email's account of the study notes: what is in them, what they cost and why, where they are sold."""
+    if not meta.get("report_words"):
+        return ""
+    g = meta.get("gumroad") or {}
+    size = f"{meta['pdf_pages']} pages, " if meta.get("pdf_pages") else ""
+    chapters = meta.get("chapters") or []
+    lines = ["", "STUDY NOTES (PDF, attached as study_notes.pdf)",
+             f"  {meta.get('title', meta.get('topic', ''))}",
+             f"  {size}{meta['report_words']:,} words, {len(chapters)} chapters, "
+             f"{meta.get('verified_facts', '?')} verified facts from {meta.get('sources', '?')} sources",
+             f"  Written for: {meta.get('level', 'intermediate')} level, {meta.get('niche', 'general')} reader"]
+    if g.get("url"):
+        lines += [f"  PRICE: {label(g.get('price', 0), g.get('currency', 'inr'))}  ({meta.get('price_reason', 'see above')})",
+                  f"  Gumroad: {g['url']}  "
+                  f"({'LIVE: anyone can buy or get it now' if g.get('published') else 'DRAFT: not on sale until you publish it'})"]
+    else:
+        lines.append("  Not listed on Gumroad this time.")
+    if chapters:
+        lines.append("  Chapters: " + "; ".join(f"{i}. {c}" for i, c in enumerate(chapters, 1)))
+    return "\n".join(lines) + "\n"
 
 
 def youtube_block(guide_path: str) -> str:
@@ -2314,7 +2378,9 @@ def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits
                   meta: dict, sources: Optional[List[dict]] = None, lesson: Optional[dict] = None) -> str:
     credit_lines = "\n".join(f"- {c['subject']}: {c['author'] or 'see file page'}, {c['license']}, {c['file']}"
                              for c in credits) or "- none (no photos used)"
-    report = f"Full study notes (PDF): {product}\n" if product else ""
+    g = meta.get("gumroad") or {}
+    report = (f"Full study notes (PDF, {label(g.get('price', 0), g.get('currency', 'inr'))}): {product}\n"
+              if product else "")
     links = list(dict.fromkeys(s.get("url", "") for s in sources or [] if str(s.get("url", "")).startswith("http")))
     listed = "".join(f"- {u}\n" for u in links[:15]) + (f"- and {len(links) - 15} more\n" if len(links) > 15 else "")
     dubbed = [lang for lang in texts if lang != "en"]

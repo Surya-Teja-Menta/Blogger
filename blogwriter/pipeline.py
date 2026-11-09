@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from .config import MODES, Settings, mode_for_pages
 from .gumroad import list_product, parse_price
+from .pricing import is_auto, label, price_for
 from .history import History
 from .llm import LLMClient, LLMError
 from .mailer import send_email
@@ -74,13 +75,13 @@ def blog_cta(product: dict, price_text: str, chapters: int, facts: int, pages: i
     """(line after the opening paragraph, closing section) pointing blog readers to the full report on Gumroad.
     Built from the real numbers of this run, so it never promises more than the report contains."""
     amount, currency = parse_price(price_text)
-    price = f"{'₹' if currency == 'inr' else currency.upper() + ' '}{amount:g}"
+    price = label(amount, currency)
     size = f"{pages}-page " if pages else ""
     teaser = f"*This post is the short version. The full {size}documentary report is [here]({product['url']}).*"
     closing = (f"## Want the full story?\n\nThis post covers the main points. The full documentary report goes much "
                f"deeper: a {size}PDF with {chapters} chapters and {facts} verified facts, each one linked to the source "
                f"it came from, plus a who-is-affected table and a confidence rating on every key finding.\n\n"
-               f"**[Get the full report on Gumroad for {price}]({product['url']})**")
+               f"**[{'Get the full report free on Gumroad' if price == 'Free' else f'Get the full report on Gumroad for {price}'}]({product['url']})**")
     return teaser, closing
 
 
@@ -446,14 +447,24 @@ class BlogPipeline:
             self.log("[pipeline] private order: not listed on Gumroad and not posted anywhere")
         elif not publish:
             self.log("[pipeline] the document is sold on Gumroad; nothing is posted to the blogs")
+        if is_auto(self.s.gumroad_price):
+            amount, why = price_for(metadata.get("level", "intermediate"), metadata.get("niche", "general"), pages,
+                                    len(dossier.facts), metadata["report_words"])
+            price_text, metadata["price_reason"] = f"{amount} INR", why
+        else:
+            price_text, metadata["price_reason"] = self.s.gumroad_price, "fixed by GUMROAD_PRICE"
+        if publish or sell:
+            self.log(f"[gumroad] price {label(*parse_price(price_text))}: {metadata['price_reason']}")
         product = (publish or sell) and list_product(
             self.s, title,
             f"{meta['description']}\n\n**Key findings**\n\n{key_findings_md(dossier)}\n\n"
             f"**What you get:** a {metadata['report_words']}-word documentary report in {len(chapters)} chapters, "
             f"built on {metadata['verified_facts']} verified facts from {metadata['sources']} sources.",
-            os.path.join(out, sellable), self.log) or {}
+            os.path.join(out, sellable), self.log, price_text) or {}
+        if product.get("price") is not None:           # the price Gumroad really accepted
+            price_text = f"{product['price']:g} {product['currency']}"
         if product and product.get("published"):
-            teaser, closing = blog_cta(product, self.s.gumroad_price, len(chapters), len(dossier.facts), pages)
+            teaser, closing = blog_cta(product, price_text, len(chapters), len(dossier.facts), pages)
             files["blog.md"] = add_cta(files["blog.md"], teaser, closing)
             with open(os.path.join(out, "blog.md"), "w", encoding="utf-8") as f:
                 f.write(files["blog.md"])

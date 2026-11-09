@@ -121,7 +121,7 @@ jobs:
         run: |
           export LLM_PROVIDERS="${LLM_PROVIDERS:-cerebras,groq,gemini,nvidia,openrouter,github}"  # no Ollama here
           export GITHUB_MODELS_TOKEN="${GITHUB_MODELS_TOKEN:-$ACTIONS_TOKEN}"
-          export GUMROAD_PRICE="${GUMROAD_PRICE:-99 INR}"       # each document's price on Gumroad
+          export GUMROAD_PRICE="${GUMROAD_PRICE:-auto}"         # auto: the price follows the level and size of each document
           args=(--source "$RUN_SOURCE" --mode "$RUN_MODE" --level "$RUN_LEVEL")
           [ -z "$RUN_STYLE" ] || args+=(--style "$RUN_STYLE")
           [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)

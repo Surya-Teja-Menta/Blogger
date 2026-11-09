@@ -562,7 +562,7 @@ def test_gumroad_creates_draft_attaches_file_and_publishes_only_when_asked(tmp_p
     calls = []
     _fake_gumroad(monkeypatch, calls)
     out = list_product(s, "Title", "**hi**", str(f), log=lambda m: None)
-    assert out == {"url": "https://x.gumroad.com/l/ab", "id": "ab=", "published": False}
+    assert out == {"url": "https://x.gumroad.com/l/ab", "id": "ab=", "published": False, "price": 99.0, "currency": "inr"}
     assert [m for m, u in calls if u.endswith("/disable")] and not [u for m, u in calls if u.endswith("/enable")]
     calls.clear()
     out = list_product(replace(s, gumroad_publish=True), "Title", "x", str(f), log=lambda m: None)
@@ -821,11 +821,11 @@ def test_zip_run_bundles_existing_files_only(tmp_path):
         assert z.read("documentary_report.pdf") == b"%PDF-1.4 x"
 
 
-def test_gumroad_price_defaults_to_99_rupees(monkeypatch):
+def test_gumroad_price_is_automatic_unless_fixed(monkeypatch):
     from blogwriter.config import Settings
     from blogwriter.gumroad import parse_price
     monkeypatch.delenv("GUMROAD_PRICE", raising=False)
-    assert Settings().gumroad_price == "99 INR" and Settings.from_env().gumroad_price == "99 INR"
+    assert Settings().gumroad_price == "auto" and Settings.from_env().gumroad_price == "auto"
     assert parse_price("99 INR") == (99.0, "inr") and parse_price("3.90 usd") == (3.9, "usd")
     assert parse_price("149") == (149.0, "inr") and parse_price("nonsense") == (99.0, "inr")
 
@@ -2652,8 +2652,9 @@ def test_a_lesson_opens_with_a_welcome_a_definition_and_the_road_ahead():
     from blogwriter import video
     brief = {"opening": "a surprising fact", "channel": "Adyora"}
     edu = video.opening_rule(brief, "education", "Central Limit Theorem")
-    assert "Welcome to Adyora" in edu and "Central Limit Theorem" in edu and "define the topic" in edu
-    assert "does NOT start straight at the point" in edu and "exactly these three beats" in edu
+    assert "Welcome to Adyora" in edu and "Central Limit Theorem" in edu and "WHAT IT IS" in edu
+    assert "does NOT start straight at the point" in edu and "exactly these four beats" in edu
+    assert "WHY IT MATTERS" in edu and "never a quip" in edu and "from today's world" in edu
     assert video.opening_rule(brief, "concept", "Entropy").startswith("The video does NOT start straight")
     news = video.opening_rule(brief, "news", "A story")
     assert news.startswith("a surprising fact") and "No greeting" in news       # news still opens cold
@@ -2717,3 +2718,69 @@ def test_every_picture_waits_half_a_second_after_the_narration_and_captions_outl
     lines = video.word_lines([(0.0, 1.0, "a"), (1.1, 2.0, "b"), (4.0, 5.0, "c")], 0, 42)
     assert lines[0][1] >= 2.0 and lines[-1][1] > 5.0                              # the last caption outlasts its word
     assert all(lines[k][1] <= lines[k + 1][0] + 1e-9 for k in range(len(lines) - 1))
+
+
+def test_the_price_follows_the_level_and_the_size_of_the_work():
+    from blogwriter.pricing import is_auto, label, price_for, snap
+    assert price_for("basic", "general", 29, 63)[0] == 0 and "free" in price_for("basic", "general", 29, 63)[1]
+    assert price_for("basic", "general", 50, 80)[0] == 19              # even a long basic report is a token price
+    easy, mid, hard = (price_for(lv, "general", 29, 63)[0] for lv in ("basic", "intermediate", "advanced"))
+    assert easy < mid < hard == 299
+    assert price_for("intermediate", "business", 29, 63)[0] > mid      # professional demand costs more
+    assert price_for("advanced", "upsc", 60, 150)[0] >= 499            # a big research report is priced like one
+    assert price_for("advanced", "general", 400, 900)[0] == 999 and price_for("intermediate", "general", 400, 900)[0] == 199
+    assert price_for("intermediate", "general", 0, 25, words=3000)[0] == 29 and price_for("nonsense", "x", 5, 5)[0] == 29
+    assert snap(117) == 99 and snap(124, cap=49) == 49 and snap(124) == 149
+    assert is_auto("") and is_auto(" Auto ") and not is_auto("99 INR")
+    assert label(0) == "Free" and label(149) == "₹149" and label(3, "usd") == "USD 3"
+
+
+def test_a_free_notes_page_says_so_and_a_refused_price_walks_up_to_99(monkeypatch):
+    from blogwriter import gumroad as G
+    from blogwriter.config import Settings
+    from blogwriter.pipeline import blog_cta
+    assert "free on Gumroad" in blog_cta({"url": "https://x"}, "0 INR", 9, 41, 18)[1]
+    assert "for ₹149" in blog_cta({"url": "https://x"}, "149 INR", 9, 41, 18)[1]
+    posted = []
+
+    class R:
+        def __init__(self, data):
+            self.data, self.status_code, self.text = data, 200, "x"
+
+        def json(self):
+            return self.data
+
+    def post(url, timeout=0, data=None, json=None):
+        posted.append(data["price"])
+        if data["price"] < 4900:                        # Gumroad refuses anything under 49 rupees
+            return R({"success": False, "message": "price too low"})
+        return R({"success": True, "product": {"id": "p", "short_url": "https://g/l", "currency": "inr"}})
+    monkeypatch.setattr(G.requests, "post", post)
+    monkeypatch.setattr(G.requests, "put", lambda *a, **k: R({"success": True}))
+    monkeypatch.setattr(G.requests, "delete", lambda *a, **k: R({"success": True}))
+    monkeypatch.setattr(G, "_upload", lambda token, path: "https://f")
+    out = G.list_product(Settings(gumroad_token="t"), "T", "d", "x.pdf", log=lambda m: None, price_text="19 INR")
+    assert posted == [1900, 2900, 4900] and out["price"] == 49.0 and out["url"] == "https://g/l"
+    posted.clear()
+    assert G.list_product(Settings(gumroad_token="t"), "T", "d", "x.pdf", log=lambda m: None, price_text="0 INR") == {}
+    assert posted == [0]                                # a free product is tried once, never turned into a paid one
+
+
+def test_the_video_email_describes_the_notes_and_attaches_the_pdf(tmp_path):
+    from types import SimpleNamespace
+    from blogwriter import video
+    meta = {"title": "Central Limit Theorem", "pdf_pages": 29, "report_words": 8891, "verified_facts": 63, "sources": 40,
+            "level": "basic", "niche": "general", "chapters": ["At a glance", "The idea"], "price_reason": "a basic topic: free",
+            "gumroad": {"url": "https://g/l/x", "published": True, "price": 0, "currency": "inr"}}
+    text = video.notes_section(meta)
+    assert "attached as study_notes.pdf" in text and "29 pages, 8,891 words, 2 chapters, 63 verified facts" in text
+    assert "PRICE: Free" in text and "LIVE" in text and "1. At a glance; 2. The idea" in text
+    assert "DRAFT" in video.notes_section({**meta, "gumroad": {**meta["gumroad"], "published": False}})
+    assert "Not listed" in video.notes_section({**meta, "gumroad": {}}) and video.notes_section({}) == ""
+    assert video.notes_key("output/20261109_x", {"stored": {"documentary_report.pdf": "https://signed"}}) == \
+        "reports/20261109_x/documentary_report.pdf"
+    assert video.notes_key("output/x", {"stored": {}}) == ""
+    assert video.fetch_notes(SimpleNamespace(storage_configured=False), "k", str(tmp_path / "n.pdf"), print) == ""
+    guide = video.posting_guide({"title": "T", "tags": ["a"]}, {"en": ["l"] * 3 + ["Title", "Desc"]}, 3, [], "https://g/l/x",
+                                {"gumroad": {"price": 149, "currency": "inr"}})
+    assert "Full study notes (PDF, ₹149): https://g/l/x" in guide

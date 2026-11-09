@@ -99,7 +99,7 @@ class Settings:
     s3_public_url: str = ""      # public base URL of the bucket (e.g. https://pub-xxxx.r2.dev); else signed links
     # each report is listed as a Gumroad product (a draft unless gumroad_publish is on)
     gumroad_token: str = ""
-    gumroad_price: str = "99 INR"           # each document's price, "<amount> <currency>" (GUMROAD_PRICE)
+    gumroad_price: str = "auto"            # "auto" = priced by level and size (pricing.py); or fixed: "<amount> <currency>"
     gumroad_publish: bool = False
     # blog / article posting: each platform is used only when its credentials are set
     publish_live: bool = True            # False: save drafts instead of publishing (Telegram is then skipped)
@@ -163,7 +163,7 @@ class Settings:
             s3_region=e("S3_REGION", "auto") or "auto",
             s3_public_url=e("S3_PUBLIC_URL", "").rstrip("/"),
             gumroad_token=e("GUMROAD_ACCESS_TOKEN", ""),
-            gumroad_price=e("GUMROAD_PRICE", "") or "99 INR",
+            gumroad_price=e("GUMROAD_PRICE", "") or "auto",
             gumroad_publish=e("GUMROAD_PUBLISH", "").strip().lower() in ("1", "true", "yes"),
             publish_live=e("PUBLISH_LIVE", "true").strip().lower() not in ("0", "false", "no"),
             devto_api_key=e("DEVTO_API_KEY", ""),
