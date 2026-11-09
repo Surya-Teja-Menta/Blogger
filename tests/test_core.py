@@ -2594,3 +2594,26 @@ def test_a_lesson_opens_with_a_welcome_a_definition_and_the_road_ahead():
     news = video.opening_rule(brief, "news", "A story")
     assert news.startswith("a surprising fact") and "No greeting" in news       # news still opens cold
     assert "open cold" not in video.VOICE
+
+
+def test_the_clone_is_given_the_cleanest_ten_seconds_of_the_recording_not_its_start():
+    import importlib.util
+    import os
+    import numpy as np
+    spec = importlib.util.spec_from_file_location("clone_voice", os.path.join("blogwriter", "clone_voice.py"))
+    cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cv)
+    sr = 24000
+    rng = np.random.default_rng(2)
+    t = np.arange(sr) / sr
+    word = lambda: np.sin(2 * np.pi * 180 * t) * 0.3 * np.hanning(sr)
+    pause = lambda hiss: rng.normal(0, hiss, int(0.5 * sr))
+    noisy = np.concatenate([np.concatenate([word(), pause(0.02)]) for _ in range(8)])     # a hissy start
+    clean = np.concatenate([np.concatenate([word(), pause(0.0004)]) for _ in range(8)])   # a clean middle
+    x = np.concatenate([noisy, clean, noisy[: 2 * sr]])
+    a, b = cv.best_window(x, sr, seconds=10)
+    assert abs(a - len(noisy)) < 2 * sr and abs(b - a - 10 * sr) < 0.05 * sr   # it picks the clean part
+    assert cv.best_window(x[: 5 * sr], sr, seconds=10) == (0, 5 * sr)         # a short recording is used whole
+    y = cv.dry(x[a:b], sr)
+    assert len(y) == b - a and np.isfinite(y).all()
+    assert "temperature" in open(os.path.join("blogwriter", "clone_voice.py"), encoding="utf-8").read()

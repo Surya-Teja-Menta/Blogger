@@ -58,11 +58,26 @@ def match(script: str, heard: str) -> float:
     return difflib.SequenceMatcher(None, tokens(script), tokens(heard), autojunk=False).ratio()
 
 
-def dry(x, sr, rt60=0.6, strength=1.1, floor=0.3, delay=0.045):
+def _box(a, kt, kf):
+    """A moving average over time (kt frames) and frequency (kf bins) of a spectrogram, numpy only."""
+    import numpy as np
+    out = a
+    for axis, k in ((0, kt), (1, kf)):
+        if k > 1:
+            pad = [(0, 0), (0, 0)]
+            pad[axis] = (k // 2, k - 1 - k // 2)
+            c = np.cumsum(np.pad(out, pad, mode="edge"), axis=axis)
+            c = np.concatenate([np.zeros_like(np.take(c, [0], axis=axis)), c], axis=axis)
+            hi = np.take(c, range(k, c.shape[axis]), axis=axis)
+            lo = np.take(c, range(0, c.shape[axis] - k), axis=axis)
+            out = (hi - lo) / k
+    return out
+
+
+def dry(x, sr, rt60=0.6, strength=0.8, floor=0.5, delay=0.045):
     """Take the room out of a voice: late-reverberation suppression (after Lebart et al.). The part of each frame that
     is the decaying tail of what was said `delay` seconds earlier is estimated from the spectrum then and taken
-    away, so words end where they end. The owner's recording carries some room (the haze between its words), and a
-    cloned voice repeats the room it was given: it sounded like an echo."""
+    away, so words end where they end. Power and gain are both smoothed, so no granular speckle is left behind."""
     import numpy as np
     n = 1024 if sr >= 20000 else 512
     hop = n // 4
@@ -71,21 +86,45 @@ def dry(x, sr, rt60=0.6, strength=1.1, floor=0.3, delay=0.045):
     count = 1 + (len(pad) - n) // hop
     idx = np.arange(n)[None, :] + hop * np.arange(count)[:, None]
     X = np.fft.rfft(pad[idx] * win, axis=1)
-    P = np.abs(X) ** 2 + 1e-12
+    P = np.maximum(_box(np.abs(X) ** 2 + 1e-12, 3, 9), 1e-10)           # (a running sum can cancel to nothing)
     d = max(1, int(round(delay * sr / hop)))
     R = np.zeros_like(P)
     R[d:] = np.exp(-13.8155 * (d * hop / sr) / rt60) * P[:-d]
-    G = np.sqrt(np.clip(1 - strength * R / P, floor ** 2, 1.0))
-    k = np.ones(5) / 5                                    # smooth across frequency; the gain rises at once, falls slowly
-    G = np.apply_along_axis(lambda r: np.convolve(r, k, mode="same"), 1, G)
+    G = _box(np.sqrt(np.clip(1 - strength * R / P, floor ** 2, 1.0)), 5, 15)
     for t in range(1, count):
-        G[t] = np.maximum(G[t], G[t - 1] * 0.6)
+        G[t] = np.maximum(G[t], G[t - 1] * 0.7)
     Y = np.fft.irfft(X * G, n=n, axis=1) * win
     out, norm = np.zeros(len(pad)), np.zeros(len(pad))
     for t in range(count):
         out[t * hop:t * hop + n] += Y[t]
         norm[t * hop:t * hop + n] += win ** 2
     return (out / np.maximum(norm, 1e-6))[n:n + len(x)].astype("float32")
+
+
+def best_window(x, sr, seconds=10.0):
+    """(start, end) samples of the cleanest `seconds` of a recording: where speech stands furthest above the quiet
+    between words, with plenty of speech in it. Chatterbox listens to only the first ~10 s of a reference, so those
+    seconds are what a clone's voice (and its room, hiss, hum and clicks) is made of: the start of a recording is
+    often its worst part, and the clone then speaks with that hiss now and then."""
+    import numpy as np
+    n = int(0.03 * sr)
+    fr = x[:len(x) // n * n].reshape(-1, n)
+    db = 20 * np.log10(np.sqrt((fr ** 2).mean(1)) + 1e-9)
+    per = int(seconds / 0.03)
+    if len(db) <= per:
+        return 0, len(x)
+    best, at = -1e9, 0
+    for a in range(0, len(db) - per, 5):
+        w = db[a:a + per]
+        top = np.percentile(w, 90)
+        speech = float(np.mean(w > top - 20))
+        if not 0.4 <= speech <= 0.9:
+            continue
+        quiet = w[w <= top - 20]                  # how noisy the pauses get: any hissy stretch counts against the window
+        score = top - (np.percentile(quiet, 75) if len(quiet) > 5 else top) - 40 * abs(speech - 0.65)
+        if score > best:
+            best, at = score, a
+    return at * n, min(len(x), (at + per) * n)
 
 
 def main() -> int:
@@ -99,10 +138,18 @@ def main() -> int:
     torch.set_num_threads(os.cpu_count() or 4)
     t0 = time.time()
     drying = os.environ.get("CLONE_DRY", "1").strip() != "0"
-    if drying:                          # the recording with its room taken out: the clone then speaks in a dry room
+    if drying:       # the recording's cleanest ten seconds, with its room taken out: the clone then speaks in a dry room
         wav, sr_ref = torchaudio.load(reference)
-        reference = reference + ".dry.wav"
-        torchaudio.save(reference, torch.from_numpy(dry(wav.mean(0).numpy(), sr_ref))[None], sr_ref)
+        mono = wav.mean(0).numpy()
+        a, b = best_window(mono, sr_ref)
+        print(f"[clone] reference: seconds {a / sr_ref:.1f} to {b / sr_ref:.1f} of {len(mono) / sr_ref:.1f}", flush=True)
+        import atexit
+        import shutil
+        import tempfile
+        scratch = tempfile.mkdtemp(prefix="ref_")          # never next to the recording: that folder may be kept
+        atexit.register(shutil.rmtree, scratch, True)
+        reference = os.path.join(scratch, "reference.wav")
+        torchaudio.save(reference, torch.from_numpy(dry(mono[a:b], sr_ref))[None], sr_ref)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Turbo (the default) is the smaller, much faster model: it ignores the expressiveness settings
     # the standard model (default) says the script word for word; Turbo is ~2.5x faster but garbles some words
@@ -120,7 +167,9 @@ def main() -> int:
         tts.prepare_conditionals(reference, exaggeration=exaggeration, norm_loudness=False)
     else:
         tts.prepare_conditionals(reference, exaggeration=exaggeration)
-    speak = (lambda s: tts.generate(s)) if turbo else (lambda s: tts.generate(s, exaggeration=exaggeration, cfg_weight=cfg))
+    temperature = float(os.environ.get("CLONE_TEMPERATURE", "0.7"))     # cooler than the default 0.8: fewer wild takes
+    speak = ((lambda s: tts.generate(s)) if turbo else
+             (lambda s: tts.generate(s, exaggeration=exaggeration, cfg_weight=cfg, temperature=temperature, min_p=0.08)))
     print(f"[clone] models ready in {time.time() - t0:.0f}s", flush=True)
     gap = torch.zeros(1, int(tts.sr * 0.18))           # a breath between sentences
     # how closely a line must say its script: a clean take scores ~1.0, one misheard word ~0.95, a garbled take
