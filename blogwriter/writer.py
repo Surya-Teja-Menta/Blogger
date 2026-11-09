@@ -5,6 +5,7 @@ from typing import Callable, List, Optional
 
 from .config import Mode
 from .llm import LLMClient, LLMError
+from .plainmath import plain_math
 from .research import Dossier, quote_supported
 
 # ---- cleaning ---------------------------------------------------------------
@@ -30,7 +31,7 @@ def clean_output(text: str) -> str:
         out = pat.sub("", out)
     out = re.sub(r"[ \t]+([.,;:])", r"\1", out)
     out = re.sub(r"(?:\n\s*---\s*)+$", "", out)                 # trailing rule left after a cut
-    return re.sub(r"\n{3,}", "\n\n", out).strip()
+    return plain_math(re.sub(r"\n{3,}", "\n\n", out).strip())
 
 
 def words(text: str) -> int:
@@ -211,6 +212,7 @@ class Writer:
         self.llm = llm
         self.log = log
         self.reader = reader          # from audience(): level and niche instructions for every piece
+        self.study = False            # True: a concept to learn, written as study notes instead of a news documentary
 
     def translate(self, text: str, lang: str) -> str:
         """Translate a finished, fact-checked markdown piece section by section (facts are checked in English
@@ -318,6 +320,25 @@ class Writer:
         ("What Happens Next", ["Future outlook"], "Likely developments and open questions.", 3),
     ]
 
+    # The same report for a concept to learn: study notes, not a news story.
+    # (section role, research angles feeding it, what it must achieve, minimum facts to earn a chapter)
+    STUDY_SECTIONS = [
+        ("What It Is", ["Story"], "A clear definition and statement in plain words, with every key term explained.", 1),
+        ("Why It Matters", ["Importance"], "What it makes possible and what goes wrong or cannot be done without it.", 2),
+        ("How It Works", ["Mechanism"], "The idea step by step: the statement, the formula with every symbol named, the intuition.", 2),
+        ("Why It Is True", ["Causes"], "The reasoning behind it, in plain words.", 2),
+        ("Worked Examples", ["Examples"], "Examples with small concrete numbers, step by step.", 2),
+        ("Where It Is Used", ["Applications"], "Real uses in the world: fields, products, everyday situations.", 2),
+        ("When It Holds and When It Fails", ["Conditions"], "The assumptions, limits and exceptions.", 2),
+        ("Common Mistakes", ["Misconceptions"], "What people get wrong, and the correct view.", 2),
+        ("Related Ideas", ["Related ideas", "Comparisons"], "Neighbouring concepts, generalisations and look-alikes.", 2),
+        ("Where It Came From", ["Timeline"], "A short account of how the idea developed.", 2),
+        ("What the Experts Say", ["Expert views"], "Named experts and textbooks, and what they stress.", 2),
+        ("Going Further", ["Future outlook"], "Open questions and modern developments.", 2),
+    ]
+    STUDY_GLANCE = [("What it is", "Story"), ("Why it matters", "Importance"), ("How it works", "Mechanism"),
+                    ("Where it is used", "Applications"), ("Watch out for", "Conditions")]
+
     # who / what / when / where / why / how, each answered from its own research angle
     FIVE_W = [("What happened", "Story"), ("Who is involved", "Stakeholders"), ("When it happened", "Timeline"),
               ("Where it matters", "Geographic"), ("Why it happened", "Causes"), ("How it happened", "Mechanism")]
@@ -325,7 +346,8 @@ class Writer:
     def at_a_glance(self, dossier: Dossier) -> Optional[dict]:
         """The opening chapter: the whole story in the six classic questions. None if the research cannot
         answer at least three of them."""
-        groups = [(label, angle, dossier.facts_text(angle, 1300)) for label, angle in self.FIVE_W]
+        groups = [(label, angle, dossier.facts_text(angle, 1300)) for label, angle in
+                  (self.STUDY_GLANCE if self.study else self.FIVE_W)]
         groups = [g for g in groups if g[2]]
         if len(groups) < 3:
             return None
@@ -333,8 +355,9 @@ class Writer:
                  f"ARTICLE TEXT: {dossier.core()[:1200]}\n\nVERIFIED FACTS, grouped by the question they answer:\n" +
                  "\n\n".join(f"{label.upper()}:\n{text}" for label, _, text in groups))
         labels = ", ".join(f"'### {label}'" for label, _, _ in groups)
-        return {"title": "The Story at a Glance: Who, What, When, Where, Why and How",
-                "focus": "The whole story in six questions.", "angles": [a for _, a, _ in groups],
+        return {"title": ("At a Glance: What It Is, Why It Matters and How It Works" if self.study else
+                          "The Story at a Glance: Who, What, When, Where, Why and How"),
+                "focus": "The whole topic in a few questions." if self.study else "The whole story in six questions.", "angles": [a for _, a, _ in groups],
                 "facts": sum(dossier.count(a) for _, a, _ in groups), "notes": notes,
                 "structure": f"Structure: one '### ' subheading per question, in this order: {labels}. Under each, "
                              "answer that question directly in one to three tight paragraphs using only the facts "
@@ -343,7 +366,7 @@ class Writer:
     def plan_documentary(self, dossier: Dossier, mode: Mode) -> List[dict]:
         """Chapters for the documentary: the fixed arc, minus sections the research could not support."""
         plan, thin = [], []
-        for role, angles, focus, minimum in self.SECTIONS:
+        for role, angles, focus, minimum in (self.STUDY_SECTIONS if self.study else self.SECTIONS):
             n = dossier.count(angles)
             if n >= minimum:
                 plan.append({"title": role, "focus": focus, "angles": angles, "facts": n})
@@ -356,6 +379,8 @@ class Writer:
         if not plan:                                  # nothing section-specific: one chapter on everything verified
             plan = [{"title": "The Story", "focus": "Everything the research verified.", "angles": list(dossier.angles),
                      "facts": len(dossier.facts)}]
+        if self.study:      # study notes keep their plain roles ("What It Is", "How It Works"): easy to find
+            return plan
         # story-specific chapter titles (the role stays as the fallback if the model misbehaves)
         try:
             roles = "\n".join(f"{i + 1}. {c['title']} - {c['focus']}" for i, c in enumerate(plan))
@@ -379,6 +404,8 @@ class Writer:
         # as long as the verified material for THIS chapter supports, up to the mode's ceiling
         target = max(150, min(mode.chapter_words, 40 * ch.get("facts", 5)))
         notes = ch.get("notes") or dossier.notes_for(ch["angles"])
+        if self.study:
+            return self._study_chapter(dossier, ch, idx, plan, target, notes, title, prior, later)
         prompt = (f"{notes}\n\nWrite chapter {idx + 1} of a documentary report: \"{ch['title']}\".\n"
                   f"Role: {ch.get('focus', '')}\n"
                   f"Other chapters (do not repeat their material): before - {prior}; after - {later}\n\n"
@@ -404,9 +431,32 @@ class Writer:
         draft = self._generate(prompt, title, target)
         return self.ground(draft, notes, title, dossier.allowed_text(), strict=True)
 
+    def _study_chapter(self, dossier: Dossier, ch: dict, idx: int, plan: List[dict], target: int, notes: str,
+                       title: str, prior: str, later: str) -> str:
+        """One chapter of the study notes: a patient teacher explaining, with every fact from the verified notes."""
+        prompt = (f"{notes}\n\nWrite section {idx + 1} of the study notes on \"{title}\": \"{ch['title']}\".\n"
+                  f"Role: {ch.get('focus', '')}\n"
+                  f"Other sections (do not repeat their material): before - {prior}; after - {later}\n\n"
+                  f"Requirements: about {target} words; start with the line '## {ch['title']}', then on its own line "
+                  "'**In brief:** ' followed by ONE plain sentence a student could memorise, then the section itself. "
+                  "Cover EVERY fact listed under VERIFIED FACTS: this section must leave nothing out.\n"
+                  "Voice: a patient teacher writing notes for a student, in simple everyday words and short sentences. "
+                  "Define each technical term the first time it appears. Write a formula in plain symbols on its own "
+                  "line (for example: SE = σ / √n), never as LaTeX, and name every symbol. Use a short bulleted list "
+                  "for steps or conditions, and a small table only if the notes give numbers to compare. Say why each "
+                  "point matters, not only what it is. Do not write about news, events, countries, markets or "
+                  "reactions unless the notes themselves are about that. State each fact ONCE. Do not attribute every "
+                  "sentence; attribute only quotes, opinions and disputed claims, to the named person or book, never "
+                  "to a website address. No closing summary paragraph. Where the facts are thin, say what is not "
+                  f"covered instead of inventing detail. Every paragraph must tie back to \"{title}\".")
+        draft = self._generate(prompt, title, target)
+        return self.ground(draft, notes, title, dossier.allowed_text(), strict=True)
+
     def executive_summary(self, dossier: Dossier, chapters: List[str]) -> str:
         """One page at the front that tells the whole story, written from the finished chapters."""
         title = dossier.article["title"]
+        if self.study:
+            return self._study_summary(dossier, chapters, title)
         notes = (f"STORY: {title}\n\nTHE CHAPTERS (your only source):\n" +
                  "\n\n".join(c[:1100] for c in chapters)[:9000] +
                  f"\n\nMOST RELIABLE VERIFIED FACTS:\n{dossier.facts_text(None, 2500)}")
@@ -420,6 +470,23 @@ class Writer:
             draft = self._generate(prompt, title, 280, lo=0.5, hi=1.5)
         except LLMError:
             self.log("[writer] executive summary unavailable")
+            return ""
+        return self.ground(draft, notes, title, dossier.allowed_text())
+
+    def _study_summary(self, dossier: Dossier, chapters: List[str], title: str) -> str:
+        """The front page of the study notes: what it is, why it matters, how it works, what to remember."""
+        notes = (f"TOPIC: {title}\n\nTHE SECTIONS (your only source):\n" +
+                 "\n\n".join(c[:1100] for c in chapters)[:9000] +
+                 f"\n\nMOST RELIABLE VERIFIED FACTS:\n{dossier.facts_text(None, 2500)}")
+        prompt = (f"{notes}\n\nWrite the SUMMARY on the first page of these study notes: about 250 words, no headings. "
+                  "Start with '**Bottom line:** ' and ONE sentence that says what the topic is. Then short paragraphs: "
+                  "why it matters, how it works in plain words (a formula only in plain symbols such as SE = σ / √n, "
+                  "never LaTeX), where it is used, and the one condition or mistake to remember. Simple everyday "
+                  "words, short sentences, no hype. Use only facts from the sections; say each fact once.")
+        try:
+            draft = self._generate(prompt, title, 250, lo=0.5, hi=1.5)
+        except LLMError:
+            self.log("[writer] summary unavailable")
             return ""
         return self.ground(draft, notes, title, dossier.allowed_text())
 
@@ -463,6 +530,12 @@ class Writer:
                   "single most important established finding in one sentence. Then a closing section of about 150 "
                   "words: what the evidence adds up to, what remains unknown, and what to watch next. Use only what "
                   "the chapters state; add no new facts. No hype.")
+        if self.study:
+            prompt = (f"{notes}\n\nWrite the last section of the study notes, titled '## Summary and Conclusion'. First, "
+                      f"a bulleted revision list: one bullet per section ({names}) - the section title in bold, then "
+                      "the one thing to remember from it, in one sentence. Then about 100 words: what to remember if "
+                      "you remember nothing else, and what to study next. Use only what the sections state; add no new "
+                      "facts. Formulas only in plain symbols, never LaTeX.")
         try:
             draft = self._generate(prompt, title, min(mode.chapter_words, 120 + 45 * len(plan)), lo=0.5, hi=1.6)
         except LLMError:

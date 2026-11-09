@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from .config import MODES, Settings, mode_for_pages
 from .gumroad import list_product, parse_price
+from .plainmath import plain_math
 from .pricing import is_auto, label, price_for
 from .history import History
 from .llm import LLMClient, LLMError
@@ -211,6 +212,20 @@ def email_body(meta: dict, article, dossier, report_dir: str, links: dict = None
             f"blog ({meta['blog_words']} words).\nAlso saved in: {report_dir}\n{stored}")
 
 
+def is_concept(llm, topic: str, log=print) -> bool:
+    """True when the topic is an idea to learn (a theorem, a method, how something works) rather than an event or a
+    story, so its report is written as study notes. Any doubt or failure: False (the news-style report)."""
+    try:
+        reply = llm.complete_json(
+            f'Is "{topic}" a concept, method, law, skill or subject a student would study (for example a theorem, an '
+            'algorithm, how a vaccine works), as opposed to an event, a story, a person or a current news item? '
+            'Reply with JSON: {"concept": true or false}', max_tokens=60, temperature=0)
+        return bool(isinstance(reply, dict) and reply.get("concept") is True)
+    except Exception as exc:
+        log(f"[pipeline] could not classify the topic ({type(exc).__name__}); writing the news-style report")
+        return False
+
+
 class BlogPipeline:
     def __init__(self, settings: Optional[Settings] = None, log: Callable[[str], None] = print):
         self.s = settings or Settings.from_env()
@@ -243,10 +258,12 @@ class BlogPipeline:
             if value not in allowed:
                 raise PipelineError(f"unknown {what} '{value}' (choose from {', '.join(allowed)})")
         self.writer.reader = audience(level, niche)
+        self.writer.study = bool(lesson) or style in ("education", "concept") or (
+            source == "topic" and style in ("", "auto") and is_concept(getattr(self, "llm", None), topic, self.log))
         try:
             result = self._run(topic, mode, days, make_pdf, email, source, pages, lang, publish,
                                {"level": level, "niche": niche, "lang": lang, "pages_requested": pages}, report=report,
-                               sell=sell, report_email=email and not video)
+                               sell=sell, report_email=email and not video, study=self.writer.study)
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
         if video:
@@ -301,7 +318,7 @@ class BlogPipeline:
 
     def _run(self, topic: str, mode: str, days: int, make_pdf: bool, email: bool, source: str = "news",
              target_pages: int = 0, lang: str = "en", publish: bool = True, order: Optional[dict] = None,
-             report: bool = True, sell: bool = False, report_email: bool = True) -> dict:
+             report: bool = True, sell: bool = False, report_email: bool = True, study: bool = False) -> dict:
         if mode not in MODES:
             raise PipelineError(f"unknown mode '{mode}' (choose from {', '.join(MODES)})")
         m, t0 = MODES[mode], time.time()
@@ -338,7 +355,7 @@ class BlogPipeline:
 
         # ---- 3. research it several ways --------------------------------------------------------------
         self.log("\n=== 3/5 Researching: article, other outlets, RSS pool, encyclopedia, archives, web search ===")
-        dossier = self.researcher.run(article, article_text, m, pool=self.news.pool)
+        dossier = self.researcher.run(article, article_text, m, pool=self.news.pool, study=study)
         if not dossier.facts and not (article_text or article.description):
             raise PipelineError("research found no verifiable facts; refusing to write from nothing")
         m = scaled_mode(m, dossier)
@@ -353,7 +370,8 @@ class BlogPipeline:
             plan.insert(0, glance)
         for i, c in enumerate(plan, 1):
             self.log(f"  {i}. {c['title']}  ({c['facts']} facts)")
-        skipped = [role for role, angles, _, _ in self.writer.SECTIONS if dossier.count(angles) == 0]
+        skipped = [role for role, angles, _, _ in (self.writer.STUDY_SECTIONS if study else self.writer.SECTIONS)
+                   if dossier.count(angles) == 0]
         chapters = []
         for i, ch in enumerate(plan):
             self.log(f"[writer] chapter {i + 1}/{len(plan)}")
@@ -365,7 +383,7 @@ class BlogPipeline:
 
         self.log("[writer] executive summary, who-is-affected table and closing chapter")
         summary = self.writer.executive_summary(dossier, chapters)
-        impact = self.writer.impact_table(dossier)
+        impact = "" if study else self.writer.impact_table(dossier)      # study notes have no "who is affected"
         closing = self.writer.conclusion(dossier, plan, chapters, m)
         if closing:
             plan.append({"title": "Summary and Conclusion"})
@@ -379,6 +397,8 @@ class BlogPipeline:
         self.log("[writer] blog (from the documentary)")
         blog = self.writer.blog(dossier, m, body_of_report)
 
+        chapters = [plain_math(c) for c in chapters]          # no LaTeX in a printed report or a blog
+        summary, article_md, blog = plain_math(summary), plain_math(article_md), plain_math(blog)
         index = index_md(chapters)                          # names are indexed from the English text
         if lang != "en":
             self.log(f"[writer] translating the report, article and blog into {LANGS[lang]}")
@@ -388,7 +408,7 @@ class BlogPipeline:
         meta = self.writer.blog_meta(blog, dossier)
 
         toc = "\n".join(f"{i}. {heading_of(t, c['title'])}" for i, (c, t) in enumerate(zip(plan, chapters), 1))
-        report = (f"# {title}\n\n*A documentary report* · **Research date:** {datetime.now():%B %d, %Y} · " +
+        report = (f"# {title}\n\n*{'Study notes' if study else 'A documentary report'}* ·**Research date:** {datetime.now():%B %d, %Y} · " +
                   ("**Researched on request**\n\n" if article.api == "topic" else
                    f"**Original story:** [{article.source}]({article.real_url or article.url})\n\n") +
                   f"## Acknowledgements\n\n{acknowledgements_md(article, dossier)}\n\n" +
@@ -413,7 +433,7 @@ class BlogPipeline:
             with open(os.path.join(out, name), "w", encoding="utf-8") as f:
                 f.write(content)
         html = to_html(report, title, {"Chapters": len(chapters), "Verified facts": len(dossier.facts),
-                                       "Sources": len(dossier.sources)})
+                                       "Sources": len(dossier.sources)}, "Study Notes" if study else "A Documentary Report")
         with open(os.path.join(out, "documentary_report.html"), "w", encoding="utf-8") as f:
             f.write(html)
         pdf = make_pdf and to_pdf(html, os.path.join(out, "documentary_report.pdf"))

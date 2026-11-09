@@ -42,6 +42,21 @@ PERSPECTIVES = [
     ("Risks", "risks, threats and worst-case scenarios that analysts warn about"),
     ("Historical", "historical background and precedents"),
 ]
+# A concept to learn (not a news story): the same machinery, asking the questions a student needs answered.
+STUDY_PERSPECTIVES = [
+    ("Mechanism", "how it works: the exact statement, the steps, the formula with every symbol named, and the intuition"),
+    ("Importance", "why it matters: what it makes possible, and what goes wrong or cannot be done without it"),
+    ("Causes", "why it is true: the reasoning or the idea of the proof, in plain words"),
+    ("Applications", "where it is used in the real world: fields, products and everyday situations, with figures"),
+    ("Examples", "worked examples and simple demonstrations with small concrete numbers"),
+    ("Conditions", "when it holds and when it fails: the assumptions, limits and exceptions"),
+    ("Misconceptions", "common mistakes and misunderstandings, and the correct view"),
+    ("Related ideas", "related concepts, generalisations and what it is often confused with"),
+    ("Comparisons", "alternatives and comparable results, and how they differ"),
+    ("Expert views", "what named experts, textbooks and teachers say about it"),
+    ("Timeline", "where it came from: the key steps in its development, briefly"),
+    ("Future outlook", "open questions and modern developments"),
+]
 MONTHS = {"january", "february", "march", "april", "june", "july", "august", "september", "october",
           "november", "december", "today", "analysis", "news", "latest", "report", "update"}
 # pages that are rarely a trustworthy basis for facts
@@ -261,7 +276,8 @@ class Researcher:
         fallback = {n: [f"{topic_words} {n.lower()}", f"{topic_words} {d.split(',')[0]}"][:per_angle]
                     for n, d in angles}
         lines = "\n".join(f'- "{n}": {d}' for n, d in angles)
-        prompt = (f"Today is {datetime.now():%d %B %Y}. News story: {article.title}\nSummary: {article.description}\n\n"
+        prompt = (f"Today is {datetime.now():%d %B %Y}. "
+                  f"{'Topic to teach' if getattr(self, 'study', False) else 'News story'}: {article.title}\nSummary: {article.description}\n\n"
                   f"For each research angle write {per_angle} short web-search query/queries (3-8 words, plain keywords, "
                   f"include the key names/places/companies from the story). Do NOT put a year in any query unless the "
                   f"story itself names that year - we want current coverage.\nAngles:\n{lines}\n\n"
@@ -440,10 +456,14 @@ class Researcher:
 
     def _gaps(self, article: Article, names: List[str], n: int) -> List[tuple]:
         """What would a reader still ask? Returns [(angle, search query)] for the unanswered questions."""
-        prompt = (f"Today is {datetime.now():%d %B %Y}. We are writing a complete documentary report on this story. "
+        what = "a complete set of study notes on this topic" if getattr(self, "study", False) else             "a complete documentary report on this story"
+        prompt = (f"Today is {datetime.now():%d %B %Y}. We are writing {what}. "
                   f"Verified material so far:\n{self.dossier.brief(4500)}\n\n"
                   f"List the {n} most important questions about the story that this material does NOT yet answer "
-                  "(who, what, when, where, why, how, consequences, reactions, what comes next). For each give the "
+                  + ("(what it is, why it matters, how it works, why it is true, where it is used, an example, its limits). "
+                     if getattr(self, "study", False) else
+                     "(who, what, when, where, why, how, consequences, reactions, what comes next). ") +
+                  "For each give the "
                   f"best-fitting angle from [{', '.join(names)}] and a short web-search query (3-8 words, plain "
                   "keywords, key names included, no year unless the story names it).\n"
                   'Return JSON: [{"angle": "...", "query": "..."}]')
@@ -461,9 +481,12 @@ class Researcher:
                 out.append((angle if angle in names else names[0], query))
         return out[:n]
 
-    def run(self, article: Article, article_text: str, mode: Mode, pool: Optional[List[Article]] = None) -> Dossier:
-        angles = PERSPECTIVES[:mode.perspectives]
-        desc_of = dict(PERSPECTIVES)
+    def run(self, article: Article, article_text: str, mode: Mode, pool: Optional[List[Article]] = None,
+            study: bool = False) -> Dossier:
+        self.study = study
+        perspectives = STUDY_PERSPECTIVES if study else PERSPECTIVES
+        angles = perspectives[:mode.perspectives]
+        desc_of = dict(perspectives)
         self.reasons = Counter()
         self.by_url = {}
         self.dossier = dossier = Dossier(article=article.to_dict(), article_text=article_text)

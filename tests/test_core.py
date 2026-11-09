@@ -2784,3 +2784,41 @@ def test_the_video_email_describes_the_notes_and_attaches_the_pdf(tmp_path):
     guide = video.posting_guide({"title": "T", "tags": ["a"]}, {"en": ["l"] * 3 + ["Title", "Desc"]}, 3, [], "https://g/l/x",
                                 {"gumroad": {"price": 149, "currency": "inr"}})
     assert "Full study notes (PDF, ₹149): https://g/l/x" in guide
+
+
+def test_latex_in_prose_becomes_plain_symbols():
+    from blogwriter.plainmath import plain_math
+    out = plain_math(r"Let (X_1, \dots, X_n) have mean (\mu) and variance (\sigma^2); (\bar X_n - \mu)\sqrt{n} and "
+                     r"SE = \frac{\sigma}{\sqrt{n}} as (n \to \infty).")
+    assert out == "Let (X₁, …, Xₙ) have mean (μ) and variance (σ²); (X̄ₙ - μ)√n and SE = (σ)/(√n) as (n → ∞)."
+    assert "\\" not in out
+    plain = "snake_case, 2^10 and $5 stay as they are.\n\nSecond paragraph."
+    assert plain_math(plain) == plain
+
+
+def test_a_concept_gets_study_notes_not_a_news_documentary(monkeypatch):
+    from types import SimpleNamespace
+    from blogwriter import pipeline as P
+    from blogwriter.config import MODES
+    from blogwriter.research import Dossier
+    from blogwriter.render import to_html
+    from blogwriter.writer import Writer
+    w = Writer(SimpleNamespace(complete_json=lambda *a, **k: (_ for _ in ()).throw(__import__("blogwriter.llm", fromlist=["LLMError"]).LLMError("no titles"))), lambda m: None)
+    d = Dossier(article={"title": "Central Limit Theorem", "published": "", "source": "x"}, article_text="")
+    d.sources = [{"id": 1, "url": "http://a.com/x", "title": "t", "text": ""}]
+    d.angles = {n: {"facts": 3} for n in ("Story", "Importance", "Mechanism", "Examples", "Timeline", "Political")}
+    d.facts = [{"claim": f"c{i}", "quote": "q", "source": 1, "angle": a, "corroboration": 0}
+               for i, a in enumerate(["Story"] * 3 + ["Importance"] * 3 + ["Mechanism"] * 3 + ["Examples"] * 3 +
+                                     ["Timeline"] * 3 + ["Political"] * 3)]
+    news = [c["title"] for c in w.plan_documentary(d, MODES["standard"])]
+    w.study = True
+    notes = [c["title"] for c in w.plan_documentary(d, MODES["standard"])]
+    assert len(news) >= 1 and "What It Is" not in news
+    assert notes == ["What It Is", "Why It Matters", "How It Works", "Worked Examples", "Where It Came From"]
+    assert "Who is involved" not in w.STUDY_GLANCE and w.at_a_glance(d)["title"].startswith("At a Glance: What It Is")
+    html = to_html("# T\n\n*Study notes* · **Research date:** today\n\n## What It Is\n\nx", "T", None, "Study Notes")
+    assert "Study Notes</div>" in html and "A Documentary Report" not in html and "Study notes" not in html.split("</h1>")[1][:200]
+    llm = SimpleNamespace(complete_json=lambda *a, **k: {"concept": True})
+    assert P.is_concept(llm, "Central Limit Theorem") is True
+    assert P.is_concept(SimpleNamespace(complete_json=lambda *a, **k: {"concept": False}), "Iran war") is False
+    assert P.is_concept(SimpleNamespace(complete_json=lambda *a, **k: 1 / 0), "x", lambda m: None) is False

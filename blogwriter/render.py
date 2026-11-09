@@ -141,8 +141,10 @@ def _sections(soup):
     return runs
 
 
-def to_html(md_text: str, title: str, stats: dict = None) -> str:
-    """stats: optional {"label": value} figures shown on the cover (e.g. sources, verified facts)."""
+def to_html(md_text: str, title: str, stats: dict = None, kind: str = "A Documentary Report") -> str:
+    """stats: optional {"label": value} figures shown on the cover (e.g. sources, verified facts). kind: the cover's
+    label ("Study Notes" for a concept to learn)."""
+    md_text = re.sub(r"(?m)^([^\n\-*|#>][^\n]*)\n(?=[-*] )", r"\1\n\n", md_text)      # a list right after a line of text still is a list
     soup = BeautifulSoup(markdown.markdown(md_text, extensions=["extra", "tables"]), "html.parser")
     h1 = soup.find("h1")
     subline = ""
@@ -150,7 +152,7 @@ def to_html(md_text: str, title: str, stats: dict = None) -> str:
         nxt = h1.find_next_sibling()
         if nxt is not None and nxt.name == "p":       # the "*A documentary report* · date · source" line
             for em in nxt.find_all("em"):
-                if "documentary report" in em.get_text().lower():
+                if re.search(r"documentary report|study notes", em.get_text().lower()):
                     em.decompose()
             subline = nxt.decode_contents().strip().lstrip("·").strip()
             nxt.decompose()
@@ -162,7 +164,7 @@ def to_html(md_text: str, title: str, stats: dict = None) -> str:
             p["class"] = p.get("class", []) + ["brief"]
 
     stat_html = "".join(f"<div><b>{_html.escape(str(v))}</b>{_html.escape(k)}</div>" for k, v in (stats or {}).items())
-    out = [f"<section class='cover'><div class='kicker'>A Documentary Report</div><h1>{_html.escape(title)}</h1>"
+    out = [f"<section class='cover'><div class='kicker'>{_html.escape(kind)}</div><h1>{_html.escape(title)}</h1>"
            f"<div class='bar'></div><div class='meta'>{subline}</div>"
            + (f"<div class='stats'>{stat_html}</div>" if stat_html else "") + "</section>"]
 
