@@ -41,9 +41,9 @@ VOICES = {"en": "en-US-BrianMultilingualNeural", "hi": "hi-IN-MadhurNeural", "te
 FPS = 30
 TRANSITION = 15           # frames two scenes overlap; must equal TRANSITION in video/src/theme.js
 LEAD = 6                  # frames after a shot starts before its narration begins
-GAP = 8                   # frames of breath after the narration (clips are trimmed to the words, see tighten)
+GAP = 15                  # frames (half a second) of stillness after the narration before the next shot's picture arrives
 HOLD = 15                 # extra frames (half a second) held on the last shot of a part before the next part begins
-PACE = 0.88               # narration speed (NARRATION_PACE, 0.8 to 1): the owner found 1.0 a little too fast
+PACE = 0.91               # narration speed (NARRATION_PACE, 0.8 to 1): 1.0 was a little too fast, 0.88 a little slow
 
 
 def narration_pace() -> float:
@@ -616,7 +616,8 @@ def tighten(path: str, words: List[tuple]) -> List[tuple]:
     if not words:
         return words
     a = max(0.0, words[0][0] - 0.04)
-    b = words[-1][1] + 0.22           # a word's tail runs on past the time the recogniser gives it
+    b = words[-1][1] + 0.30           # a word's tail runs on past the time the recogniser gives it (the cloned voice's
+                                      # sentences are already cut where their speech ends, see clone_voice.speech_end)
     tmp = path + ".tmp.mp3"
     try:
         ffmpeg(["-ss", f"{a:.3f}", "-i", path, "-t", f"{b - a:.3f}", "-ac", "1", "-ar", "24000", "-b:a", "48k", tmp])
@@ -740,7 +741,10 @@ def word_lines(words: List[tuple], offset: float, limit: int) -> List[tuple]:
         cur.append(w)
     if cur:
         lines.append(cur)
-    return [(offset + l[0][0], offset + l[-1][1], " ".join(x[2] for x in l)) for l in lines]
+    # a caption stays up a little past its last word: the recogniser's word ends come early, and the last words of a
+    # shot were seen to vanish while they were still being said
+    return [(offset + l[0][0], offset + l[-1][1] + min(0.22, (lines[k + 1][0][0] - l[-1][1]) if k + 1 < len(lines) else 0.22),
+             " ".join(x[2] for x in l)) for k, l in enumerate(lines)]
 
 
 def cue(words: List[tuple], target: str) -> Optional[int]:

@@ -83,19 +83,19 @@ def hit(path: str, root_hz: float = 40.0) -> None:
 def bed_level() -> float:
     """The music's volume under the narration (repository variable MUSIC_LEVEL; 0 = no music)."""
     try:
-        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.28)))
+        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.34)))
     except ValueError:
-        return 0.28
+        return 0.34
 
 
 def whoosh_level() -> float:
-    """The volume of the transition whoosh (repository variable WHOOSH_LEVEL). It is filtered noise: a half second
-    burst of hiss at every scene change, sitting in the pauses of the narration, which the owner heard as the
-    soundtrack "showing noise and ending again". Off by default (0)."""
+    """The volume of the transition whoosh (repository variable WHOOSH_LEVEL; 0 = none). It was switched off when a
+    "radio signal lost" sound was suspected, but that sound was the voice model's own hiss after sentences (see
+    clone_voice.speech_end), and the owner asked for the whoosh back."""
     try:
-        return max(0.0, min(1.0, float(os.environ.get("WHOOSH_LEVEL") or 0)))
+        return max(0.0, min(1.0, float(os.environ.get("WHOOSH_LEVEL") or 0.12)))
     except ValueError:
-        return 0.0
+        return 0.12
 
 
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],

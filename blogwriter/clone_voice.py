@@ -127,6 +127,27 @@ def best_window(x, sr, seconds=10.0):
     return at * n, min(len(x), (at + per) * n)
 
 
+def speech_end(x, sr, word_end, reach=0.3):
+    """Sample where a spoken sentence really ends. After its last word the model sometimes adds a burst of hiss (a
+    breath, an "sss" that is not a word), a fraction of a second after a tiny gap: heard as a radio losing its signal
+    before the line goes dead. The speech ends at the first quiet gap after the recogniser's last word; a word's own
+    tail (a final "s" is loud but short) is below that gap, so it stays. No gap within `reach` seconds: 0.2 s past the
+    word, which is longer than any real tail."""
+    import numpy as np
+    step = max(1, int(0.01 * sr))
+    frames = len(x) // step
+    if frames < 5:
+        return len(x)
+    rms = np.sqrt((x[:frames * step].reshape(frames, step) ** 2).mean(1))
+    at = min(frames - 1, int(word_end * 100))
+    ref = float(np.percentile(rms[:at + 1], 75)) if at > 0 else float(rms.max())
+    quiet = rms < ref * 0.12                                    # 18 dB under the sentence's own loud parts
+    for i in range(at + 6, min(frames - 3, at + int(reach * 100))):
+        if quiet[i:i + 4].all():
+            return min(len(x), (i + 2) * step)
+    return min(len(x), int((word_end + 0.2) * sr))
+
+
 def main() -> int:
     jobs_path, reference = sys.argv[1], sys.argv[2]
     with open(jobs_path, encoding="utf-8") as f:
@@ -178,20 +199,28 @@ def main() -> int:
     tries = int(os.environ.get("CLONE_TRIES", "3"))
 
     def say(text):
-        """One take of a line: its audio and the words heard in it (timed from the samples themselves: reading the
-        file back would go through PyAV, whose newer versions refuse an option faster-whisper passes)."""
-        pieces = []
+        """One take of a line: its audio and the words heard in it, timed from the samples themselves (reading the
+        file back would go through PyAV, whose newer versions refuse an option faster-whisper passes). Every sentence
+        is dried, listened to and cut where its speech really ends, so no junk sound is left after it."""
+        pieces, words, offset = [], [], 0.0
         for s in sentences(text):
-            pieces += [speak(s), gap]
-        audio = torch.cat(pieces[:-1], dim=1)
-        if drying:
-            audio = torch.from_numpy(dry(audio.squeeze(0).numpy(), tts.sr))[None]
-        mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
-        segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
-                                 vad_filter=False, condition_on_previous_text=False)
-        words = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
-                 for seg in segs for w in (seg.words or []) if w.word.strip()]
-        return audio, words
+            audio = speak(s)
+            if drying:
+                audio = torch.from_numpy(dry(audio.squeeze(0).numpy(), tts.sr))[None]
+            mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
+            segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
+                                     vad_filter=False, condition_on_previous_text=False)
+            heard = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
+                     for seg in segs for w in (seg.words or []) if w.word.strip()]
+            if heard:
+                cut = speech_end(audio.squeeze(0).numpy(), tts.sr, heard[-1][1])
+                audio = audio[:, :cut].clone()
+                fade = min(audio.shape[1], int(0.03 * tts.sr))
+                audio[:, audio.shape[1] - fade:] *= torch.linspace(1, 0, fade)
+            words += [[a + offset, b + offset, w] for a, b, w in heard]
+            pieces += [audio, gap]
+            offset += audio.shape[1] / tts.sr + gap.shape[1] / tts.sr
+        return torch.cat(pieces[:-1], dim=1), [[round(a, 3), round(b, 3), w] for a, b, w in words]
 
     for k, job in enumerate(jobs):
         job["ok"] = False

@@ -2316,7 +2316,7 @@ def test_the_plan_carries_how_the_music_should_feel():
     from blogwriter import video
     assert video.check_brief({"sound": "slow, glassy"}, "education")["sound"] == "slow, glassy"
     assert video.check_brief({}, "education")["sound"] == ""
-    assert "highpass=f=110,volume=0.280[bedraw]" in sound_mix()
+    assert "highpass=f=110,volume=0.340[bedraw]" in sound_mix()
 
 
 def sound_mix():
@@ -2327,11 +2327,11 @@ def sound_mix():
 def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monkeypatch):
     from blogwriter import sound
     monkeypatch.delenv("MUSIC_LEVEL", raising=False)
-    assert sound.bed_level() == 0.28 and "volume=0.280[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    assert sound.bed_level() == 0.34 and "volume=0.340[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "0")
     assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "loud")
-    assert sound.bed_level() == 0.28
+    assert sound.bed_level() == 0.34
 
 
 class _FakeBucket:
@@ -2612,11 +2612,11 @@ def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short
     from blogwriter import video
     from blogwriter.config import Settings
     monkeypatch.delenv("NARRATION_PACE", raising=False)
-    assert video.narration_pace() == 0.88
+    assert video.narration_pace() == 0.91
     monkeypatch.setenv("NARRATION_PACE", "0.5")
     assert video.narration_pace() == 0.8                              # never slower than 0.8
     monkeypatch.setenv("NARRATION_PACE", "fast")
-    assert video.narration_pace() == 0.88
+    assert video.narration_pace() == 0.91
     monkeypatch.delenv("NARRATION_PACE", raising=False)
     plain = video.timeline([3.0, 3.0, 3.0], ["hook", "diagram", "diagram"])
     held = video.timeline([3.0, 3.0, 3.0], ["hook", "diagram", "diagram"], [0, video.HOLD, 0])
@@ -2630,22 +2630,22 @@ def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short
     monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": True, "words": [[0.0, 1.0, "Hi"], [1.0, 2.0, "there"]], "out": str(wav)}])
     monkeypatch.setattr(video, "ffmpeg", lambda args, **k: seen.append(args))
     out = video.speak_cloned([("Hi there", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), lambda m: None)
-    assert "atempo=0.880" in seen[0]
-    assert abs(out[0][1][1] - 2.0 / 0.88) < 1e-6                      # the words move with the slowed voice
+    assert "atempo=0.910" in seen[0]
+    assert abs(out[0][1][1] - 2.0 / 0.91) < 1e-6                      # the words move with the slowed voice
     assert "WHOLE" in video.SHORT_PICK and "30 seconds" in video.SHORT_PICK and "exactly 4 beats" in video.SHORT_PICK
     assert video.SHORT_MAX_SECONDS <= 40
 
 
-def test_the_transition_whoosh_is_off_because_it_was_heard_as_noise(monkeypatch):
+def test_the_transition_whoosh_is_back_and_can_be_switched_off(monkeypatch):
     from blogwriter import sound
     monkeypatch.delenv("WHOOSH_LEVEL", raising=False)
-    assert sound.whoosh_level() == 0
+    assert sound.whoosh_level() == 0.12
     graph = sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]
-    assert "[w0]" not in graph and "[h0]" in graph                  # no whoosh in the mix, the soft hit stays
-    monkeypatch.setenv("WHOOSH_LEVEL", "0.1")
-    assert "[w1]" in sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]  # an owner who wants it back can have it
+    assert "[w0]" in graph and "[w1]" in graph and "[h0]" in graph
+    monkeypatch.setenv("WHOOSH_LEVEL", "0")
+    assert "[w0]" not in sound.mix_filter([1.0], [5.0, 9.0], [7.0])[0]
     monkeypatch.setenv("WHOOSH_LEVEL", "loud")
-    assert sound.whoosh_level() == 0
+    assert sound.whoosh_level() == 0.12
 
 
 def test_a_lesson_opens_with_a_welcome_a_definition_and_the_road_ahead():
@@ -2681,3 +2681,39 @@ def test_the_clone_is_given_the_cleanest_ten_seconds_of_the_recording_not_its_st
     y = cv.dry(x[a:b], sr)
     assert len(y) == b - a and np.isfinite(y).all()
     assert "temperature" in open(os.path.join("blogwriter", "clone_voice.py"), encoding="utf-8").read()
+
+
+def test_junk_after_a_sentence_is_cut_where_its_speech_really_ends():
+    """The voice model adds a burst of hiss a moment after a sentence ("a radio losing its signal"): the line is cut
+    at the first quiet gap after its last word, while a loud but short final sound is kept."""
+    import importlib.util
+    import os
+    import numpy as np
+    spec = importlib.util.spec_from_file_location("clone_voice", os.path.join("blogwriter", "clone_voice.py"))
+    cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cv)
+    sr = 24000
+    rng = np.random.default_rng(1)
+    t = np.arange(int(1.0 * sr)) / sr
+    speech = np.sin(2 * np.pi * 180 * t) * 0.3
+    hiss = rng.normal(0, 0.05, int(0.25 * sr))
+    quiet = lambda s: rng.normal(0, 0.0005, int(s * sr))
+    x = np.concatenate([speech, quiet(0.12), hiss, quiet(0.3)])                   # words end at 1.0 s, hiss at 1.12-1.37 s
+    cut = cv.speech_end(x, sr, 1.0) / sr
+    assert 1.05 <= cut <= 1.13                                                    # in the gap, before the hiss
+    sss = rng.normal(0, 0.06, int(0.12 * sr))                                     # a real final "s" runs on after the word
+    y = np.concatenate([speech, sss, quiet(0.4)])
+    assert 1.12 <= cv.speech_end(y, sr, 1.0) / sr <= 1.25                         # kept
+    z = np.concatenate([speech, hiss, hiss])                                      # no gap at all: 0.2 s past the word, at most
+    assert cv.speech_end(z, sr, 1.0) / sr <= 1.21
+    assert cv.speech_end(np.zeros(100), sr, 0.0) == 100                           # nothing to cut in a tiny clip
+
+
+def test_every_picture_waits_half_a_second_after_the_narration_and_captions_outlast_the_last_word():
+    from blogwriter import video
+    assert video.GAP == 15                                                        # half a second at 30 fps
+    one = video.timeline([3.0], ["diagram"])[0][0]
+    assert one == 90 + video.LEAD + 15 + video.TRANSITION
+    lines = video.word_lines([(0.0, 1.0, "a"), (1.1, 2.0, "b"), (4.0, 5.0, "c")], 0, 42)
+    assert lines[0][1] >= 2.0 and lines[-1][1] > 5.0                              # the last caption outlasts its word
+    assert all(lines[k][1] <= lines[k + 1][0] + 1e-9 for k in range(len(lines) - 1))
