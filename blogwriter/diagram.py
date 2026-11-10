@@ -47,9 +47,10 @@ narration at which it appears, copied exactly from the narration, or "" for the 
 - "tex": x, y, "tex" (KaTeX, short), "size": s, m or l
 - "shape": x, y, size, "shape": circle, square, triangle, diamond, hexagon, star or heart, "fill": true/false
 - "stamp": x, y, "text": a verdict of 1 or 2 words (MYTH, BUSTED, TRUE, PROVEN, WRONG, NOT QUITE, CONFIRMED...),
-  "size": s, m or l: a rubber stamp that SLAMS onto the picture on its word, red ink, tilted. It may sit over another
-  piece on purpose (a stamp across a wrong claim). Use it for a verdict: a myth busted, a guess proven, a claim
-  checked. At most one per diagram.
+  "size": s, m or l: a rubber stamp that SLAMS onto the picture on its word, red ink, tilted. It sits on EMPTY canvas
+  next to the claim it judges (above, beside or under it), NEVER over a word, a box or any other piece: a stamp on top
+  of text makes both unreadable. Use it for a verdict: a myth busted, a guess proven, a claim checked. At most one
+  per diagram.
 - "counter": x, y, "from", "to" (numbers the narration says), optional "text" after the number (max 3 words), "size":
   the number counts from "from" to "to" when it appears (a total climbing, a price falling)
 - "crowd": x, y (top-left), w, h, "name" (an icon from the list, e.g. user), "count": 4 to 100 icons in a grid,
@@ -294,6 +295,10 @@ def _solids(el: dict) -> List[tuple]:
         return [(el["x"], el["y"], el["x"] + el["w"], el["y"] + el["h"])]
     if t == "shape":
         return [(el["x"] - el["size"] / 2.5, el["y"] - el["size"], el["x"] + el["size"] / 2.5, el["y"] + el["size"])]
+    if t == "stamp":                      # a tilted rubber stamp: its words in big capitals, a border and a little slack
+        size = {"s": 4.5, "m": 6.5, "l": 9}.get(el.get("size", "l"), 9) * 1.5
+        w = len(el.get("text", "")) * size * 0.72 / 2.5 + 6
+        return [(el["x"] - w / 2, el["y"] - size * 1.1, el["x"] + w / 2, el["y"] + size * 1.1)]
     if t == "tex":
         h = {"s": 5, "m": 7, "l": 10}[el["size"]]
         w = len(re.sub(r"\\[a-zA-Z]+|[{}_^ ]", "", el["tex"])) * h * 0.6 / 2.5 + 2
@@ -317,8 +322,8 @@ def collision(els: List[dict]) -> Optional[tuple]:
             if k1 == k2:
                 continue
             # a box is a container: a formula, icon or label placed wholly inside it is its content, not a clash
-            if (els[k1]["type"] == "box" and kind1 == "solid" and inside(b, a)) or \
-                    (els[k2]["type"] == "box" and kind2 == "solid" and inside(a, b)):
+            if (els[k1]["type"] == "box" and kind1 == "solid" and els[k2]["type"] != "stamp" and inside(b, a)) or \
+                    (els[k2]["type"] == "box" and kind2 == "solid" and els[k1]["type"] != "stamp" and inside(a, b)):
                 continue
             limit = 0.35 if kind1 == kind2 == "text" else 0.15
             if _overlap(a, b) > limit:

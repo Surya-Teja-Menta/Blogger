@@ -16,6 +16,7 @@ import {DiagramScene} from "./diagram";
 import {SUBSCRIBE_FRAMES, Subscribe} from "./subscribe";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 import {LookDefs, LookOverlay, LookStyle} from "./looks";
+import {LayoutAudit} from "./audit";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -81,7 +82,7 @@ const Letterbox = ({spans, vertical}) => {
   );
 };
 
-export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null}) => {
+export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null, audit = false}) => {
   useTheme(theme);
   C.clean = clean;              // a frame for the thumbnail: the visual alone
   const frame = useCurrentFrame();
@@ -138,6 +139,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       <Caption captions={captions} vertical={vertical} aside={subscribe && !clean && !vertical
         ? 560 * clamp(Math.min((frame - subscribe.at) / 12, (subscribe.at + SUBSCRIBE_FRAMES - frame) / 12)) : 0}/>
       {subscribe && <Subscribe at={subscribe.at} name={subscribe.name || channel} vertical={vertical}/>}
+      {audit && <LayoutAudit key={frame}/>}
       <div style={{position: "absolute", left: 0, top: 0, height: clean ? 0 : 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
                    width: `${(100 * frame) / Math.max(1, durationInFrames - 1)}%`, boxShadow: `0 0 12px ${C.accent}`}}/>
     </AbsoluteFill>

@@ -2176,12 +2176,18 @@ def test_a_film_look_from_the_library_is_chosen_for_the_subject(monkeypatch):
     from blogwriter.video import _verified, tex_complete
     stamped = design.__name__ and __import__("blogwriter.diagram", fromlist=["check"]).check(
         {"elements": [{"type": "label", "x": 30, "y": 40, "text": "averages are always normal"},
-                      {"type": "stamp", "x": 32, "y": 42, "text": "myth busted now", "on": "myth"},
+                      {"type": "stamp", "x": 72, "y": 40, "text": "myth busted now", "on": "myth"},
                       {"type": "stamp", "x": 70, "y": 70, "text": "twice"},
                       {"type": "dot", "x": 80, "y": 20}, {"type": "dot", "x": 90, "y": 20}]},
         {"headline": "A myth", "narration": "People say averages are always normal. That is a myth."}, _verified, tex_complete)
     kinds = [e["type"] for e in stamped["elements"]]
-    assert kinds.count("stamp") == 1 and stamped["elements"][1]["text"] == "MYTH BUSTED"    # one stamp, over the claim
+    assert kinds.count("stamp") == 1 and stamped["elements"][1]["text"] == "MYTH BUSTED"    # one stamp, beside the claim
+    over = __import__("blogwriter.diagram", fromlist=["check"]).check(      # a stamp across the claim covers its words: refused
+        {"elements": [{"type": "label", "x": 30, "y": 40, "text": "averages are always normal"},
+                      {"type": "stamp", "x": 32, "y": 42, "text": "myth busted now"},
+                      {"type": "dot", "x": 80, "y": 20}, {"type": "dot", "x": 90, "y": 20}]},
+        {"headline": "A myth", "narration": "People say averages are always normal. That is a myth."}, _verified, tex_complete)
+    assert over is None
     assert t["accent"] == "#f48fb1" and t["display"] == "Kalam" and t["hand"] == "Kalam" and t["light"] is False
     assert t["fx"]["text"]["enter"] == "write" and {c["shape"] for c in t["fx"]["transitions"]} == {"fade", "split"}
     news = looks.theme_for("newsreel", "#efe7d6", design._finish, design.check_fx, "s")
@@ -2859,3 +2865,42 @@ def test_a_concept_gets_study_notes_not_a_news_documentary(monkeypatch):
     assert P.is_concept(llm, "Central Limit Theorem") is True
     assert P.is_concept(SimpleNamespace(complete_json=lambda *a, **k: {"concept": False}), "Iran war") is False
     assert P.is_concept(SimpleNamespace(complete_json=lambda *a, **k: 1 / 0), "x", lambda m: None) is False
+
+
+def test_the_layout_audit_reads_the_renderer_and_repairs_the_mildest_thing_first():
+    from blogwriter import layout
+    line = 'audit C:\a b\audit_3_60.jpg {"frame":60,"found":[{"kind":"text-on-text","a":"changes?","b":"follower","share":0.7}]}'
+    quiet = 'audit C:\a b\audit_3_90.jpg {"frame":90,"found":[]}'
+    nothing = "audit C:\a b\audit_3_120.jpg {}"
+    heard = layout.parse("noise\n" + line + "\n" + quiet + "\n" + nothing + "\nok x")
+    assert heard == {"C:\a b\audit_3_60.jpg": [{"kind": "text-on-text", "a": "changes?", "b": "follower", "share": 0.7}],
+                     "C:\a b\audit_3_90.jpg": []}                          # a frame that printed nothing is absent
+    assert layout.moments(300)[-1] == 275 and layout.moments(300) == sorted(set(layout.moments(300))) and 0 in layout.moments(20)
+    assert layout.shorter("When do followers actually apply changes", "apply") == ("followers actually apply", "apply")
+    assert layout.shorter("Short one", "short") == ("Short one", "short")
+    assert layout.shorter("one two three four five six seven", "") == ("one two three", "")
+    # a diagram loses only the piece that collides (the stamp), and keeps the rest
+    els = [{"type": "box", "text": "Candidate", "at": 5}, {"type": "box", "text": "Follower", "at": 9},
+           {"type": "arrow", "text": "asks vote", "at": 20}, {"type": "stamp", "text": "REJECTED", "at": 40}]
+    scene = {"headline": "Rejecting fuzzy memories before every single vote", "highlight": "fuzzy", "diagram": {"elements": [dict(e) for e in els]}}
+    long = {"headline": "Rejecting fuzzy memories before every single vote", "highlight": "fuzzy", "diagram": {"elements": [dict(e) for e in els]},
+            "graphic": None}
+    found = [{"kind": "text-on-text", "a": "Candidate", "b": "REJECTED"}]
+    assert "stamp" in layout.repair(scene, long, 0, lambda g: g, found)
+    assert [e["type"] for e in long["diagram"]["elements"]] == ["box", "box", "arrow"] and len(scene["diagram"]["elements"]) == 3
+    # nothing named in the findings (or too few pieces left): the headline is cut, then the picture simplified, then the headline dropped
+    assert "headline cut" in layout.repair(scene, long, 1, lambda g: g, [])
+    assert scene["headline"] == layout.shorter("Rejecting fuzzy memories before every single vote", "fuzzy")[0]
+    assert "picture replaced" in layout.repair(scene, long, 2, lambda g: {**g, "timed": True}, [])
+    assert long["diagram"] is None and "diagram" not in scene and long["graphic"] == {"type": "kinetic", "nodes": [], "timed": True}
+    assert layout.repair(scene, long, 2, lambda g: g, []) == "headline removed" and long["headline"] == ""
+    assert layout.repair(scene, long, 3, lambda g: g, []) == ""                  # nothing left to simplify
+
+
+def test_a_stamp_may_not_cover_other_pieces_of_a_diagram():
+    from blogwriter import diagram
+    els = [{"type": "box", "x": 10, "y": 40, "w": 25, "h": 18, "text": "Candidate", "size": "m", "color": "cool"},
+           {"type": "stamp", "x": 24, "y": 49, "text": "REJECTED", "size": "m", "color": "accent"}]
+    assert diagram.collision(els) is not None
+    els[1]["x"] = 62
+    assert diagram.collision(els) is None

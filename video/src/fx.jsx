@@ -111,6 +111,24 @@ export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
   );
 };
 
+// Where the headline block ends on screen (y of its bottom edge), worked out the way Title lays it out: the kicker pill,
+// then the headline wrapped word by word to its width. Scenes that put something under the title start below this
+// instead of at a fixed height, so a long headline that wraps to a second line can never run into what follows.
+export const titleBottom = (s, vertical, {top, size, maxWidth} = {}) => {
+  if (C.clean || !s.headline) return top ?? (vertical ? 250 : 112);
+  const fs = size || (vertical ? 84 : 78);
+  const width = maxWidth || (vertical ? 940 : 1600);
+  const glyph = C.upper ? 0.74 : 0.6;                 // average advance of a bold capital / mixed-case letter, in ems
+  let lines = 1, used = 0;
+  for (const w of String(s.headline).split(/\s+/).filter(Boolean)) {
+    const need = w.length * fs * glyph + fs * 0.24;
+    if (used && used + need > width) { lines += 1; used = 0; }
+    used += need;
+  }
+  const kicker = s.kicker ? (vertical ? 32 : 26) * 1.9 : 0;
+  return (top ?? (vertical ? 250 : 112)) + kicker + lines * fs * 1.06;
+};
+
 // the headline block at the top of a shot; the design decides left or centred
 export const Title = ({s, vertical, top, size, maxWidth}) => {
   if (C.clean) return null;

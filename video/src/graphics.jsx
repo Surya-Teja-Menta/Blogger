@@ -4,7 +4,7 @@
 import React from "react";
 import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {icons} from "lucide";
-import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease} from "./fx";
+import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease, titleBottom} from "./fx";
 import {Focus, focusPlan, headlineShown, useFocus} from "./direct";
 import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
@@ -147,9 +147,15 @@ const Hub = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height} = useVideoConfig();
   const g = s.graphic, nodes = g.nodes, n = nodes.length;
-  const cx = width / 2, cy = vertical ? 1150 : height * 0.575;      // the lowest label stays clear of the captions
-  const rx = vertical ? 360 : 640, ry = vertical ? 440 : 232;
-  const turn = frame * 0.0006;
+  // the ring of players fits the band between the headline's real bottom edge (a long headline wraps to two lines) and
+  // the captions: the top label never reaches the headline, the lowest one never reaches the captions
+  const cx = width / 2;
+  const bandTop = titleBottom(s, vertical, {maxWidth: vertical ? 940 : 1500}) + 16, bandEnd = vertical ? 1500 : 955;
+  const labelRoom = vertical ? 330 : 250;                             // a disc, its gap and its label (up to two lines)
+  const rx = vertical ? 360 : 640;
+  const ry = vertical ? 440 : Math.max(110, Math.min(232, (bandEnd - bandTop - labelRoom) / 2));
+  const cy = vertical ? 1150 : (bandTop + bandEnd) / 2 + 6;
+  const turn = 0;                           // the players stay where they were drawn: an orbit swung labels into each other
   // no node straight below the centre, where the centre's own label sits
   const below = nodes.some((_, k) => Math.abs(((-90 + (360 * k) / n) % 360 + 360) % 360 - 90) < 25);
   const start = -Math.PI / 2 + (below ? Math.PI / n : 0);

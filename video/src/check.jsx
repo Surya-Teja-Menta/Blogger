@@ -2,7 +2,7 @@
 // pauses ("think"), then the right answer lights up and the others fade, with the one-line reason. -----------
 import React from "react";
 import {AbsoluteFill, useCurrentFrame} from "remotion";
-import {Backdrop, Camera, Title, Words, clamp, ease} from "./fx";
+import {Backdrop, Camera, Title, Words, clamp, ease, titleBottom} from "./fx";
 import {Icon} from "./graphics";
 import {delay, pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
@@ -19,16 +19,23 @@ export const CheckScene = ({s, i, vertical}) => {
   const secs = Math.max(1, Math.ceil((reveal - frame) / 30));
   const radius = ((C.fx || {}).cards || {}).radius ?? 22;
   const ring = 2 * Math.PI * 34;
+  // everything under the headline starts where the headline really ends (a long one wraps to two lines), and the
+  // answers, the countdown and the reason move down by what the question needed, never over it
+  const qSize = vertical ? 72 : 70, qWidth = vertical ? 940 : 1600;
+  const qLines = Math.max(1, Math.ceil(String(s.question || "").length * qSize * (C.upper ? 0.72 : 0.56) / qWidth));
+  const qTop = Math.max(vertical ? 520 : 285, titleBottom(s, vertical) + 28);
+  const optTop = Math.max(vertical ? 860 : 520, qTop + qLines * qSize * 1.06 + 60);
+  const below = optTop - (vertical ? 860 : 520);             // how far the rows under the question have moved
   return (
     <AbsoluteFill>
       <Backdrop word="" i={i}/>
       <Camera i={i} amount={0.3}>
         <Title s={s} vertical={vertical}/>
-        <div style={{position: "absolute", left: vertical ? 70 : 160, right: vertical ? 70 : 160, top: vertical ? 520 : 285,
+        <div style={{position: "absolute", left: vertical ? 70 : 160, right: vertical ? 70 : 160, top: qTop,
                      display: "flex", justifyContent: "center"}}>
-          <Words text={s.question} size={vertical ? 72 : 70} delay={4} align="center" maxWidth={vertical ? 940 : 1600}/>
+          <Words text={s.question} size={qSize} delay={4} align="center" maxWidth={qWidth}/>
         </div>
-        <div style={{position: "absolute", left: vertical ? 80 : 140, right: vertical ? 80 : 140, top: vertical ? 860 : 520,
+        <div style={{position: "absolute", left: vertical ? 80 : 140, right: vertical ? 80 : 140, top: optTop,
                      display: "flex", flexDirection: vertical ? "column" : "row", gap: vertical ? 24 : 28,
                      justifyContent: "center", alignItems: "stretch"}}>
           {opts.map((o, k) => {
@@ -58,7 +65,7 @@ export const CheckScene = ({s, i, vertical}) => {
           })}
         </div>
         {frame >= think - 6 && frame < reveal + 10 && (
-          <div style={{position: "absolute", left: "50%", top: vertical ? 1360 : 790, transform: "translateX(-50%)",
+          <div style={{position: "absolute", left: "50%", top: (vertical ? 1360 : 790) + below, transform: "translateX(-50%)",
                        display: "flex", alignItems: "center", gap: 20,
                        opacity: clamp((frame - think + 6) / 8) * (1 - clamp((frame - reveal) / 10))}}>
             <svg width={84} height={84} viewBox="0 0 84 84">
@@ -73,7 +80,7 @@ export const CheckScene = ({s, i, vertical}) => {
           </div>
         )}
         {shown && s.why && (
-          <div style={{position: "absolute", left: vertical ? 80 : 200, right: vertical ? 80 : 200, top: vertical ? 1380 : 790,
+          <div style={{position: "absolute", left: vertical ? 80 : 200, right: vertical ? 80 : 200, top: (vertical ? 1380 : 790) + below,
                        textAlign: "center", fontFamily: FONT.body, fontWeight: 700, fontSize: vertical ? 44 : 38,
                        color: C.text, opacity: clamp((frame - reveal - 6) / 10),
                        transform: `translateY(${(1 - clamp((frame - reveal - 6) / 12)) * 16}px)`}}>

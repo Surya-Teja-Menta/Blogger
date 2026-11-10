@@ -30,7 +30,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, graphics, looks, mathexpr, voicefarm
+from . import composer, design, diagram, graphics, layout, looks, mathexpr, voicefarm
 from .research import domain
 from .storage import link_for, prune_prefix, upload_run
 from .web import UA
@@ -1911,6 +1911,8 @@ class VideoMaker:
                        for i, s in enumerate(scenes)]
         # every diagram is rendered, looked at, corrected and kept only if it is good
         self.polish_diagrams(scenes, long_scenes, spoken, theme, job)
+        # every shot is measured as drawn: nothing may run into anything else
+        self.audit_layout(scenes, long_scenes, spoken, theme, job)
         # the English captions are part of the picture: short lines, timed to the spoken words
         long_captions = []
         for i in range(n_long):
@@ -2270,6 +2272,46 @@ class VideoMaker:
                                                            long_scenes[i]["frames"], FPS, LEAD)
         self.log(f"[diagram] kept {len(kept) + len(unreviewed)} of {len(idx)} after review (shot:score {' '.join(kept)})"
                  + (f"; kept unreviewed (no vision model answered): {' '.join(unreviewed)}" if unreviewed else ""))
+
+    def audit_layout(self, scenes: List[dict], long_scenes: List[dict], spoken: dict, theme: dict, job: str,
+                     rounds: int = 4) -> None:
+        """Draw every shot at several moments and measure the page itself (layout.py): where two texts, two boxes or a
+        label and a box edge run into each other, the shot gets the mildest repair that can clear it (a shorter
+        headline, then plain animated type for its picture, then no headline) and is measured again, up to `rounds`
+        times. A shot that is still not clean after that is logged by name; the audit never stops the video."""
+        words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
+        todo = list(range(len(long_scenes)))
+        first = True
+        for rnd in range(rounds + 1):
+            shots = []
+            for i in todo:
+                one = {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}], "captions": [],
+                       "theme": theme}
+                shots += [(i, one, f) for f in layout.moments(long_scenes[i]["frames"])]
+            found = layout.audit(VIDEO_APP, shots, job, self.log)
+            if found is None:
+                if first:
+                    self.log("[layout] no audit this time; the shots stay as designed")
+                return
+            bad = sorted(i for i, f in found.items() if f)
+            if first:
+                self.log(f"[layout] {len(bad)} of {len(todo)} shots have pieces running into each other")
+                first = False
+            if not bad:
+                return
+            if rnd == rounds:
+                for i in bad:
+                    self.log(f"[layout] shot {i} ({long_scenes[i].get('kind')}) still has: "
+                             + "; ".join(layout.describe(f) for f in found[i][:3]))
+                return
+            for i in bad:
+                frames = long_scenes[i]["frames"]
+                did = layout.repair(scenes[i], long_scenes[i], rnd,
+                                    lambda g, i=i, frames=frames: graphics.timed(g, scenes[i].get("headline", ""),
+                                                                                  words(i), frames, FPS, LEAD),
+                                    found[i])
+                self.log(f"[layout] shot {i}: {layout.describe(found[i][0])} -> {did or 'nothing left to simplify'}")
+            todo = bad
 
     def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
         """Motion graphics for the shots without a strong picture; any failure leaves the templates in place.

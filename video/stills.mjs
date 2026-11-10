@@ -14,12 +14,23 @@ const browser = await openBrowser("chrome");
 let failed = 0;
 for (const j of jobs) {
   try {
-    const inputProps = typeof j.props === "string" ? JSON.parse(fs.readFileSync(j.props, "utf8")) : j.props;
+    const given = typeof j.props === "string" ? JSON.parse(fs.readFileSync(j.props, "utf8")) : j.props;
+    const inputProps = j.audit ? {...given, audit: true} : given;      // the same props for the composition and the frame
     const composition = await selectComposition({serveUrl, id: j.composition || "Long", inputProps, puppeteerInstance: browser});
     const png = j.out.toLowerCase().endsWith(".png");        // a PNG keeps a transparent frame transparent
-    await renderStill({serveUrl, composition, output: j.out, frame: j.frame, inputProps, imageFormat: png ? "png" : "jpeg",
+    // "audit": the frame's own layout is measured in the page (video/src/audit.jsx) and printed as `audit <out> <json>`
+    let found = null;
+    await renderStill({serveUrl, composition, output: j.out, frame: j.frame, imageFormat: png ? "png" : "jpeg",
+                       inputProps,
                        ...(png ? {} : {jpegQuality: 90}), scale: j.scale || 0.5, puppeteerInstance: browser,
-                       timeoutInMilliseconds: 120000});
+                       timeoutInMilliseconds: 120000, ...(j.audit ? {logLevel: "verbose"} : {}),
+                       onBrowserLog: j.audit ? (l) => {
+                         if (String(l.text).startsWith("LAYOUT_AUDIT ")) found = String(l.text).slice(13);
+                       } : undefined});
+    if (j.audit) {
+      for (let k = 0; k < 20 && !found; k++) await new Promise((r) => setTimeout(r, 100));     // the log can trail the picture
+      console.log(`audit ${j.out} ${found || "{}"}`);
+    }
     console.log(`ok ${j.out}`);
   } catch (e) {
     failed++;

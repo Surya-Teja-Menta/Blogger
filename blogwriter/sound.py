@@ -58,11 +58,14 @@ def whoosh(path: str) -> None:
     t = np.arange(n) / n
     noise = np.random.default_rng(5).normal(0, 1, n)
     alpha = 0.02 + 0.25 * np.sin(np.pi * t) ** 2      # the filter opens in the middle of the sweep
-    y = np.zeros(n)
-    acc = 0.0
-    for i in range(n):
-        acc += alpha[i] * (noise[i] - acc)
-        y[i] = acc
+    y = noise
+    for _ in range(3):                                # three poles in a row: a soft "whoom", with none of the hissy
+        out = np.zeros(n)                             # top that one pole leaves (that read as static under speech)
+        acc = 0.0
+        for i in range(n):
+            acc += alpha[i] * (y[i] - acc)
+            out[i] = acc
+        y = out
     y *= np.sin(np.pi * t ** 0.8) ** 3
     y /= np.abs(y).max() + 1e-9
     _write(path, np.stack([y * (1 - 0.6 * t), y * (0.4 + 0.6 * t)], axis=1) * 0.7)
@@ -109,7 +112,7 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     parts = [f"[{k}:a]aresample=48000,{speed(k)}adelay=delays={int(t * 1000)}:all=1[v{k}]" for k, t in enumerate(voice_at)]
     parts.append("".join(f"[v{k}]" for k in range(v)) + f"amix=inputs={v}:normalize=0,aformat=channel_layouts=stereo,"
                  "highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,"
-                 "equalizer=f=3500:t=q:w=1.2:g=2.5,apad,asplit=2[voice][key]")   # apad: music runs past the last word
+                 "equalizer=f=3500:t=q:w=1.2:g=1.5,apad,asplit=2[voice][key]")   # apad: music runs past the last word
     # the music is a faint floor under the narration, never a second thing to listen to: about 20 dB under the
     # voice (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
     # background noise), pushed down further while the voice speaks. MUSIC_LEVEL=0 removes it altogether.
