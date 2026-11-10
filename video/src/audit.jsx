@@ -7,7 +7,7 @@ import React, {useEffect, useState} from "react";
 import {continueRender, delayRender, useCurrentFrame} from "remotion";
 
 const SEE = 0.35;               // pieces fainter than this (ghost words, fading parts) are not part of the picture yet
-const TEXT_MIN = 0.38;          // share of the smaller text box that has to be covered (tight line boxes of big headlines overlap ~0.25 by design)
+const TEXT_MIN = 0.33;          // share of the smaller text box that has to be covered (the boxes are trimmed to the ink, see ink())
 const BOX_MIN = 0.12;           // the same for two boxes that are neither nested nor apart
 const EDGE = [0.18, 0.82];      // a text with this share of its area inside a box crosses the box's edge
 
@@ -20,6 +20,11 @@ const seen = (el) => {
     if (e.dataset && e.dataset.audit === "skip") return 0;
   }
   return o;
+};
+// a text's line box is taller than its letters (big numbers and headlines most of all): measure the ink, not the padding
+const ink = (r) => {
+  const t = r.height * 0.06;
+  return {left: r.left, right: r.right, top: r.top + t, bottom: r.bottom - t, width: r.width, height: r.height - 2 * t};
 };
 const area = (r) => Math.max(0, r.width) * Math.max(0, r.height);
 const cut = (a, b) => {
@@ -42,12 +47,12 @@ export const measure = (root = document.body) => {
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     const p = n.parentElement;
     if (!p || !n.nodeValue.trim() || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(p.tagName)) continue;
-    const k = p.closest(".katex");
-    if (k) {                                    // a formula is one piece: its own glyphs overlap by design
+    const k = p.closest(".katex") || p.closest("[data-caption]");
+    if (k) {                // a formula or a caption line is one piece: its own glyphs (and the lit word) overlap by design
       if (!katex.has(k)) {
         katex.add(k);
         const o = seen(k), r = k.getBoundingClientRect();
-        if (o >= SEE && r.width > 4 && r.height > 4) texts.push({el: k, r, t: "formula"});
+        if (o >= SEE && r.width > 4 && r.height > 4) texts.push({el: k, r, t: k.matches(".katex") ? "formula" : "caption: " + word(k.textContent)});
       }
       continue;
     }
@@ -56,10 +61,10 @@ export const measure = (root = document.body) => {
     const range = document.createRange();
     range.selectNodeContents(n);
     const r = range.getBoundingClientRect();
-    if (r.width > 4 && r.height > 4) texts.push({el: p, r, t: word(n.nodeValue)});
+    if (r.width > 4 && r.height > 4) texts.push({el: p, r: ink(r), t: word(n.nodeValue)});
   }
   for (const el of root.querySelectorAll("*")) {
-    if (el.closest(".katex")) continue;
+    if (el.closest(".katex") || el.closest("[data-caption]")) continue;
     const tag = el.tagName.toLowerCase();
     let ok = false;
     if (tag === "rect") {

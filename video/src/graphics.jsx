@@ -151,7 +151,7 @@ const Hub = ({s, i, vertical}) => {
   // the captions: the top label never reaches the headline, the lowest one never reaches the captions
   const cx = width / 2;
   const bandTop = titleBottom(s, vertical, {maxWidth: vertical ? 940 : 1500}) + 16, bandEnd = vertical ? 1500 : 955;
-  const labelRoom = vertical ? 330 : 250;                             // a disc, its gap and its label (up to two lines)
+  const labelRoom = vertical ? 330 : 340;                             // a disc, its gap and its label (up to two lines), both ends
   const rx = vertical ? 360 : 640;
   const ry = vertical ? 440 : Math.max(110, Math.min(232, (bandEnd - bandTop - labelRoom) / 2));
   const cy = vertical ? 1150 : (bandTop + bandEnd) / 2 + 6;
@@ -171,7 +171,8 @@ const Hub = ({s, i, vertical}) => {
   const focus = [{at: centerAt, box: around([cx, cy + 40], vertical ? 420 : 420, vertical ? 420 : 380)},
                  ...nodes.map((nd, k) => {
                    const b = around([pos[k][0], pos[k][1] + (up[k] ? -40 : 40)], vertical ? 360 : 300, vertical ? 300 : 220);
-                   return {at: nd.at, box: [Math.min(b[0], cx), Math.min(b[1], cy), Math.max(b[2], cx), Math.max(b[3], cy)]};
+                   // the centre's disc and its label stay inside the camera's frame too (the zoom would push them under the captions)
+                   return {at: nd.at, box: [Math.min(b[0], cx), Math.min(b[1], cy), Math.max(b[2], cx), Math.max(b[3], cy + (vertical ? 230 : 215))]};
                  })];
   return (
     <Frame s={s} i={i} vertical={vertical} focus={focus}>
@@ -418,11 +419,16 @@ const Stack = ({s, i, vertical}) => {
   const {width, height, fps} = useVideoConfig();
   const nodes = s.graphic.nodes;
   const n = nodes.length;
-  const h = vertical ? 170 : Math.min(130, 560 / n);
+  // the stack stands on the caption line (the captions sit at 74% of a Short and along the bottom of a wide video),
+  // and rises no higher than the headline's real bottom edge
+  const stackEnd = vertical ? 1400 : height - 125;
+  const stackTop = vertical ? titleBottom(s, true, {maxWidth: 940}) + 24 : 290;
+  const gap = 30;                                         // room for the cards' tilt: tilted cards must not touch
+  const h = vertical ? Math.max(92, Math.min(170, (stackEnd - stackTop) / n - gap)) : Math.min(130, (stackEnd - stackTop) / n - gap);
   const w = vertical ? 900 : 1100;
-  const base = vertical ? 1600 : height - 90;
+  const base = stackEnd + gap;
   // the camera rises with the stack, framing each new layer with the one it rests on
-  const layer = (k) => [(width - w) / 2, base - (k + 1) * (h + 18), (width + w) / 2, base - k * (h + 18) - 18];
+  const layer = (k) => [(width - w) / 2, base - (k + 1) * (h + gap), (width + w) / 2, base - k * (h + gap) - gap];
   const focus = nodes.map((nd, k) => {
     const b = layer(k), under = layer(Math.max(0, k - 1));
     return {at: nd.at, box: [b[0], b[1], b[2], under[3]]};
@@ -432,7 +438,7 @@ const Stack = ({s, i, vertical}) => {
       {nodes.map((nd, k) => {
         const p = pop(frame - nd.at);
         const col = SERIES[k % SERIES.length];
-        const y = base - (k + 1) * (h + 18);
+        const y = base - (k + 1) * (h + gap);
         const indent = k * (vertical ? 30 : 50);
         return (
           <div key={k} style={{position: "absolute", left: (width - w) / 2 + indent, width: w - 2 * indent, top: y, height: h,

@@ -2904,3 +2904,29 @@ def test_a_stamp_may_not_cover_other_pieces_of_a_diagram():
     assert diagram.collision(els) is not None
     els[1]["x"] = 62
     assert diagram.collision(els) is None
+
+
+def test_the_layout_audit_covers_the_short_and_the_captions_that_run_over_each_shot():
+    from types import SimpleNamespace
+    from blogwriter import layout, video
+    caps = [{"from": 10, "to": 40, "text": "a"}, {"from": 130, "to": 150, "text": "b"}, {"from": 200, "to": 230, "text": "c"}]
+    assert layout.shot_captions(caps, 100, 100) == [{"from": 30, "to": 50, "text": "b"}]         # shifted to the shot's own clock
+    # a Short's shot is drawn in the vertical picture, with its own captions, and repaired in place
+    seen = []
+
+    def fake(app_dir, shots, job, log, timeout=0, composition="Long", tag=""):
+        seen.append((composition, tag, shots[0][1]["captions"]))
+        bad = [x for _, p, _ in shots for x in p["scenes"] if x.get("headline") == "a very long headline for a short beat"]
+        return {i: ([{"kind": "text-on-text", "a": "x", "b": "caption: y"}] if bad else []) for i in {s[0] for s in shots}}
+
+    real = layout.audit
+    layout.audit = fake
+    try:
+        view = {"kind": "graph", "frames": 200, "headline": "a very long headline for a short beat", "highlight": "long",
+                "graphic": {"type": "stack", "nodes": []}}
+        me = SimpleNamespace(log=lambda m: None, audit_shots=lambda *a: video.VideoMaker.audit_shots(me, *a))
+        video.VideoMaker.audit_short(me, [view], [{"from": 5, "to": 50, "text": "hi"}], [0], [[]], {"bg": "#000"}, "job")
+    finally:
+        layout.audit = real
+    assert seen[0][0] == "Short" and seen[0][1] == "_short_en" and seen[0][2] == [{"from": 5, "to": 50, "text": "hi"}]
+    assert view["headline"] == "a very long"                  # cut to three words around the highlight

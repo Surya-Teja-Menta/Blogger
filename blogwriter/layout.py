@@ -56,19 +56,28 @@ def parse(stdout: str) -> Dict[str, List[dict]]:
     return out
 
 
-def audit(app_dir: str, shots: List[tuple], job: str, log: Callable[[str], None], timeout: int = 2400
-          ) -> Optional[Dict[int, List[dict]]]:
-    """shots: (shot index, props, frame). -> {shot index: findings over all its frames}, or None when the preview
-    renderer could not run (then nothing is changed)."""
+def shot_captions(captions: List[dict], start: int, frames: int) -> List[dict]:
+    """The captions that are on screen during one shot, moved so the shot's own first frame is 0 (a shot is drawn on
+    its own, but a viewer sees the captions over it, so they are part of what is measured)."""
+    return [{**c, "from": c["from"] - start, "to": c["to"] - start} for c in captions or []
+            if start <= c.get("from", -1) < start + frames]
+
+
+def audit(app_dir: str, shots: List[tuple], job: str, log: Callable[[str], None], timeout: int = 2400,
+          composition: str = "Long", tag: str = "") -> Optional[Dict[int, List[dict]]]:
+    """shots: (shot index, props, frame). composition: the picture they are drawn in ("Long" or the vertical "Short").
+    -> {shot index: findings over all its frames}, or None when the preview renderer could not run (then nothing is
+    changed)."""
     node = shutil.which("node") or shutil.which("node.exe")
     if not node or not shots:
         return None
     jobs, owner = [], {}
     for i, props, frame in shots:
-        out = os.path.join(job, f"audit_{i}_{frame}.jpg")
-        jobs.append({"props": props, "frame": max(0, frame), "out": out, "scale": SCALE, "audit": True})
+        out = os.path.join(job, f"audit{tag}_{i}_{frame}.jpg")
+        jobs.append({"props": props, "frame": max(0, frame), "out": out, "scale": SCALE, "audit": True,
+                     "composition": composition})
         owner[out] = i
-    path = os.path.join(job, "audit.json")
+    path = os.path.join(job, f"audit{tag}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(jobs, f, ensure_ascii=False)
     try:

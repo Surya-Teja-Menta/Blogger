@@ -51,7 +51,7 @@ const Caption = ({captions, vertical, aside = 0}) => {
   return (
     <div style={{position: "absolute", left: 50, right: 50 + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
                  textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
-      <span style={{display: "inline-block", padding: "14px 26px", borderRadius: 24, background: alpha(C.light ? "#ffffff" : "#000000", 0.55),
+      <span data-caption="1" style={{display: "inline-block", padding: "14px 26px", borderRadius: 24, background: alpha(C.light ? "#ffffff" : "#000000", 0.55),
                     backdropFilter: "blur(10px)", fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 62 : 40,
                     lineHeight: 1.35, color: C.text}}>
         {words.map((w, k) => {

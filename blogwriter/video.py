@@ -1911,14 +1911,14 @@ class VideoMaker:
                        for i, s in enumerate(scenes)]
         # every diagram is rendered, looked at, corrected and kept only if it is good
         self.polish_diagrams(scenes, long_scenes, spoken, theme, job)
-        # every shot is measured as drawn: nothing may run into anything else
-        self.audit_layout(scenes, long_scenes, spoken, theme, job)
         # the English captions are part of the picture: short lines, timed to the spoken words
         long_captions = []
         for i in range(n_long):
             for ca, cz, line in word_lines(spoken.get(("en", "long", i), []), 0, 42):
                 long_captions.append({"from": starts[i] + LEAD + round(ca * FPS),
                                       "to": starts[i] + LEAD + round(cz * FPS), "text": line})
+        # every shot is measured as drawn, captions included: nothing may run into anything else
+        self.audit_layout(scenes, long_scenes, spoken, theme, job, long_captions, starts)
         props = os.path.join(job, "long.json")
         with open(props, "w", encoding="utf-8") as f:
             sub = subscribe_at(starts, [s["kind"] for s in scenes], total)
@@ -1995,6 +1995,7 @@ class VideoMaker:
                 for ca, cz, line in word_lines(words, 0, 30):
                     captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
                                      "text": line})
+            self.audit_short(short_scenes, captions, st, [spoken[(lang, "short", b)] for b in order], theme, job, lang)
             path = os.path.join(job, f"short_{lang}.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"scenes": short_scenes, "captions": captions, "channel": self.s.channel_name, "theme": theme},
@@ -2274,43 +2275,60 @@ class VideoMaker:
                  + (f"; kept unreviewed (no vision model answered): {' '.join(unreviewed)}" if unreviewed else ""))
 
     def audit_layout(self, scenes: List[dict], long_scenes: List[dict], spoken: dict, theme: dict, job: str,
-                     rounds: int = 4) -> None:
-        """Draw every shot at several moments and measure the page itself (layout.py): where two texts, two boxes or a
-        label and a box edge run into each other, the shot gets the mildest repair that can clear it (a shorter
-        headline, then plain animated type for its picture, then no headline) and is measured again, up to `rounds`
-        times. A shot that is still not clean after that is logged by name; the audit never stops the video."""
+                     captions: Optional[List[dict]] = None, starts: Optional[List[int]] = None, rounds: int = 4) -> None:
+        """Draw every shot of the long video, with the captions that run over it, and measure the page itself."""
         words = lambda i: spoken.get(("en", "long", i), [])            # noqa: E731
-        todo = list(range(len(long_scenes)))
+        targets = [{"name": f"shot {i}", "view": ls, "scene": scenes[i], "frames": ls["frames"],
+                    "captions": layout.shot_captions(captions, starts[i], ls["frames"]) if captions and starts else [],
+                    "retime": lambda g, i=i, ls=ls: graphics.timed(g, scenes[i].get("headline", ""), words(i),
+                                                                    ls["frames"], FPS, LEAD)}
+                   for i, ls in enumerate(long_scenes)]
+        self.audit_shots(targets, "Long", theme, job, "", rounds)
+
+    def audit_short(self, short_scenes: List[dict], captions: List[dict], starts: List[int], spoken: List[list],
+                    theme: dict, job: str, lang: str = "en", rounds: int = 4) -> None:
+        """The same audit for a vertical Short (its own pictures, its own captions): short_scenes are repaired in place."""
+        targets = [{"name": f"Short beat {j}", "view": v, "scene": v, "frames": v["frames"],
+                    "captions": layout.shot_captions(captions, starts[j], v["frames"]),
+                    "retime": lambda g, v=v, w=spoken[j]: graphics.timed(g, v.get("headline", ""), w, v["frames"], FPS, LEAD)}
+                   for j, v in enumerate(short_scenes)]
+        self.audit_shots(targets, "Short", theme, job, f"_short_{lang}", rounds)
+
+    def audit_shots(self, targets: List[dict], composition: str, theme: dict, job: str, tag: str, rounds: int) -> None:
+        """Every target (a shot: name, view that is drawn, scene that holds the source, frames, captions, retime) is drawn
+        at several moments; where two texts, two boxes or a label and a box edge run into each other, it gets the
+        mildest repair that can clear it (a shorter headline, then plain animated type for its picture, then no
+        headline) and is measured again, up to `rounds` times. A shot that is still not clean after that is logged by
+        name; the audit never stops the video."""
+        todo = list(range(len(targets)))
         first = True
         for rnd in range(rounds + 1):
             shots = []
             for i in todo:
-                one = {"scenes": [{k: v for k, v in long_scenes[i].items() if k != "chapter"}], "captions": [],
+                t = targets[i]
+                one = {"scenes": [{k: v for k, v in t["view"].items() if k != "chapter"}], "captions": t["captions"],
                        "theme": theme}
-                shots += [(i, one, f) for f in layout.moments(long_scenes[i]["frames"])]
-            found = layout.audit(VIDEO_APP, shots, job, self.log)
+                shots += [(i, one, f) for f in layout.moments(t["frames"])]
+            found = layout.audit(VIDEO_APP, shots, job, self.log, composition=composition, tag=tag)
             if found is None:
                 if first:
-                    self.log("[layout] no audit this time; the shots stay as designed")
+                    self.log(f"[layout] no {composition} audit this time; the shots stay as designed")
                 return
             bad = sorted(i for i, f in found.items() if f)
             if first:
-                self.log(f"[layout] {len(bad)} of {len(todo)} shots have pieces running into each other")
+                self.log(f"[layout] {composition}: {len(bad)} of {len(todo)} shots have pieces running into each other")
                 first = False
             if not bad:
                 return
             if rnd == rounds:
                 for i in bad:
-                    self.log(f"[layout] shot {i} ({long_scenes[i].get('kind')}) still has: "
+                    self.log(f"[layout] {composition} {targets[i]['name']} ({targets[i]['view'].get('kind')}) still has: "
                              + "; ".join(layout.describe(f) for f in found[i][:3]))
                 return
             for i in bad:
-                frames = long_scenes[i]["frames"]
-                did = layout.repair(scenes[i], long_scenes[i], rnd,
-                                    lambda g, i=i, frames=frames: graphics.timed(g, scenes[i].get("headline", ""),
-                                                                                  words(i), frames, FPS, LEAD),
-                                    found[i])
-                self.log(f"[layout] shot {i}: {layout.describe(found[i][0])} -> {did or 'nothing left to simplify'}")
+                t = targets[i]
+                did = layout.repair(t["scene"], t["view"], rnd, t["retime"], found[i])
+                self.log(f"[layout] {composition} {t['name']}: {layout.describe(found[i][0])} -> {did or 'nothing left to simplify'}")
             todo = bad
 
     def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
