@@ -2711,6 +2711,34 @@ def test_junk_after_a_sentence_is_cut_where_its_speech_really_ends():
     assert cv.speech_end(np.zeros(100), sr, 0.0) == 100                           # nothing to cut in a tiny clip
 
 
+def test_noise_before_the_first_word_and_after_the_last_is_trimmed_but_a_real_final_s_is_kept():
+    """Measured on delivered videos: a quarter to a third of the lines began with 0.3-0.65 s of noise and many ended
+    with 0.15-0.4 s. Speech keeps its short unpitched edges (an "s" at the end, an "sh" at the start), nothing more."""
+    import importlib.util
+    import os
+    import numpy as np
+    spec = importlib.util.spec_from_file_location("clone_voice", os.path.join("blogwriter", "clone_voice.py"))
+    cv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cv)
+    sr = 24000
+    rng = np.random.default_rng(3)
+    t = np.arange(int(1.0 * sr)) / sr
+    voice = sum(np.sin(2 * np.pi * 150 * k * t) / k for k in (1, 2, 3)) * 0.12            # pitched speech, 0.5 to 1.5 s
+    noise = lambda s, a: rng.normal(0, a, int(s * sr))
+    hiss_in, hiss_out = noise(0.5, 0.01), noise(0.3, 0.01)
+    x = np.concatenate([hiss_in, voice, hiss_out, noise(0.3, 0.0003)])
+    a, b = cv.speech_span(x, sr, 0.3, 1.5, "data")                                         # a line that ends on a vowel
+    assert 0.28 <= a / sr <= 0.36 and 1.5 <= b / sr <= 1.62                                # 0.18 s lead kept; the rest of the noise gone
+    a2, b2 = cv.speech_span(x, sr, 0.3, 1.5, "times")                                      # an "s" is allowed 0.14 s
+    assert 1.6 <= b2 / sr <= 1.7 and b2 > b
+    ok = np.concatenate([noise(0.1, 0.01), voice, noise(0.1, 0.01), noise(0.3, 0.0003)])
+    a3, b3 = cv.speech_span(ok, sr, 0.1, 1.1, "data")
+    assert a3 == 0 and b3 / sr >= 1.16                                                    # nothing real is lost
+    whisper = noise(1.0, 0.002)
+    assert cv.speech_span(whisper, sr, 0.1, 0.9, "x") == (0, len(whisper))                 # no pitch found: left as it is
+    assert cv.speech_span(np.zeros(100), sr, 0.0, 0.0) == (0, 100)
+
+
 def test_every_picture_waits_half_a_second_after_the_narration_and_captions_outlast_the_last_word():
     from blogwriter import video
     assert video.GAP == 15                                                        # half a second at 30 fps

@@ -150,6 +150,59 @@ def speech_end(x, sr, word_end, reach=0.5):
     return min(len(x), int((word_end + 0.3) * sr))
 
 
+LEAD_ALLOW = 0.18            # an unpitched start ("sh", "str", "f") never takes longer than this before the vowel
+FRICATIVE_END = re.compile(r"(s|z|x|f|v|th|sh|ch|ce|se|ze|ve|fe|ge)$")
+STOP_END = re.compile(r"(p|t|k|c)$")
+
+
+def speech_span(x, sr, word_start, word_end, last_word=""):
+    """(start, end) samples of the real speech in one spoken sentence. The model puts a burst of noise (a breath, an
+    "sss") before the first word of many lines and after the last one: heard as a radio losing its signal, and
+    measured at 0.15 to 0.4 s long in a fifth to a third of the lines after the last word (the burst comes after a
+    short dip, and is about as loud as the word's own final "s"). A word's own unpitched edges are short: an initial
+    "sh" or "str" is under 0.18 s, a final "s" about 0.12 s, a final "t" under 0.07 s. So the line keeps everything
+    from 0.18 s before its first pitched sound to the end of its last pitched sound plus the time its last letter
+    needs, but never less than the recogniser's own span of the words, and never past the first real dip after them.
+    Nothing is trimmed if no pitch is found (a whisper, a very short line)."""
+    import numpy as np
+    step, win = max(1, int(0.01 * sr)), max(8, int(0.032 * sr))
+    frames = (len(x) - win) // step
+    if frames < 12:
+        return 0, len(x)
+    idx = np.arange(win)[None, :] + step * np.arange(frames)[:, None]
+    f = x[idx]
+    f = f - f.mean(1, keepdims=True)
+    rms = np.sqrt((f ** 2).mean(1))
+    # pitch is judged on the voice's low frequencies only (70 Hz to 1 kHz): hiss lives high up, and a narrow band of
+    # hiss would otherwise correlate with itself and pass for a voice
+    power = np.abs(np.fft.rfft(f, 2 * win, axis=1)) ** 2
+    freq = np.fft.rfftfreq(2 * win, 1 / sr)
+    power[:, (freq < 70) | (freq > 1000)] = 0
+    ac = np.fft.irfft(power, axis=1)[:, :win]
+    lo, hi = max(1, int(sr / 400)), min(win - 1, int(sr / 70))
+    ratio = ac[:, lo:hi].max(1) / np.maximum(ac[:, 0], 1e-12)
+    low = np.sqrt(np.maximum(ac[:, 0], 0))
+    voiced = (ratio > 0.5) & (low > float(np.percentile(low, 75)) * 0.05)
+    ref = float(np.percentile(rms, 75))
+    hits = np.where(voiced)[0]
+    if len(hits) < 8:
+        return 0, len(x)
+    first, last = int(hits[0]), int(hits[-1])
+    start = max(0, int(first * step - LEAD_ALLOW * sr))
+    start = min(start, int(0.8 * sr))     # the recogniser's first-word time is no guide: it often sits inside the noise
+    word = re.sub(r"[^a-z]", "", (last_word or "").lower())
+    allow = 0.12 if FRICATIVE_END.search(word) else 0.07 if STOP_END.search(word) else 0.04
+    tail = int((last * step + win) + allow * sr)
+    at = min(frames - 1, max(0, int(word_end * 100) - 5))
+    gap = len(x)                       # the first real dip after the words: a burst of hiss comes after it, not before
+    for i in range(at, frames - 3):
+        if (rms[i:i + 4] < ref * 0.07).all():            # 23 dB under the line's loud parts, for 40 ms
+            gap = (i + 1) * step
+            break
+    end = max(min(gap, tail), int((word_end + 0.06) * sr))
+    return start, min(len(x), end)
+
+
 def main() -> int:
     jobs_path, reference = sys.argv[1], sys.argv[2]
     with open(jobs_path, encoding="utf-8") as f:
@@ -215,10 +268,14 @@ def main() -> int:
             heard = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
                      for seg in segs for w in (seg.words or []) if w.word.strip()]
             if heard:
-                cut = speech_end(audio.squeeze(0).numpy(), tts.sr, heard[-1][1])
-                audio = audio[:, :cut].clone()
+                begin, cut = speech_span(audio.squeeze(0).numpy(), tts.sr, heard[0][0], heard[-1][1], heard[-1][2])
+                audio = audio[:, begin:cut].clone()
+                shift = begin / tts.sr                  # the words keep their place in the trimmed audio
+                heard = [[max(0.0, round(a - shift, 3)), max(0.0, round(b - shift, 3)), w] for a, b, w in heard]
                 fade = min(audio.shape[1], int(0.03 * tts.sr))
                 audio[:, audio.shape[1] - fade:] *= torch.linspace(1, 0, fade)
+                lead = min(audio.shape[1], int(0.015 * tts.sr))
+                audio[:, :lead] *= torch.linspace(0, 1, lead)
             words += [[a + offset, b + offset, w] for a, b, w in heard]
             pieces += [audio, gap]
             offset += audio.shape[1] / tts.sr + gap.shape[1] / tts.sr
