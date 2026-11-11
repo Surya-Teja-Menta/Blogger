@@ -8,13 +8,21 @@ jobs.json: [{"text": "...", "out": "path.wav"}, ...]. For each job it writes the
 [[start s, end s, word], ...] as heard, plus "ok". The file is rewritten with the results. A job that fails keeps
 ok=false, and the pipeline speaks that line with its usual voice instead (never a missing line).
 Settings (environment): CLONE_EXAGGERATION (0.25-2, default 0.6: livelier delivery), CLONE_CFG (0-1, default 0.4:
-lower is slower and more deliberate), CLONE_WHISPER (faster-whisper model, default "base.en").
+lower is slower and more deliberate), CLONE_WHISPER (faster-whisper model, default "small.en"), CLONE_TAKES (the most
+takes tried of one sentence, default 6).
+
+Every sentence is spoken until a take is clean (voicecheck.py: no lost or garbled word, no hole in the middle, no
+noise between words), the best take is mended, trimmed at its real edges, and listened to once more after trimming, so
+no step can lose a word.
 """
 import json
 import os
 import re
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import voicecheck as vc  # noqa: E402
 
 
 def sentences(text: str):
@@ -236,7 +244,7 @@ def main() -> int:
     else:
         from chatterbox.tts import ChatterboxTTS
         tts = ChatterboxTTS.from_pretrained(device=device)
-    asr = WhisperModel(os.environ.get("CLONE_WHISPER", "base.en"), device="cpu", compute_type="int8")
+    asr = WhisperModel(os.environ.get("CLONE_WHISPER", "small.en"), device="cpu", compute_type="int8")
     exaggeration = float(os.environ.get("CLONE_EXAGGERATION", "0.6"))
     cfg = float(os.environ.get("CLONE_CFG", "0.4"))
     if turbo:     # the sample is already loudness-normalised; Turbo's own normalisation trips a dtype bug
@@ -251,34 +259,99 @@ def main() -> int:
     # how closely a line must say its script: a clean take scores ~1.0, one misheard word ~0.95, a garbled take
     # with invented words ~0.85 (measured on real takes)
     need = float(os.environ.get("CLONE_MATCH", "0.92"))
-    tries = int(os.environ.get("CLONE_TRIES", "3"))
+    tries = int(os.environ.get("CLONE_TRIES", "1"))     # whole-line retries: every sentence already chooses among takes
+    takes = max(1, int(os.environ.get("CLONE_TAKES", "6")))
+    sr = tts.sr
+
+    def recognise(x):
+        """The words heard in a take, timed from the samples themselves (reading a file back would go through PyAV,
+        whose newer versions refuse an option faster-whisper passes)."""
+        m16 = torchaudio.functional.resample(torch.from_numpy(x)[None], sr, 16000).squeeze(0).numpy().astype("float32")
+        segs, _ = asr.transcribe(m16, language="en", word_timestamps=True, beam_size=5,
+                                 vad_filter=False, condition_on_previous_text=False)
+        return [[round(w.start, 3), round(w.end, 3), w.word.strip()]
+                for seg in segs for w in (seg.words or []) if w.word.strip()]
+
+    def best_take(piece, stats):
+        """The best of up to `takes` takes of one piece of script: the first clean one, else the lowest score."""
+        best = None
+        for _ in range(takes):
+            audio = speak(piece).squeeze(0).numpy()
+            if drying:
+                audio = dry(audio, sr)
+            heard = recognise(audio)
+            verdict = vc.judge(piece, audio, sr, heard)
+            stats["takes"] += 1
+            if best is None or verdict["score"] < best[2]["score"]:
+                best = (audio, heard, verdict)
+            if verdict["clean"]:
+                break
+        return best
+
+    def finish(piece, audio, heard, verdict, stats):
+        """Mend the take (holes shortened, noise between words faded out), cut it at its real edges, and listen again:
+        the cut may not cost a word that the take had. -> (audio, words)."""
+        import numpy as np
+        if verdict["holes"] or verdict["junk"]:
+            audio, heard = vc.mend(audio, sr, heard)
+            stats["mended"] += len(verdict["holes"]) + len(verdict["junk"])
+        want = vc.fidelity(piece, " ".join(w[2] for w in heard))[0]
+        options = []
+        if heard:
+            options.append(speech_span(audio, sr, heard[0][0], heard[-1][1], heard[-1][2]))   # the tight cut
+            options.append((max(0, int((heard[0][0] - 0.25) * sr)), min(len(audio), int((heard[-1][1] + 0.35) * sr))))
+        options.append((0, len(audio)))                                                       # no cut at all
+        for begin, cut in options:
+            part = audio[begin:cut].copy()
+            if len(part) < int(0.15 * sr):
+                continue
+            shift = begin / sr
+            words = [[max(0.0, round(a - shift, 3)), max(0.0, round(b - shift, 3)), w] for a, b, w in heard]
+            lead, fade = min(len(part), int(0.015 * sr)), min(len(part), int(0.03 * sr))
+            part[:lead] *= np.linspace(0, 1, lead, dtype="float32")
+            part[len(part) - fade:] *= np.linspace(1, 0, fade, dtype="float32")
+            if (begin, cut) == options[-1] or vc.fidelity(piece, " ".join(w[2] for w in recognise(part)))[0] <= want:
+                return part, words
+        return audio, heard
+
+    def halves(piece):
+        """A long sentence in two parts at the comma nearest its middle (None when it has no comma worth splitting at)."""
+        parts = piece.split(",")
+        if len(piece.split()) < 9 or len(parts) < 2:
+            return None
+        cuts = [len(",".join(parts[:i + 1])) for i in range(len(parts) - 1)]
+        at = min(cuts, key=lambda c: abs(c - len(piece) / 2))
+        return piece[:at + 1].strip(), piece[at + 1:].strip()
 
     def say(text):
-        """One take of a line: its audio and the words heard in it, timed from the samples themselves (reading the
-        file back would go through PyAV, whose newer versions refuse an option faster-whisper passes). Every sentence
-        is dried, listened to and cut where its speech really ends, so no junk sound is left after it."""
+        """A line: its audio and the words heard in it. Every sentence is the best of several takes, dried, mended,
+        cut where its speech really ends and listened to again, so no junk sound is left after it and no word is
+        missing. A long sentence that stays wrong is spoken in two halves, each chosen on its own."""
+        import numpy as np
         pieces, words, offset = [], [], 0.0
-        for s in sentences(text):
-            audio = speak(s)
-            if drying:
-                audio = torch.from_numpy(dry(audio.squeeze(0).numpy(), tts.sr))[None]
-            mono16 = torchaudio.functional.resample(audio, tts.sr, 16000).squeeze(0).numpy().astype("float32")
-            segs, _ = asr.transcribe(mono16, language="en", word_timestamps=True, beam_size=1,
-                                     vad_filter=False, condition_on_previous_text=False)
-            heard = [[round(w.start, 3), round(w.end, 3), w.word.strip()]
-                     for seg in segs for w in (seg.words or []) if w.word.strip()]
-            if heard:
-                begin, cut = speech_span(audio.squeeze(0).numpy(), tts.sr, heard[0][0], heard[-1][1], heard[-1][2])
-                audio = audio[:, begin:cut].clone()
-                shift = begin / tts.sr                  # the words keep their place in the trimmed audio
-                heard = [[max(0.0, round(a - shift, 3)), max(0.0, round(b - shift, 3)), w] for a, b, w in heard]
-                fade = min(audio.shape[1], int(0.03 * tts.sr))
-                audio[:, audio.shape[1] - fade:] *= torch.linspace(1, 0, fade)
-                lead = min(audio.shape[1], int(0.015 * tts.sr))
-                audio[:, :lead] *= torch.linspace(0, 1, lead)
-            words += [[a + offset, b + offset, w] for a, b, w in heard]
-            pieces += [audio, gap]
-            offset += audio.shape[1] / tts.sr + gap.shape[1] / tts.sr
+        stats = {"takes": 0, "mended": 0, "bad": 0, "split": 0}
+        for sentence in sentences(text):
+            audio, heard, verdict = best_take(sentence, stats)
+            part = None
+            two = halves(sentence) if verdict["bad"] else None
+            if two:
+                t1, t2 = best_take(two[0], stats), best_take(two[1], stats)
+                if t1[2]["bad"] + t2[2]["bad"] < verdict["bad"]:
+                    stats["split"] += 1
+                    a1, h1 = finish(two[0], *t1, stats)
+                    a2, h2 = finish(two[1], *t2, stats)
+                    pause = np.zeros(int(0.22 * sr), "float32")
+                    shift = (len(a1) + len(pause)) / sr
+                    part = np.concatenate([a1, pause, a2])
+                    wds = h1 + [[a + shift, b + shift, w] for a, b, w in h2]
+                    verdict = {**verdict, "bad": t1[2]["bad"] + t2[2]["bad"]}
+            if part is None:
+                part, wds = finish(sentence, audio, heard, verdict, stats)
+            stats["bad"] += verdict["bad"]
+            pieces += [torch.from_numpy(part)[None], gap]
+            words += [[a + offset, b + offset, w] for a, b, w in wds]
+            offset += len(part) / sr + gap.shape[1] / sr
+        say.stats = stats
         return torch.cat(pieces[:-1], dim=1), [[round(a, 3), round(b, 3), w] for a, b, w in words]
 
     for k, job in enumerate(jobs):
@@ -297,8 +370,11 @@ def main() -> int:
             job.update(words=words, match=round(score, 3), ok=bool(words))
         except Exception as exc:                        # one line must not sink the rest
             job["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        st = getattr(say, "stats", {})
+        job["checks"] = dict(st)                    # what the checking found, for the pipeline's log
         print(f"[clone] {k + 1}/{len(jobs)} {'ok' if job['ok'] else 'FAILED ' + job.get('error', '')} "
-              f"match {job.get('match', 0):.2f} ({time.time() - t0:.0f}s)", flush=True)
+              f"match {job.get('match', 0):.2f} takes {st.get('takes', 0)} mended {st.get('mended', 0)} "
+              f"split {st.get('split', 0)} unfixed {st.get('bad', 0)} ({time.time() - t0:.0f}s)", flush=True)
         with open(jobs_path, "w", encoding="utf-8") as f:   # progress is kept even if the process dies later
             json.dump(jobs, f, ensure_ascii=False)
     return 0

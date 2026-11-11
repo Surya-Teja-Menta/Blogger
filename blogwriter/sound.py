@@ -66,6 +66,10 @@ def whoosh(path: str) -> None:
             acc += alpha[i] * (y[i] - acc)
             out[i] = acc
         y = out
+    # nothing above ~1.5 kHz at all: a whoosh falls into the silence between two lines, and any noise up there is
+    # heard as hiss (measured: 31 dB under the voice, 68 times in a ten-minute video, was what "many hiss" was made of)
+    freqs = np.fft.rfftfreq(n, 1 / SR)
+    y = np.fft.irfft(np.fft.rfft(y) / (1 + (freqs / 1500.0) ** 8), n)
     y *= np.sin(np.pi * t ** 0.8) ** 3
     y /= np.abs(y).max() + 1e-9
     _write(path, np.stack([y * (1 - 0.6 * t), y * (0.4 + 0.6 * t)], axis=1) * 0.7)

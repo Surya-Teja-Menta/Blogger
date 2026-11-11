@@ -253,7 +253,7 @@ jobs:
           RUN_TOPIC: ${{ inputs.topic }}
           RUN_LESSON: ${{ inputs.course != '' && format('{0}:{1}', inputs.course, inputs.lesson_id) || '' }}
           FARM_INDEX: ${{ matrix.chunk }}
-          CLONE_BUDGET_MINUTES: "60"          # a chunk is about ten minutes of work: far more means something is wrong
+          CLONE_BUDGET_MINUTES: "150"         # a chunk is a few lines, each sentence chosen from several checked takes: slow on purpose
         run: |
           export FARM_PREFIX=$(python -c "from blogwriter import voicefarm; import os; print(voicefarm.run_prefix(os.environ['RUN_TOPIC'], os.environ['RUN_LESSON']))")
           python -u -m blogwriter.voice_worker

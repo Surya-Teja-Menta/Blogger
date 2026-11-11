@@ -2636,8 +2636,9 @@ def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short
     monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": True, "words": [[0.0, 1.0, "Hi"], [1.0, 2.0, "there"]], "out": str(wav)}])
     monkeypatch.setattr(video, "ffmpeg", lambda args, **k: seen.append(args))
     out = video.speak_cloned([("Hi there", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), lambda m: None)
-    assert "atempo=0.910" in seen[0]
+    assert "rubberband=tempo=0.9100:pitch=1.0" in seen[0] and seen[0][-2:] == ["pcm_s16le", str(tmp_path / "a.mp3")]
     assert abs(out[0][1][1] - 2.0 / 0.91) < 1e-6                      # the words move with the slowed voice
+    assert isinstance(out[0], video.Cloned)                           # and it is marked as already cut and verified
     assert "WHOLE" in video.SHORT_PICK and "30 seconds" in video.SHORT_PICK and "exactly 4 beats" in video.SHORT_PICK
     assert video.SHORT_MAX_SECONDS <= 40
 
@@ -2930,3 +2931,85 @@ def test_the_layout_audit_covers_the_short_and_the_captions_that_run_over_each_s
         layout.audit = real
     assert seen[0][0] == "Short" and seen[0][1] == "_short_en" and seen[0][2] == [{"from": 5, "to": 50, "text": "hi"}]
     assert view["headline"] == "a very long"                  # cut to three words around the highlight
+
+
+def _fake_voice(parts, sr=24000):
+    """Synthetic speech for the voice checker: a harmonic burst per word, silence or noise between. parts: ("w", secs)
+    or ("s", secs of silence) or ("n", secs of noise). -> (samples, [[start, end, word]])"""
+    import numpy as np
+    rng = np.random.default_rng(1)
+    out, words, t = [], [], 0.0
+    for kind, secs in parts:
+        n = int(secs * sr)
+        if kind == "w":
+            tt = np.arange(n) / sr
+            y = sum(np.sin(2 * np.pi * 140 * h * tt) / h for h in range(1, 12)) * np.sin(np.pi * np.arange(n) / n) ** 0.5 * 0.2
+            words.append([round(t, 3), round(t + secs, 3), f"w{len(words)}"])
+        elif kind == "n":
+            y = rng.normal(0, 0.05, n)
+        else:
+            y = np.zeros(n)
+        out.append(y)
+        t += secs
+    return np.concatenate(out).astype("float32"), words
+
+
+def test_the_voice_checker_finds_lost_words_holes_and_noise_and_mends_them():
+    import numpy as np
+    from blogwriter import voicecheck as vc
+    sr = 24000
+    # what a take said against the script: recogniser slips and spelling variants pass, lost and garbled words do not
+    assert vc.fidelity("Add the four totals, then divide by 4.", "add the 4 totals then divide by four")[0] == 0
+    assert vc.fidelity("It's the ultimate fence sitter.", "it's the ultimate fence sitter")[0] == 0
+    assert vc.fidelity("Pick a checkout lane at the check out.", "pick a check out lane at the checkout")[0] == 0
+    bad, notes = vc.fidelity("It's the ultimate fence sitter.", "it's the ultimate friend sitar")
+    assert bad >= 2 and "fence" in notes[0]
+    lost, notes = vc.fidelity("which option wins the popularity contest", "which option")
+    assert lost == 4 and "wins the popularity contest" in notes[0]
+    # a clean take, one with a 1.2 s hole in the middle, one with static between two words
+    clean, words = _fake_voice([("w", 0.4), ("s", 0.25), ("w", 0.4), ("s", 0.2), ("w", 0.5)])
+    script = " ".join(w[2] for w in words)
+    assert vc.judge(script, clean, sr, words)["clean"]
+    holed, hw = _fake_voice([("w", 0.4), ("s", 1.2), ("w", 0.4), ("s", 0.2), ("w", 0.5)])
+    j = vc.judge(" ".join(w[2] for w in hw), holed, sr, hw)
+    assert not j["clean"] and len(j["holes"]) == 1 and abs((j["holes"][0][1] - j["holes"][0][0]) - 1.2) < 0.1
+    noisy, nw = _fake_voice([("w", 0.4), ("n", 0.3), ("w", 0.4), ("s", 0.2), ("w", 0.5)])
+    j = vc.judge(" ".join(w[2] for w in nw), noisy, sr, nw)
+    assert not j["clean"] and len(j["junk"]) == 1 and j["junk"][0][0] > 0.35
+    # mended: the hole is shortened, the words keep their order and move with the cut, the noise is faded out
+    fixed, fw = vc.mend(holed, sr, hw)
+    assert abs(len(fixed) / sr - (len(holed) / sr - (1.2 - vc.HOLE_TO))) < 0.05
+    assert fw[1][0] < hw[1][0] - 0.8 and fw[2][0] < hw[2][0] - 0.8 and fw[0] == hw[0]
+    assert vc.judge(" ".join(w[2] for w in fw), fixed, sr, fw)["clean"]
+    calm, cw = vc.mend(noisy, sr, nw)
+    quiet = calm[int(0.56 * sr):int(0.62 * sr)]
+    assert np.abs(quiet).max() < 0.2 * np.abs(noisy[int(0.56 * sr):int(0.62 * sr)]).max()
+    # the lengths of clips: WAV by its header, MP3 by its bitrate
+    import wave
+    from blogwriter import video
+    path = str(__import__("pathlib").Path(__import__("tempfile").mkdtemp()) / "a.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * 36000)
+    assert abs(video.audio_seconds(path) - 1.5) < 1e-6
+
+
+def test_the_pace_uses_rubberband_and_falls_back_to_atempo_and_a_cloned_line_is_not_cut_again(monkeypatch, tmp_path):
+    from blogwriter import video
+    seen = []
+
+    def no_rubberband(args, **k):
+        seen.append(args)
+        if any("rubberband" in str(a) for a in args):
+            raise RuntimeError("no such filter")
+    monkeypatch.setattr(video, "ffmpeg", no_rubberband)
+    video.slow_down("in.wav", "out.wav", 0.91)
+    assert "rubberband=tempo=0.9100:pitch=1.0" in seen[0] and "atempo=0.9100" in seen[1] and seen[1][-1] == "out.wav"
+    assert "pcm_s16le" in seen[1] and not any("mp3" in str(a) or "48k" in str(a) for a in seen[1])      # lossless
+    seen.clear()
+    video.slow_down("in.wav", "out.wav", 1.0)                      # full speed: no stretching at all
+    assert len(seen) == 1 and "-af" not in seen[0]
+    words = video.Cloned([(0.0, 1.0, "a")])
+    assert video.tighten(str(tmp_path / "never_read.wav"), words) is words      # already cut at its real edges and verified

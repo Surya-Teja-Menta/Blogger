@@ -23,7 +23,8 @@ from typing import Callable, List, Optional
 from .config import Settings
 
 CHUNKS = 12                  # machines per video: the size of the "voice" job's matrix in make.yml (keep equal)
-WAIT_MINUTES = 75            # how long the make job waits for the audio before cloning what is missing itself
+WAIT_MINUTES = 150           # how long the make job waits for the audio before cloning what is missing itself (every sentence is
+                             # chosen from several checked takes: slow on purpose)
 HELLO_MINUTES = 6            # a machine that has not said it is there this long after its lines were put out is not coming
 POLL_SECONDS = 20
 
@@ -117,6 +118,7 @@ def clone(texts: List[str], settings: Settings, job: str, log: Callable[[str], N
             for j, i in enumerate(chunks[k]):
                 it = done[j] if j < len(done) else {}
                 items[i] = {"ok": bool(it.get("ok")), "words": it.get("words") or [], "match": it.get("match", 0),
+                            "checks": it.get("checks") or {},
                             "out": os.path.join(folder, f"{j}.wav")}
         log(f"[voice] farm: {delivered} of {len(chunks)} chunks delivered in {(time.time() - t0) / 60:.0f} min"
             + ("; the lines of the others are cloned here" if delivered < len(chunks) else ""))

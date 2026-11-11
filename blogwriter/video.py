@@ -53,6 +53,7 @@ def narration_pace() -> float:
     except ValueError:
         return PACE
 MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
+WAV_BYTES_PER_SECOND = 48000  # 24 kHz, 16 bit, mono
 SHORT_MAX_SECONDS = 38     # a Short is a thirty second explanation of the whole thing
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
@@ -407,8 +408,21 @@ COUNTRY_ALIASES = {"united states": "United States of America", "usa": "United S
                    "democratic republic of the congo": "Dem. Rep. Congo", "ivory coast": "Côte d'Ivoire"}
 
 
-def mp3_seconds(path: str) -> float:
+def audio_seconds(path: str) -> float:
+    """How long a narration clip is. Clips are 24 kHz mono WAV (lossless: a 48 kbit MP3 kept after the voice model
+    had spoken was measured to leave an error as loud as the speech itself above 3 kHz, which is what hiss is made
+    of); an MP3 left by the free voice service is measured by its bitrate."""
+    if path.endswith(".wav"):
+        try:
+            import wave
+            with wave.open(path, "rb") as w:
+                return w.getnframes() / float(w.getframerate())
+        except (wave.Error, EOFError, OSError):
+            return os.path.getsize(path) / WAV_BYTES_PER_SECOND
     return os.path.getsize(path) / MP3_BYTES_PER_SECOND
+
+
+mp3_seconds = audio_seconds           # the old name
 
 
 async def _speak(text: str, voice: str, path: str, gate: asyncio.Semaphore) -> List[tuple]:
@@ -429,8 +443,10 @@ async def _speak(text: str, voice: str, path: str, gate: asyncio.Semaphore) -> L
                         sentences.append((start, start + chunk["duration"] / 1e7, chunk["text"]))
                 if not audio:
                     raise RuntimeError("no audio returned")
-                with open(path, "wb") as f:
+                with open(path + ".src.mp3", "wb") as f:
                     f.write(audio)
+                ffmpeg(["-i", path + ".src.mp3", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", path])
+                os.remove(path + ".src.mp3")
                 return sentences or [(0.0, len(audio) / MP3_BYTES_PER_SECOND, text)]
             except Exception as exc:
                 if attempt == 4:                # one unspeakable line must not sink the whole video
@@ -553,6 +569,25 @@ def clone_here(python: str, jobs: List[tuple], which: List[int], settings: Setti
         os.remove(ref)
 
 
+class Cloned(list):
+    """The word timings of a line spoken in the cloned voice: already cut at the line's real edges and verified."""
+
+
+def slow_down(src: str, dest: str, pace: float) -> None:
+    """The line at `pace` of its speed, pitch kept, as lossless 24 kHz mono WAV. Rubber Band (a phase-vocoder stretcher
+    made for speech and music) when this ffmpeg has it, else the plainer atempo filter."""
+    if abs(pace - 1.0) < 0.005:
+        ffmpeg(["-i", src, "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", dest])
+        return
+    for flt in (f"rubberband=tempo={pace:.4f}:pitch=1.0", f"atempo={pace:.4f}"):
+        try:
+            ffmpeg(["-i", src, "-ac", "1", "-ar", "24000", "-af", flt, "-c:a", "pcm_s16le", dest])
+            return
+        except RuntimeError:
+            continue
+    raise RuntimeError("the pace could not be set")
+
+
 def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
     """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default): on
     the voice farm's parallel machines (voicefarm.py) when that is available, else, or for any chunk the farm did
@@ -576,15 +611,40 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
                     items = {}                       # never half one voice and half another: the standard voice speaks all
                 else:
                     items.update(made)
+        weak = [k for k, it in items.items() if it.get("ok") and (it.get("checks") or {}).get("bad", 0) > 0]
+        if weak and python and os.path.exists(python):
+            # a line whose words the checks could not get right in the usual number of takes: spoken again here, with
+            # far more takes, and kept only if it is better (the time does not matter, a missing word does)
+            log(f"[voice] {len(weak)} line(s) still have words the checks could not get right: spoken again with more takes")
+            before = os.environ.get("CLONE_TAKES")
+            os.environ["CLONE_TAKES"] = "16"
+            try:
+                again = clone_here(python, jobs, weak, settings, job, log) or {}
+            finally:
+                if before is None:
+                    os.environ.pop("CLONE_TAKES", None)
+                else:
+                    os.environ["CLONE_TAKES"] = before
+            for k, it in again.items():
+                if it.get("ok") and (it.get("checks") or {}).get("bad", 99) < items[k]["checks"]["bad"]:
+                    items[k] = it
+        checked = [it.get("checks") or {} for it in items.values() if it.get("checks")]
+        if checked:
+            left = sorted(k for k, it in items.items() if (it.get("checks") or {}).get("bad", 0) > 0)
+            log(f"[voice] checked {sum(c.get('takes', 0) for c in checked)} takes for {len(checked)} lines: "
+                f"{sum(c.get('mended', 0) for c in checked)} holes or noises mended, "
+                f"{sum(c.get('split', 0) for c in checked)} sentences spoken in two halves; "
+                + (f"words still unsure in lines {left}" if left else "every line says its script"))
         for k, item in sorted(items.items()):
             text, _, path = jobs[k]
             if not item.get("ok") or not os.path.exists(item.get("out", "")):
                 continue
-            try:                 # the pipeline's own audio format (mp3_seconds relies on it), at the chosen pace
+            try:                 # the pipeline's own audio format (24 kHz mono WAV, lossless), at the chosen pace
                 pace = narration_pace()
-                ffmpeg(["-i", item["out"], "-ac", "1", "-ar", "24000", "-af", f"atempo={pace:.3f}", "-b:a", "48k", path])
+                slow_down(item["out"], path, pace)
                 heard = [[a / pace, b / pace, w] for a, b, w in item["words"]]
-                results[k] = align_words(text, heard) or None
+                aligned = align_words(text, heard)
+                results[k] = Cloned(aligned) if aligned else None
             except RuntimeError:
                 pass
             finally:
@@ -613,15 +673,15 @@ def speak_all(jobs: List[tuple]) -> List[List[tuple]]:
 def tighten(path: str, words: List[tuple]) -> List[tuple]:
     """Cut the voice service's silence before the first word and after the last, so shots follow each other at
     the pace of speech; returns the word timings moved to match. Re-encoded at the service's own bitrate, so
-    mp3_seconds still holds."""
-    if not words:
+    audio_seconds still holds. A cloned line is already cut at its real edges and verified (clone_voice.py): left alone."""
+    if not words or isinstance(words, Cloned):
         return words
     a = max(0.0, words[0][0] - 0.04)
     b = words[-1][1] + 0.30           # a word's tail runs on past the time the recogniser gives it (the cloned voice's
                                       # sentences are already cut where their speech ends, see clone_voice.speech_end)
-    tmp = path + ".tmp.mp3"
+    tmp = path + ".tmp.wav"
     try:
-        ffmpeg(["-ss", f"{a:.3f}", "-i", path, "-t", f"{b - a:.3f}", "-ac", "1", "-ar", "24000", "-b:a", "48k", tmp])
+        ffmpeg(["-ss", f"{a:.3f}", "-i", path, "-t", f"{b - a:.3f}", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", tmp])
         os.replace(tmp, path)
     except RuntimeError:
         return words
@@ -662,8 +722,8 @@ def join_pause(first: str, second: str, pause: float, dest: str) -> float:
     mono = "aresample=24000,aformat=channel_layouts=mono"
     ffmpeg(["-i", first, "-f", "lavfi", "-t", f"{pause:.2f}", "-i", "anullsrc=r=24000:cl=mono", "-i", second,
             "-filter_complex", f"[0:a]{mono}[a];[2:a]{mono}[c];[a][1:a][c]concat=n=3:v=0:a=1[out]", "-map", "[out]",
-            "-ac", "1", "-ar", "24000", "-b:a", "48k", dest])
-    return mp3_seconds(first) + pause
+            "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", dest])
+    return audio_seconds(first) + pause
 
 
 COMMONS = "https://commons.wikimedia.org/w/api.php"
@@ -1828,12 +1888,12 @@ class VideoMaker:
                 if not line.strip():
                     continue
                 kind, idx = ("long", i) if i < n_long else ("short", i - n_long)
-                path = os.path.join(job, f"{lang}_{kind}{idx}.mp3")
+                path = os.path.join(job, f"{lang}_{kind}{idx}.wav")
                 # the quiz question is the LAST "?" (a rhetorical question before it must not start the answer early)
                 ask = line.rfind("?") + 1 if kind == "long" and scenes[idx]["kind"] == "check" else 0
                 if 0 < ask < len(line.rstrip()):   # a check: question and answer spoken apart, a pause between
-                    jobs += [(line[:ask].strip(), VOICES[lang], path[:-4] + "_q.mp3"),
-                             (line[ask:].strip(), VOICES[lang], path[:-4] + "_a.mp3")]
+                    jobs += [(line[:ask].strip(), VOICES[lang], path[:-4] + "_q.wav"),
+                             (line[ask:].strip(), VOICES[lang], path[:-4] + "_a.wav")]
                     keys += [(lang, kind, idx, "q"), (lang, kind, idx, "a")]
                     continue
                 jobs.append((line, VOICES[lang], path))
@@ -1850,7 +1910,7 @@ class VideoMaker:
                 continue
             try:
                 off = join_pause(jobs[keys.index(key)][2], jobs[keys.index((lang, kind, idx, "a"))][2], CHECK_PAUSE,
-                                 os.path.join(job, f"{lang}_{kind}{idx}.mp3"))
+                                 os.path.join(job, f"{lang}_{kind}{idx}.wav"))
             except RuntimeError:
                 continue
             answer = [(s + off, e + off, w) for s, e, w in a]
@@ -1860,7 +1920,7 @@ class VideoMaker:
         self.log(f"[video] {len(jobs)} narration clips spoken in {', '.join(texts)}")
 
         def clip(lang, kind, idx):
-            path = os.path.join(job, f"{lang}_{kind}{idx}.mp3")
+            path = os.path.join(job, f"{lang}_{kind}{idx}.wav")
             return path if (lang, kind, idx) in spoken else None
 
         def silence():
@@ -1884,7 +1944,7 @@ class VideoMaker:
         # most MAX_TEMPO, pitch kept), and only what still does not fit lengthens the shot, so the English video
         # has no silent waits and every language still fits the pictures
         kinds = [s["kind"] for s in scenes]
-        secs = {(l, i): mp3_seconds(clip(l, "long", i)) for l in texts for i in range(n_long) if clip(l, "long", i)}
+        secs = {(l, i): audio_seconds(clip(l, "long", i)) for l in texts for i in range(n_long) if clip(l, "long", i)}
         longest = []
         for i in range(n_long):
             en = secs.get(("en", i), 0.0)
@@ -1970,11 +2030,11 @@ class VideoMaker:
         for lang, lines in texts.items():
             screen = lines[n_long + n_short:n_long + n_short + sum(per_beat)]
             order = list(range(n_short))
-            secs = lambda bs: sum(mp3_seconds(clip(lang, "short", b)) + 0.4 for b in bs if clip(lang, "short", b))
+            secs = lambda bs: sum(audio_seconds(clip(lang, "short", b)) + 0.4 for b in bs if clip(lang, "short", b))
             while secs(order) > SHORT_MAX_SECONDS and len(order) > 2:
                 order.pop(-2)               # drop the weakest middle beat, keep the hook and the ending
             order = [b for b in order if clip(lang, "short", b)]
-            seconds = [mp3_seconds(clip(lang, "short", b)) for b in order]
+            seconds = [audio_seconds(clip(lang, "short", b)) for b in order]
             sk = [scenes[beats[b]["scene"]]["kind"] for b in order]
             fr, st, tot = timeline(seconds, sk)
             short_scenes, captions = [], []
