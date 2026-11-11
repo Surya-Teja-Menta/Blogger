@@ -219,7 +219,7 @@ def main() -> int:
     import torchaudio
     from faster_whisper import WhisperModel
 
-    torch.set_num_threads(os.cpu_count() or 4)
+    torch.set_num_threads(max(1, (os.cpu_count() or 4) - 1))     # one core stays free for the CI runner's own agent (a starved runner "loses communication" and the whole run is lost)
     t0 = time.time()
     drying = os.environ.get("CLONE_DRY", "1").strip() != "0"
     if drying:       # the recording's cleanest ten seconds, with its room taken out: the clone then speaks in a dry room

@@ -127,7 +127,7 @@ jobs:
           [ "$RUN_PUBLISH" = "true" ] || args+=(--no-publish)
           [ "$RUN_VIDEO" != "true" ] || args+=(--video)
           [ -z "$RUN_LESSON" ] || args+=(--lesson "$RUN_LESSON")
-          python -u main.py "$RUN_TOPIC" "${args[@]}" 2>&1 | tee run.log
+          nice -n 10 python -u main.py "$RUN_TOPIC" "${args[@]}" 2>&1 | tee run.log   # niced: the runner agent must never starve (a lost runner loses the whole run)
           status=${PIPESTATUS[0]}
           # the report can succeed while the video fails; a queued topic only counts as made with its video
           if [ "$RUN_VIDEO" = "true" ] && grep -q '^\[video\] FAILED' run.log; then status=1; fi
