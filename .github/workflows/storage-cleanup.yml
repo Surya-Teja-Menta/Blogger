@@ -1,0 +1,55 @@
+name: Clean up storage
+
+# Every Sunday: in the Cloudflare bucket, the 3 newest video folders (videos/<run>/) stay with everything in them;
+# every older video folder is emptied, except its PDFs. Nothing else in the bucket is touched (reports, the voice
+# sample, the voice farm). A folder younger than 24 hours is never deleted. Run it by hand with "dry run" ticked to
+# see what it would delete.
+on:
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report what would be deleted"
+        type: boolean
+        default: true
+      keep:
+        description: "How many of the newest video folders to keep whole"
+        default: "3"
+
+concurrency:
+  group: storage-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'PY'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          PY
+      - name: Clean up
+        env:
+          # a scheduled run has no inputs: it deletes for real; a manual run is a dry run unless unticked
+          CLEANUP_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          CLEANUP_KEEP: ${{ inputs.keep || '3' }}
+        run: python -u -m blogwriter.cleanup

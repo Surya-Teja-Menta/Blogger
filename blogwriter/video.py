@@ -32,7 +32,7 @@ from .mailer import send_email
 from .pricing import label
 from . import composer, design, diagram, graphics, layout, looks, mathexpr, voicefarm
 from .research import domain
-from .storage import link_for, prune_prefix, upload_run
+from .storage import link_for, upload_run
 from .web import UA
 from .writer import LANGS, strip_unsupported_numbers
 
@@ -64,7 +64,7 @@ DIAGRAM_MAX_LONG = 30     # ... and in a long video, where most shots are pictur
 CHECK_PAUSE = 3.0         # seconds of silence in a "check" shot for the viewer to think before the answer
 REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
 KEEP_SCORE = 5            # a diagram scoring this (of 10) stays: a fair picture of the idea beats words alone
-KEEP_DAYS = 14            # videos are deleted from object storage after this; review and post before then
+KEEP_VIDEOS = 3           # the weekly clean-up (cleanup.py) keeps this many newest video folders; older ones are emptied (PDFs stay)
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
          "quote", "equation", "plot", "graph", "derive", "surface", "check", "diagram")
 MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
@@ -2517,9 +2517,9 @@ class VideoMaker:
 
     def deliver(self, run_dir: str, out: str, files: Dict[str, str], plan: dict, email: bool,
                 verdict: Optional[dict] = None, meta: Optional[dict] = None, notes_at: str = "") -> None:
-        """Store the videos (deleted after KEEP_DAYS) and email the links plus the small files. Never posts."""
+        """Store the videos (the weekly clean-up keeps the KEEP_VIDEOS newest) and email the links plus the small files.
+        Never posts."""
         names = list(files) + ["posting_guide.txt"]
-        prune_prefix(self.s, "videos/", KEEP_DAYS, self.log)
         links = upload_run(self.s, out, names, self.log,
                            prefix=f"videos/{os.path.basename(os.path.normpath(run_dir))}")
         if not email:
@@ -2533,7 +2533,7 @@ class VideoMaker:
             listing += f"\n  study_notes.pdf: {pdf_url}"
         body = (f"Your videos for \"{plan['title']}\" are ready to review. Nothing has been posted.\n\n"
                 f"{summary(verdict or {})}\n(contact_sheet.jpg shows 12 frames at a glance)\n\n"
-                f"DOWNLOAD (links work for 7 days; the files are deleted from storage after {KEEP_DAYS} days):\n"
+                f"DOWNLOAD (links work for 7 days; storage keeps only the {KEEP_VIDEOS} newest videos, older ones are removed every Sunday, PDFs stay):\n"
                 f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
                 f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
         body += notes_section(meta or {}, pdf_url)

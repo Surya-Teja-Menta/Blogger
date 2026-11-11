@@ -3,7 +3,7 @@ import mimetypes
 import os
 import zipfile
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 
 from .config import Settings
 
@@ -89,3 +89,56 @@ def prune_prefix(settings: Settings, prefix: str, days: int, log: Callable[[str]
             log(f"[storage] deleted {len(old)} file(s) older than {days} days under {prefix}")
     except Exception as exc:
         log(f"[storage] could not clean up {prefix}: {type(exc).__name__}: {str(exc)[:120]}")
+
+
+def keep_latest_runs(settings: Settings, keep: int = 3, prefix: str = "videos/", keep_ext: Tuple[str, ...] = (".pdf",),
+                     dry_run: bool = False, min_age_hours: float = 24.0, log: Callable[[str], None] = print) -> dict:
+    """Weekly clean-up of the video folders (videos/<run>/...): the `keep` newest folders stay with everything in
+    them, every older folder is emptied except its PDFs (the study notes are for sale and must stay). Nothing outside
+    `prefix` is ever touched (reports/, voices/ and voice-farm/ are not this function's business), a folder newer than
+    `min_age_hours` is never deleted (a run may still be uploading it), and a listing that fails or comes back empty
+    deletes nothing. The newest folders are judged by the newest file in them. Returns what was (or, with dry_run,
+    would be) kept and deleted."""
+    result = {"kept": [], "emptied": [], "deleted_files": 0, "deleted_bytes": 0, "kept_pdfs": 0, "dry_run": dry_run}
+    if not settings.storage_configured or not prefix.startswith("videos/") or keep < 1:
+        log("[cleanup] storage not configured (or refused prefix/keep): nothing done")
+        return result
+    try:
+        s3 = _client(settings)
+        folders: Dict[str, list] = {}
+        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=settings.s3_bucket, Prefix=prefix):
+            for o in page.get("Contents", []):
+                parts = o["Key"][len(prefix):].split("/", 1)
+                if len(parts) == 2 and parts[0] and parts[1]:        # videos/<run>/<file>; loose files are left alone
+                    folders.setdefault(parts[0], []).append(o)
+        if not folders:
+            log("[cleanup] no video folders found: nothing done")
+            return result
+        newest = lambda name: max(o["LastModified"] for o in folders[name])          # noqa: E731
+        order = sorted(folders, key=newest, reverse=True)
+        result["kept"] = order[:keep]
+        now = datetime.now(timezone.utc)
+        doomed = []
+        for name in order[keep:]:
+            if (now - newest(name)).total_seconds() < min_age_hours * 3600:
+                result["kept"].append(name)                            # too fresh to be sure it is finished
+                continue
+            files = folders[name]
+            gone = [o for o in files if not o["Key"].lower().endswith(keep_ext)]
+            result["kept_pdfs"] += len(files) - len(gone)
+            if gone:
+                result["emptied"].append(name)
+            doomed += gone
+        result["deleted_files"] = len(doomed)
+        result["deleted_bytes"] = sum(o["Size"] for o in doomed)
+        if not dry_run:
+            for i in range(0, len(doomed), 1000):
+                s3.delete_objects(Bucket=settings.s3_bucket,
+                                  Delete={"Objects": [{"Key": o["Key"]} for o in doomed[i:i + 1000]], "Quiet": True})
+        verb = "would delete" if dry_run else "deleted"
+        log(f"[cleanup] kept the newest {len(result['kept'])} video folder(s) whole: {', '.join(result['kept'])}")
+        log(f"[cleanup] {verb} {len(doomed)} file(s), {result['deleted_bytes'] / 1e9:.2f} GB, from {len(result['emptied'])} "
+            f"older folder(s); {result['kept_pdfs']} PDF(s) kept")
+    except Exception as exc:                      # never delete on a doubt
+        log(f"[cleanup] FAILED, nothing more done: {type(exc).__name__}: {str(exc)[:200]}")
+    return result

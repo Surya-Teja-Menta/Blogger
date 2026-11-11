@@ -3096,3 +3096,80 @@ def test_a_light_1080p_copy_is_made_for_reviewing_and_never_costs_the_video(tmp_
     monkeypatch.setattr(video, "ffmpeg", lambda args, timeout=0: (_ for _ in ()).throw(RuntimeError("encoder died")))
     assert video.review_copy("big.mp4", str(dest), logs.append) is False and not dest.exists()
     assert "no 1080p review copy" in logs[-1]
+
+
+class _ListingBucket:
+    """Just enough of an S3 client for the clean-up: a paginator that lists keys, and delete_objects."""
+    def __init__(self, objects, fail=False):
+        self.objects, self.deleted, self.fail = objects, [], fail
+
+    def get_paginator(self, name):
+        bucket = self
+
+        class P:
+            def paginate(self, Bucket, Prefix=""):
+                if bucket.fail:
+                    raise RuntimeError("network down")
+                yield {"Contents": [o for o in bucket.objects if o["Key"].startswith(Prefix)]}
+        return P()
+
+    def delete_objects(self, Bucket, Delete):
+        self.deleted += [o["Key"] for o in Delete["Objects"]]
+
+
+def _bucket_objects(now):
+    def obj(key, days_old, size=1000):
+        return {"Key": key, "LastModified": now - timedelta(days=days_old), "Size": size}
+    out = []
+    for name, age in (("20261101_a", 10), ("20261104_b", 7), ("20261107_c", 4), ("20261109_d", 2), ("20261111_e", 0.2)):
+        out += [obj(f"videos/{name}/long_video_en.mp4", age, 10**9), obj(f"videos/{name}/short_en.mp4", age),
+                obj(f"videos/{name}/thumbnail.png", age), obj(f"videos/{name}/notes.pdf", age)]
+    out += [obj("videos/loose.txt", 30), obj("reports/20261031_x/documentary_report.pdf", 12),
+            obj("reports/20261031_x/article.md", 12), obj("voices/narrator.m4a", 40), obj("voice-farm/1/done.txt", 9)]
+    return out
+
+
+def _settings():
+    from blogwriter.config import Settings
+    return Settings(s3_endpoint="https://x", s3_bucket="b", s3_access_key="k", s3_secret_key="s")
+
+
+def test_the_weekly_clean_up_keeps_the_three_newest_videos_and_every_pdf(monkeypatch):
+    from blogwriter import storage
+    now = datetime.now(timezone.utc)
+    fake = _ListingBucket(_bucket_objects(now))
+    monkeypatch.setattr(storage, "_client", lambda settings: fake)
+    logs = []
+    r = storage.keep_latest_runs(_settings(), keep=3, log=logs.append)
+    # the 3 newest (e, d, c) stay whole; a and b are emptied, but their PDFs stay
+    assert r["kept"] == ["20261111_e", "20261109_d", "20261107_c"] and r["emptied"] == ["20261104_b", "20261101_a"]
+    assert sorted(fake.deleted) == sorted(f"videos/{n}/{f}" for n in ("20261101_a", "20261104_b")
+                                          for f in ("long_video_en.mp4", "short_en.mp4", "thumbnail.png"))
+    assert r["kept_pdfs"] == 2 and r["deleted_files"] == 6 and r["deleted_bytes"] > 2 * 10 ** 9
+    # nothing outside videos/<run>/ was touched: reports, the voice sample, the farm, a loose file
+    assert not any(k.startswith(("reports/", "voices/", "voice-farm/")) or k == "videos/loose.txt" for k in fake.deleted)
+    assert not any(k.lower().endswith(".pdf") for k in fake.deleted)
+
+
+def test_the_clean_up_does_nothing_on_a_dry_run_a_doubt_or_a_fresh_folder(monkeypatch):
+    from blogwriter import storage
+    now = datetime.now(timezone.utc)
+    fake = _ListingBucket(_bucket_objects(now))
+    monkeypatch.setattr(storage, "_client", lambda settings: fake)
+    r = storage.keep_latest_runs(_settings(), keep=3, dry_run=True, log=lambda m: None)
+    assert fake.deleted == [] and r["deleted_files"] == 6 and r["dry_run"] is True
+    # a folder younger than a day is never deleted, even when it is not among the newest
+    storage.keep_latest_runs(_settings(), keep=1, log=lambda m: None)
+    assert not any("20261111_e" in k for k in fake.deleted) and any("20261109_d" in k for k in fake.deleted)
+    # a listing that fails deletes nothing, and so does an empty one
+    broken, logs = _ListingBucket(_bucket_objects(now), fail=True), []
+    monkeypatch.setattr(storage, "_client", lambda settings: broken)
+    storage.keep_latest_runs(_settings(), log=logs.append)
+    assert broken.deleted == [] and "FAILED" in logs[-1]
+    empty = _ListingBucket([])
+    monkeypatch.setattr(storage, "_client", lambda settings: empty)
+    storage.keep_latest_runs(_settings(), log=logs.append)
+    assert empty.deleted == [] and "nothing done" in logs[-1]
+    # a refused prefix (anything but videos/...) and a keep below one do nothing
+    assert storage.keep_latest_runs(_settings(), prefix="reports/", log=logs.append)["deleted_files"] == 0
+    assert storage.keep_latest_runs(_settings(), keep=0, log=logs.append)["deleted_files"] == 0
