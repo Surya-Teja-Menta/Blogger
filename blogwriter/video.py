@@ -880,8 +880,8 @@ def ffmpeg(args: List[str], timeout: int = 900) -> None:
 # frame every second, a capped bit rate (a player's buffer never starves on a spike) and the index first (starts
 # at once). VIDEO_CODEC=av1|hevc forces a smaller file when the playback device is known to cope.
 CODECS = {
-    "h264": ("libx264", ["-crf", "17", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level:v", "5.1", "-g", "30",
-                         "-keyint_min", "30", "-bf", "2", "-maxrate", "40M", "-bufsize", "80M"]),
+    "h264": ("libx264", ["-crf", "20", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level:v", "5.1", "-g", "30",
+                         "-keyint_min", "30", "-bf", "2", "-maxrate", "30M", "-bufsize", "60M"]),
     "hevc": ("libx265", ["-crf", "20", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-g", "30",
                          "-x265-params", "log-level=error"]),
     "av1": ("libsvtav1", ["-crf", "28", "-pix_fmt", "yuv420p10le", "-g", "300", "-svtav1-params", "tune=0"]),
@@ -922,6 +922,25 @@ def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Calla
     except Exception as exc:             # a check must never cost a video
         log(f"[video] playback check failed: {type(exc).__name__}: {str(exc)[:120]}")
     return codec
+
+
+def review_copy(src: str, dest: str, log: Callable[[str], None] = print) -> bool:
+    """A light copy of the finished video to watch and review: 1080p H.264 at about 4 Mbit/s (a 4K file of 1 to 2 GB
+    stalls on a slow connection or a weak player; the 4K file is the one to upload to YouTube). The picture is
+    scaled, the soundtrack copied untouched, and the copy is checked like the original. Returns whether it was made;
+    never raises (the original is what matters)."""
+    try:
+        ffmpeg(["-i", src, "-vf", "scale=1920:1080:flags=lanczos", "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+                "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "30", "-maxrate", "8M", "-bufsize", "16M",
+                "-c:a", "copy", "-movflags", "+faststart", dest], timeout=3600)
+        log(f"[video] {os.path.basename(dest)}: {os.path.getsize(dest) / 1e6:.0f} MB; playback check: "
+            + playback_check(dest)["summary"])
+        return True
+    except Exception as exc:
+        log(f"[video] no 1080p review copy: {type(exc).__name__}: {str(exc)[:120]}")
+        if os.path.exists(dest):
+            os.remove(dest)
+        return False
 
 
 def playback_check(path: str) -> dict:
@@ -2194,6 +2213,8 @@ class VideoMaker:
         if not os.path.exists(dest):
             raise RuntimeError("the long video was not rendered")
         files, plan, texts = st["files"], st["plan"], st["texts"]
+        if review_copy(dest, os.path.join(out, "long_video_en_1080p.mp4"), self.log):
+            files["long_video_en_1080p.mp4"] = "video"
         self.log("[video] quality check (contact sheet + stillness)")
         try:
             verdict = review(self.s, dest, st["total"] / FPS, os.path.join(out, "contact_sheet.jpg"))
@@ -2504,6 +2525,9 @@ class VideoMaker:
         if not email:
             return
         listing = "\n".join(f"  {n}: {links[n]}" for n in names if n in links) or f"  saved in {out}"
+        if "long_video_en_1080p.mp4" in links:
+            listing += ("\n  (long_video_en_1080p.mp4 is a light copy to watch and review; upload long_video_en.mp4, "
+                        "the 4K file, to YouTube)")
         pdf_url = link_for(self.s, notes_at)      # the study notes in Cloudflare storage; made here, never in the artifact
         if pdf_url:
             listing += f"\n  study_notes.pdf: {pdf_url}"

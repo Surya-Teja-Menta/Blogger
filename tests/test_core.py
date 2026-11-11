@@ -3077,3 +3077,22 @@ def test_the_delivered_file_is_checked_the_way_a_player_meets_it(tmp_path):
                    check=True)
     assert any("pixel format yuv444p" in p for p in video.playback_check(odd)["problems"])
     assert "fine" in ok["summary"] and "PROBLEMS" in video.playback_check(odd)["summary"]
+
+
+def test_a_light_1080p_copy_is_made_for_reviewing_and_never_costs_the_video(tmp_path, monkeypatch):
+    from blogwriter import video
+    calls, logs = [], []
+    dest = tmp_path / "review.mp4"
+
+    def fake(args, timeout=0):
+        calls.append(args)
+        dest.write_bytes(b"x" * 1_000_000)
+    monkeypatch.setattr(video, "ffmpeg", fake)
+    monkeypatch.setattr(video, "playback_check", lambda p: {"summary": "h264 fine"})
+    assert video.review_copy("big.mp4", str(dest), logs.append) is True
+    a = calls[0]
+    assert a[a.index("-vf") + 1].startswith("scale=1920:1080") and a[a.index("-c:a") + 1] == "copy"
+    assert a[a.index("-maxrate") + 1] == "8M" and "-movflags" in a and "1 MB" in logs[0]
+    monkeypatch.setattr(video, "ffmpeg", lambda args, timeout=0: (_ for _ in ()).throw(RuntimeError("encoder died")))
+    assert video.review_copy("big.mp4", str(dest), logs.append) is False and not dest.exists()
+    assert "no 1080p review copy" in logs[-1]
