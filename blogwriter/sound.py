@@ -87,12 +87,15 @@ def hit(path: str, root_hz: float = 40.0) -> None:
     _write(path, np.stack([y, y], axis=1) * 0.8)
 
 
+BED_DEFAULT = 0.16           # measured: 0.34 left the music only 8 dB under the voice in every pause (heard as loud, messy, pumping)
+
+
 def bed_level() -> float:
     """The music's volume under the narration (repository variable MUSIC_LEVEL; 0 = no music)."""
     try:
-        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or 0.34)))
+        return max(0.0, min(1.0, float(os.environ.get("MUSIC_LEVEL") or BED_DEFAULT)))
     except ValueError:
-        return 0.34
+        return BED_DEFAULT
 
 
 def whoosh_level() -> float:
@@ -106,7 +109,8 @@ def whoosh_level() -> float:
 
 
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
-               tempos: Optional[List[float]] = None, final: bool = True) -> Tuple[str, int]:
+               tempos: Optional[List[float]] = None, final: bool = True, music_gain: float = 1.0,
+               stems: bool = False) -> Tuple[str, int]:
     """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit] -> [out]. The voice is cleaned up,
     the music ducks under it, the effects are placed, and the whole is mastered to -14 LUFS (YouTube).
     No "|" anywhere: on Windows the npx shim would read it as a pipe."""
@@ -118,10 +122,13 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
                  "highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,"
                  "equalizer=f=3500:t=q:w=1.2:g=1.5,apad,asplit=2[voice][key]")   # apad: music runs past the last word
     # the music is a faint floor under the narration, never a second thing to listen to: about 20 dB under the
-    # voice (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
+    # voice (master() measures the real mix and lowers the bed until the pauses are at least PAUSE_FLOOR_DB under it) (a cloned voice is less loud and more dynamic than a synthetic one, so the old level was heard as
     # background noise), pushed down further while the voice speaks. MUSIC_LEVEL=0 removes it altogether.
-    parts.append(f"[{m}:a]highpass=f=110,volume={bed_level():.3f}[bedraw]")   # no rumble: small speakers cannot play it
-    parts.append("[bedraw][key]sidechaincompress=threshold=0.03:ratio=3.5:attack=25:release=800[bed]")
+    parts.append(f"[{m}:a]highpass=f=110,volume={bed_level() * music_gain:.3f}[bedraw]")   # no rumble: small speakers cannot play it
+    parts.append("[bedraw][key]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=900[bed]")
+    if stems:                       # the narration and the music bed on their own: how loud is the bed in the pauses?
+        parts += ["[voice]aresample=48000[outv]", "[bed]aresample=48000[outb]"]
+        return ";".join(parts), 3
     sfx = []
     for name, idx, times, vol in (("w", w, whoosh_at if whoosh_level() > 0 else [], whoosh_level()), ("h", h, hit_at, 0.18)):
         if not times:
@@ -154,3 +161,43 @@ def two_pass_filter(report: str) -> str:
         return plain
     return (f"{plain}:measured_I={vals['input_i']}:measured_TP={vals['input_tp']}:measured_LRA={vals['input_lra']}"
             f":measured_thresh={vals['input_thresh']}:offset={vals['target_offset']}:linear=true")
+
+
+PAUSE_FLOOR_DB = 18.0       # the music in a pause must sit at least this far under the narration (300-3400 Hz level)
+
+
+def band_db(x: np.ndarray, sr: int, lo: float = 300.0, hi: float = 3400.0) -> float:
+    """RMS level (dB, relative to full scale) of the lo..hi Hz part of a mono signal."""
+    if len(x) < 64:
+        return -120.0
+    spec = np.fft.rfft(x.astype("float64") * np.hanning(len(x)))
+    f = np.fft.rfftfreq(len(x), 1 / sr)
+    spec[(f < lo) | (f > hi)] = 0
+    y = np.fft.irfft(spec, len(x))
+    return float(20 * np.log10(np.sqrt((y ** 2).mean()) / 0.612 + 1e-9))      # 0.612: the Hann window's own loss
+
+
+def _read_mono(path: str):
+    with wave.open(path, "rb") as w:
+        sr, ch = w.getframerate(), w.getnchannels()
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype("float32") / 32768
+    return sr, (x.reshape(-1, ch).mean(1) if ch > 1 else x)
+
+
+def pause_margin(voice: str, bed: str, spans: List[Tuple[float, float]]) -> Optional[Tuple[float, float, int]]:
+    """How far under the narration the music sits in the pauses: (speech level dB, music level in the pauses dB,
+    number of pauses measured), or None if there is nothing to compare. `voice` and `bed` are the two stems of the
+    mix (see mix_filter's stems), `spans` the (start s, end s) of the spoken lines. A pause is the stretch between
+    two lines at least half a second long, measured from 0.1 s after a line to 0.05 s before the next."""
+    try:
+        sr, v = _read_mono(voice)
+        _, b = _read_mono(bed)
+    except (OSError, wave.Error, EOFError):
+        return None
+    seg = lambda x, a, c: x[max(0, int(a * sr)):max(0, int(c * sr))]       # noqa: E731
+    speech = [band_db(seg(v, s + 0.2, e - 0.2), sr) for s, e in spans if e - s > 1.2]
+    pauses = [band_db(seg(b, spans[i][1] + 0.1, spans[i + 1][0] - 0.05), sr)
+              for i in range(len(spans) - 1) if spans[i + 1][0] - spans[i][1] >= 0.5]
+    if not speech or not pauses:
+        return None
+    return float(np.median(speech)), float(np.median(pauses)), len(pauses)

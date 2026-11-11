@@ -874,37 +874,42 @@ def ffmpeg(args: List[str], timeout: int = 900) -> None:
         raise RuntimeError(f"ffmpeg failed: {r.stderr[-600:]}")
 
 
-# The delivered video's codec. The frames are rendered as high-quality H.264 parts; the whole video is then encoded
-# once with the most efficient codec this machine's ffmpeg has: AV1 (SVT-AV1, what YouTube and Netflix stream) is
-# about half the size of H.264 at the same sharpness, HEVC about a third smaller. 10-bit colour compresses better
-# still and keeps soft background gradients free of banding. VIDEO_CODEC=av1|hevc|h264 forces one.
+# The delivered video's codec. The owner watched the AV1 10-bit 4K files stall (picture and sound stopping and
+# starting): most laptops, TVs and browsers cannot decode AV1 in hardware, and in software 4K 10-bit runs at half
+# speed. So the default is H.264 High 4:2:0 8-bit, which every device since about 2012 plays from hardware, with a key
+# frame every second, a capped bit rate (a player's buffer never starves on a spike) and the index first (starts
+# at once). VIDEO_CODEC=av1|hevc forces a smaller file when the playback device is known to cope.
 CODECS = {
+    "h264": ("libx264", ["-crf", "17", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level:v", "5.1", "-g", "30",
+                         "-keyint_min", "30", "-bf", "2", "-maxrate", "40M", "-bufsize", "80M"]),
+    "hevc": ("libx265", ["-crf", "20", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-g", "30",
+                         "-x265-params", "log-level=error"]),
     "av1": ("libsvtav1", ["-crf", "28", "-pix_fmt", "yuv420p10le", "-g", "300", "-svtav1-params", "tune=0"]),
-    "hevc": ("libx265", ["-crf", "20", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-x265-params", "log-level=error"]),
-    "h264": ("libx264", ["-crf", "18", "-pix_fmt", "yuv420p", "-preset", "slow"]),
 }
 
 
 def final_codec() -> str:
-    """The best codec the ffmpeg here can encode (or the one VIDEO_CODEC asks for, when it is available)."""
+    """H.264 (plays everywhere), or the codec VIDEO_CODEC asks for when this ffmpeg can encode it."""
     have = footage_encoders(ffmpeg_exe())
     wanted = os.environ.get("VIDEO_CODEC", "").strip().lower()
-    order = ([wanted] if wanted in CODECS else []) + ["av1", "hevc", "h264"]
+    order = ([wanted] if wanted in CODECS else []) + ["h264", "hevc", "av1"]
     return next((c for c in order if CODECS[c][0] in have), "h264")
 
 
 def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Callable[[str], None] = print,
                  concat: bool = False) -> str:
-    """Encode the delivered video once, small and sharp, with its soundtrack. `video` is a rendered H.264 file (or,
-    with concat, a list of parts for ffmpeg's concat demuxer). If the encode fails, the rendered pictures are kept as
-    they are (never a lost video). Returns the codec used."""
+    """Encode the delivered video once, with its soundtrack. `video` is a rendered H.264 file (or, with concat, a list
+    of parts for ffmpeg's concat demuxer). If the encode fails, the rendered pictures are kept as they are (never a
+    lost video). The result is then checked the way a player meets it (playback_check). Returns the codec used."""
     codec = final_codec()
     encoder, args = CODECS[codec]
-    speed = {"av1": ("6", "8", "10"), "hevc": ("medium", "fast", "faster")}.get(codec)
+    speed = {"av1": ("6", "8", "10"), "hevc": ("medium", "fast", "faster"),
+             "h264": ("medium", "fast", "veryfast")}.get(codec)
     if speed:                            # bigger frames, faster preset: a long 4K or 8K encode still fits its job
         args = args + ["-preset", speed[0] if pixels <= 2560 * 1440 else speed[1] if pixels <= 3840 * 2160 else speed[2]]
     source = ["-f", "concat", "-safe", "0", "-i", video] if concat else ["-i", video]
-    tail = ["-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", dest]
+    tail = ["-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest",
+            "-movflags", "+faststart", dest]
     try:
         ffmpeg([*source, "-i", soundtrack, "-c:v", encoder, *args, *tail], timeout=4 * 3600)
     except (RuntimeError, subprocess.SubprocessError) as exc:
@@ -912,7 +917,57 @@ def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Calla
         ffmpeg([*source, "-i", soundtrack, "-c:v", "copy", *tail], timeout=3600)
         codec = "h264"
     log(f"[video] {os.path.basename(dest)}: {codec.upper()}, {os.path.getsize(dest) / 1e6:.0f} MB")
+    try:
+        log("[video] playback check: " + playback_check(dest)["summary"])
+    except Exception as exc:             # a check must never cost a video
+        log(f"[video] playback check failed: {type(exc).__name__}: {str(exc)[:120]}")
     return codec
+
+
+def playback_check(path: str) -> dict:
+    """The file as a player meets it: codec and pixel format, every frame and audio packet one step after the other
+    (a missing or doubled timestamp is a stall), the picture and the sound ending together, and how fast this machine
+    decodes it (below 1.3x real time a player without hardware decoding would stutter). Returns the numbers, the
+    problems found ("problems": []) and a one-line "summary"."""
+    exe = ffmpeg_exe()
+    info = subprocess.run([exe, "-hide_banner", "-i", path], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120).stderr
+    one = lambda pattern: (re.search(pattern, info) or [None, "?"])[1]                  # noqa: E731
+    codec, pix, size = one(r"Video: (\w+)"), one(r"Video:.*?(yuv\w+)"), one(r"Video:.*?, (\d{3,5}x\d{3,5})")
+    problems: List[str] = []
+    ends, irregular, frames = {}, {}, {}
+    for kind, tb in (("v", 15360), ("a", 48000)):
+        out = subprocess.run([exe, "-v", "error", "-i", path, "-map", f"0:{kind}:0", "-c", "copy", "-f", "framecrc", "-"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900).stdout
+        rows = [ln.split(",") for ln in out.splitlines() if re.match(r"^\d", ln)]
+        pts, dur = [int(r[1]) for r in rows], [int(r[3]) for r in rows]
+        irregular[kind] = sum(1 for i in range(len(pts) - 1) if pts[i + 1] - pts[i] != dur[i])
+        frames[kind] = len(rows)
+        ends[kind] = (pts[-1] + dur[-1]) / tb if rows else 0.0
+    if codec != "h264" and os.environ.get("VIDEO_CODEC", "").strip().lower() not in ("av1", "hevc"):
+        problems.append(f"codec {codec} is not H.264")
+    if pix != "yuv420p" and codec == "h264":
+        problems.append(f"pixel format {pix}")
+    if irregular["v"] > 2 or irregular["a"] > 2:
+        problems.append(f"irregular timestamps (picture {irregular['v']}, sound {irregular['a']})")
+    if abs(ends["v"] - ends["a"]) > 0.25:
+        problems.append(f"picture ends at {ends['v']:.2f} s but sound at {ends['a']:.2f} s")
+    speed = 0.0
+    try:
+        mid = max(0.0, min(ends["v"], ends["a"]) / 2 - 10)
+        err = subprocess.run([exe, "-hide_banner", "-ss", f"{mid:.1f}", "-t", "20", "-i", path, "-an", "-f", "null", "-"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900).stderr
+        m = re.findall(r"speed=\s*([\d.]+)x", err)
+        speed = float(m[-1]) if m else 0.0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    if 0 < speed < 1.3 and codec == "h264":
+        problems.append(f"decodes at only {speed:.1f}x real time here")
+    summary = (f"{codec} {pix} {size}, {frames['v']} frames and {frames['a']} audio packets in regular steps "
+               f"({irregular['v']}+{irregular['a']} irregular), picture {ends['v']:.2f} s / sound {ends['a']:.2f} s, "
+               f"decodes at {speed:.1f}x real time" + (f"; PROBLEMS: {'; '.join(problems)}" if problems else "; fine"))
+    return {"codec": codec, "pix_fmt": pix, "size": size, "frames": frames, "irregular": irregular, "ends": ends,
+            "decode_speed": speed, "problems": problems, "summary": summary}
 
 
 def timeline(seconds: List[float], kinds: List[str], holds: Optional[List[int]] = None) -> tuple:
@@ -924,16 +979,52 @@ def timeline(seconds: List[float], kinds: List[str], holds: Optional[List[int]] 
     return frames, starts, sum(frames) - TRANSITION * (len(frames) - 1)
 
 
+def music_gain_for(clips: List[str], voice_at: List[float], tempos: Optional[List[float]], inputs: List[str],
+                   pre: str, log: Callable[[str], None], seconds: float, rounds: int = 3) -> float:
+    """The factor to put on the music bed so that, in the pauses, it sits at least sound.PAUSE_FLOOR_DB under the
+    narration. Measured on the real thing: the narration and the bed are mixed on their own (no effects), their
+    levels compared where the lines pause, and the bed lowered by exactly the shortfall; then measured again, so a
+    loud composition, a quiet voice or a changed setting can never leave the music louder than the voice allows."""
+    spans = [(t, t + audio_seconds(c) / (tempos[k] if tempos and tempos[k] > 1.005 else 1.0))
+             for k, (c, t) in enumerate(zip(clips, voice_at))]
+    gain, v_wav, b_wav = 1.0, pre + ".voice.wav", pre + ".bed.wav"
+    try:
+        for attempt in range(rounds):
+            graph, _ = sound.mix_filter(voice_at, [], [], tempos, final=False, music_gain=gain, stems=True)
+            ffmpeg([*inputs, "-filter_complex", graph, "-t", f"{seconds:.3f}", "-map", "[outv]", "-ac", "2", v_wav,
+                    "-map", "[outb]", "-ac", "2", b_wav])
+            got = sound.pause_margin(v_wav, b_wav, spans)
+            if got is None:
+                return gain
+            speech, pause, n = got
+            margin = speech - pause
+            log(f"[audio] music in {n} pauses is {margin:.1f} dB under the narration (want {sound.PAUSE_FLOOR_DB:.0f}+), "
+                f"music gain {gain:.2f}")
+            if margin >= sound.PAUSE_FLOOR_DB or sound.bed_level() <= 0:
+                return gain
+            gain *= 10 ** (-(sound.PAUSE_FLOOR_DB - margin + 0.5) / 20)
+        return gain
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:      # never cost a video: the plain mix goes on
+        log(f"[audio] music level check failed ({type(exc).__name__}: {str(exc)[:100]}); using the standard level")
+        return min(gain, 1.0)
+    finally:
+        for f in (v_wav, b_wav):
+            if os.path.exists(f):
+                os.remove(f)
+
+
 def master(clips: List[str], starts: List[int], kinds: List[str], total: int, assets: dict, dest: str,
            log: Callable[[str], None], tempos: Optional[List[float]] = None) -> None:
     """The finished soundtrack of one language: narration (cleaned up), music ducked under it, a whoosh on
-    every transition and a hit under every figure, mastered to YouTube loudness."""
+    every transition and a hit under every figure, mastered to YouTube loudness. The music's level is measured in the
+    pauses and lowered until it is well under the voice (music_gain_for)."""
     voice_at = [(st + LEAD) / FPS for st in starts]
     whoosh_at = [st / FPS - 0.25 for st in starts[1:]]
     hit_at = [(st + 14) / FPS for st, k in zip(starts, kinds) if k in CHART_KINDS]
-    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos, final=False)
     inputs = sum((["-i", c] for c in clips), []) + ["-i", assets["music"], "-i", assets["whoosh"], "-i", assets["hit"]]
     pre = dest + ".pre.wav"
+    gain = music_gain_for(clips, voice_at, tempos, inputs, pre, log, total / FPS)
+    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos, final=False, music_gain=gain)
     ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", "-t", f"{total / FPS:.3f}", "-ac", "2", pre])
     try:        # two passes: measure the mix, then set it to -14 LUFS by one fixed gain (no pumping between sentences)
         r = subprocess.run([ffmpeg_exe(), "-hide_banner", "-nostats", "-i", pre, "-af",

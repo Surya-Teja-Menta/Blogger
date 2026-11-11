@@ -1982,7 +1982,8 @@ def test_the_video_is_encoded_once_with_the_best_codec_and_never_lost(monkeypatc
     from blogwriter import video
     monkeypatch.setattr(video, "ffmpeg_exe", lambda: "ffmpeg")
     monkeypatch.delenv("VIDEO_CODEC", raising=False)
-    for listing, best in (("libsvtav1 libx265 libx264", "av1"), ("libx265 libx264", "hevc"), ("libx264", "h264"), ("", "h264")):
+    for listing, best in (("libsvtav1 libx265 libx264", "h264"), ("libx265 libx264", "h264"), ("libx264", "h264"),
+                          ("libsvtav1 libx265", "hevc"), ("", "h264")):          # H.264 plays everywhere: always first
         monkeypatch.setattr(video, "footage_encoders", lambda exe, l=listing: l)
         assert video.final_codec() == best
     monkeypatch.setattr(video, "footage_encoders", lambda exe: "libsvtav1 libx265 libx264")
@@ -2003,7 +2004,7 @@ def test_the_video_is_encoded_once_with_the_best_codec_and_never_lost(monkeypatc
     assert first[:6] == ["-f", "concat", "-safe", "0", "-i", "parts.txt"] and "yuv420p10le" in first
     assert first[first.index("-preset") + 1] == "8"                       # 4K: the faster AV1 preset
     assert second[second.index("-c:v") + 1] == "copy"                     # the rendered pictures are kept
-    assert any("AV1 encode failed" in m for m in logs) and "H264, 2 MB" in logs[-1]
+    assert any("AV1 encode failed" in m for m in logs) and any("H264, 2 MB" in m for m in logs)
 
 
 def test_the_resolution_is_4k_by_default_and_8k_on_request(monkeypatch):
@@ -2322,7 +2323,7 @@ def test_the_plan_carries_how_the_music_should_feel():
     from blogwriter import video
     assert video.check_brief({"sound": "slow, glassy"}, "education")["sound"] == "slow, glassy"
     assert video.check_brief({}, "education")["sound"] == ""
-    assert "highpass=f=110,volume=0.340[bedraw]" in sound_mix()
+    assert "highpass=f=110,volume=0.160[bedraw]" in sound_mix()
 
 
 def sound_mix():
@@ -2333,11 +2334,12 @@ def sound_mix():
 def test_the_music_is_a_faint_floor_under_the_voice_and_can_be_switched_off(monkeypatch):
     from blogwriter import sound
     monkeypatch.delenv("MUSIC_LEVEL", raising=False)
-    assert sound.bed_level() == 0.34 and "volume=0.340[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    assert sound.bed_level() == sound.BED_DEFAULT == 0.16 and "volume=0.160[bedraw]" in sound.mix_filter([1.0], [], [])[0]
+    assert "volume=0.080[bedraw]" in sound.mix_filter([1.0], [], [], music_gain=0.5)[0]
     monkeypatch.setenv("MUSIC_LEVEL", "0")
     assert sound.bed_level() == 0 and "volume=0.000[bedraw]" in sound.mix_filter([1.0], [], [])[0]
     monkeypatch.setenv("MUSIC_LEVEL", "loud")
-    assert sound.bed_level() == 0.34
+    assert sound.bed_level() == 0.16
 
 
 class _FakeBucket:
@@ -3013,3 +3015,65 @@ def test_the_pace_uses_rubberband_and_falls_back_to_atempo_and_a_cloned_line_is_
     assert len(seen) == 1 and "-af" not in seen[0]
     words = video.Cloned([(0.0, 1.0, "a")])
     assert video.tighten(str(tmp_path / "never_read.wav"), words) is words      # already cut at its real edges and verified
+
+
+def _stem(path, seconds, spans, speech_db, floor_db, sr=48000):
+    """A stereo wav: noise (300-3400 Hz-ish) at speech_db inside spans, a steady hum at floor_db everywhere else."""
+    import wave
+    import numpy as np
+    t = np.arange(int(seconds * sr)) / sr
+    x = np.sin(2 * np.pi * 440 * t) * 10 ** (floor_db / 20) * 1.414
+    rng = np.random.default_rng(1)
+    for a, b in spans:
+        k = slice(int(a * sr), int(b * sr))
+        x[k] = (np.sin(2 * np.pi * 700 * t[k]) + np.sin(2 * np.pi * 1500 * t[k]) * 0.5) * 10 ** (speech_db / 20) * 0.9
+    pcm = (np.clip(np.stack([x, x], 1), -1, 1) * 32767).astype("<i2")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+
+
+def test_the_music_level_in_the_pauses_is_measured_and_the_bed_is_lowered_until_it_is_well_under_the_voice(tmp_path, monkeypatch):
+    from blogwriter import sound, video
+    spans = [(1.0, 4.0), (4.8, 8.0), (9.0, 12.0)]
+    voice, bed = str(tmp_path / "v.wav"), str(tmp_path / "b.wav")
+    _stem(voice, 13, spans, -18, -90)
+    _stem(bed, 13, [], -90, -30)                                     # a bed 12 dB under the voice, steady
+    speech, pause, n = sound.pause_margin(voice, bed, spans)
+    assert n == 2 and 9 < speech - pause < 15                         # about 12 dB under: too loud
+    _stem(bed, 13, [], -90, -45)
+    assert 24 < sound.pause_margin(voice, bed, spans)[0] - sound.pause_margin(voice, bed, spans)[1] < 30
+    assert sound.pause_margin(voice, bed, [(1.0, 4.0)]) is None       # no pause, nothing to compare
+    assert sound.pause_margin(str(tmp_path / "missing.wav"), bed, spans) is None
+    # the loop: measured 6 dB under -> lowered by 12.5 dB (to reach 18.5), then measured again and left alone
+    answers = iter([(-18.0, -24.0, 5), (-18.0, -36.6, 5)])
+    monkeypatch.setattr(video, "ffmpeg", lambda args, timeout=0: None)
+    monkeypatch.setattr(sound, "pause_margin", lambda v, b, s: next(answers))
+    monkeypatch.setattr(video, "audio_seconds", lambda c: 3.0)
+    logs = []
+    gain = video.music_gain_for(["a.wav", "b.wav"], [1.0, 6.0], None, [], str(tmp_path / "pre.wav"), logs.append, 12.0)
+    assert abs(gain - 10 ** (-12.5 / 20)) < 1e-6 and len(logs) == 2 and "6.0 dB under" in logs[0] and "18.6 dB under" in logs[1]
+    # a measurement that cannot be made must not cost the video
+    monkeypatch.setattr(video, "ffmpeg", lambda args, timeout=0: (_ for _ in ()).throw(RuntimeError("no ffmpeg")))
+    assert video.music_gain_for(["a.wav"], [1.0], None, [], str(tmp_path / "pre2.wav"), logs.append, 5.0) == 1.0
+    assert "check failed" in logs[-1]
+
+
+def test_the_delivered_file_is_checked_the_way_a_player_meets_it(tmp_path):
+    import shutil
+    import subprocess
+    from blogwriter import video
+    exe = video.ffmpeg_exe()
+    if not (shutil.which(exe) or os.path.exists(exe)):
+        pytest.skip("no ffmpeg")
+    good, odd = str(tmp_path / "good.mp4"), str(tmp_path / "odd.mp4")
+    src = ["-f", "lavfi", "-i", "testsrc=size=320x240:rate=30:duration=2", "-f", "lavfi", "-i", "sine=duration=2"]
+    subprocess.run([exe, "-v", "error", "-y", *src, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "30", "-c:a", "aac",
+                    "-shortest", good], check=True)
+    ok = video.playback_check(good)
+    assert ok["codec"] == "h264" and ok["pix_fmt"] == "yuv420p" and ok["size"] == "320x240" and ok["problems"] == []
+    assert ok["frames"]["v"] == 60 and ok["irregular"] == {"v": 0, "a": 0} and abs(ok["ends"]["v"] - ok["ends"]["a"]) < 0.25
+    subprocess.run([exe, "-v", "error", "-y", *src, "-c:v", "libx264", "-pix_fmt", "yuv444p", "-c:a", "aac", "-shortest", odd],
+                   check=True)
+    assert any("pixel format yuv444p" in p for p in video.playback_check(odd)["problems"])
+    assert "fine" in ok["summary"] and "PROBLEMS" in video.playback_check(odd)["summary"]

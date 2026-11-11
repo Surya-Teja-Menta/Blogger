@@ -78,13 +78,13 @@ jobs:
           if ready; then echo "VOICE_PYTHON=$GITHUB_WORKSPACE/.voice/bin/python" >> "$GITHUB_ENV"
           else echo "the voice environment did not install: the standard voice will speak"; fi
 
-      # the delivered video is encoded with AV1 (small and sharp): Ubuntu's ffmpeg has the SVT-AV1 encoder
-      - name: Video encoder (AV1)
+      # the delivered video is H.264 (plays on every device; AV1 stalled on the owner's): Ubuntu's ffmpeg has libx264
+      - name: Video encoder (H.264)
         if: inputs.video
         run: |
-          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libsvtav1 ||
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 ||
             { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
-          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libsvtav1|libx265" || echo "no AV1 or HEVC encoder: H.264 is kept"
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libx264" || echo "no libx264: the rendered H.264 is kept"
 
       # Every repository secret and variable becomes an environment variable of the same name, so a new API key
       # only has to be added in Settings -> Secrets and variables -> Actions (no change to this file).
@@ -310,11 +310,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Video encoder (AV1)
+      - name: Video encoder (H.264)
         run: |
-          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libsvtav1 ||
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 ||
             { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
-          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libsvtav1|libx265" || echo "no AV1 or HEVC encoder: H.264 is kept"
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libx264" || echo "no libx264: the rendered H.264 is kept"
       - name: Load all secrets and variables
         env:
           ALL_SECRETS: ${{ toJSON(secrets) }}
