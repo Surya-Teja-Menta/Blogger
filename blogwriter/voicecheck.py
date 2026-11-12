@@ -18,6 +18,8 @@ HOP = 0.01                    # seconds between measurements
 HOLE = 0.45                   # a silence inside a line longer than this is a hole (a comma lasts 0.2 to 0.35 s)
 HOLE_TO = 0.28                # a hole is shortened to this
 WORDS_PER_SECOND = (1.7, 4.4)  # slower or faster than this is a dragged or a rushed take
+HISS_MAX = -34.0              # hiss_ratio above this is a hissy take (measured on a finished video: clean lines -43 +/- 3, the worst clean one -36.5, a hissy one -28)
+HISS_FIX_TO = -38.0           # a repaired line should get under this
 SIMILAR = 0.86                # a heard word this close to the script's word is the same word (recogniser noise)
 
 SMALL = {w: k for k, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
@@ -149,7 +151,7 @@ def junk(x: np.ndarray, sr: int, heard: List[list], pad: Tuple[float, float] = (
 
 def hiss_ratio(x: np.ndarray, sr: int) -> float:
     """How much of the speech is high-frequency noise: the level of 6-11 kHz against 0.3-3 kHz, over the line's
-    voiced frames (dB; lower is cleaner; a clean voice sits near -25, a hissy one near -12). Sibilants lift single
+    voiced frames (dB; lower is cleaner; measured on a finished video, clean lines sit near -43 (the worst clean one -36), a hissy take near -28). Sibilants lift single
     frames, so the median over the loud frames is used."""
     if sr < 16000:
         return -99.0
@@ -167,16 +169,17 @@ def judge(script: str, x: np.ndarray, sr: int, heard: List[list]) -> Dict[str, o
     got = " ".join(w[2] for w in heard)
     bad, notes = fidelity(script, got)
     hs, js = holes(x, sr), junk(x, sr, heard)
+    hiss = hiss_ratio(x, sr)
     span = (heard[-1][1] - heard[0][0]) if heard else 0.0
     words = len(tokens(script))
     rate = words / span if span > 0.3 else 0.0
     clip = float((np.abs(x) > 0.995).mean()) if len(x) else 0.0
     odd_rate = 0.0 if WORDS_PER_SECOND[0] <= rate <= WORDS_PER_SECOND[1] or words < 4 else 1.0
     score = (10.0 * bad + 4.0 * sum(min(2.0, e - s) for s, e in hs) + 3.0 * sum(min(1.0, e - s) for s, e in js)
-             + 4.0 * odd_rate + 100.0 * min(clip * 100, 1.0) + max(0.0, hiss_ratio(x, sr) + 20.0) * 0.3)
+             + 4.0 * odd_rate + 100.0 * min(clip * 100, 1.0) + 8.0 * max(0.0, hiss - HISS_MAX))
     return {"bad": bad, "notes": notes, "holes": hs, "junk": js, "rate": round(rate, 2), "clip": round(clip, 5),
-            "hiss": round(hiss_ratio(x, sr), 1), "score": round(score, 2),
-            "clean": bad == 0 and not hs and not js and not odd_rate and clip < 1e-4}
+            "hiss": round(hiss, 1), "score": round(score, 2),
+            "clean": bad == 0 and not hs and not js and not odd_rate and clip < 1e-4 and hiss <= HISS_MAX}
 
 
 def mend(x: np.ndarray, sr: int, heard: List[list]) -> Tuple[np.ndarray, List[list]]:

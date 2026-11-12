@@ -3173,3 +3173,42 @@ def test_the_clean_up_does_nothing_on_a_dry_run_a_doubt_or_a_fresh_folder(monkey
     # a refused prefix (anything but videos/...) and a keep below one do nothing
     assert storage.keep_latest_runs(_settings(), prefix="reports/", log=logs.append)["deleted_files"] == 0
     assert storage.keep_latest_runs(_settings(), keep=0, log=logs.append)["deleted_files"] == 0
+
+
+def test_a_hissy_take_is_rejected_by_the_checker_and_a_hissy_line_is_cleaned_before_mixing(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import wave
+    import numpy as np
+    from blogwriter import video, voicecheck as vc
+    sr = 24000
+    voice, words = _fake_voice([x for k in range(8) for x in (("w", 0.3), ("s", 0.08))])
+    assert vc.judge(" ".join(w[2] for w in words), voice, sr, words)["clean"]
+    # the same voice with broadband noise through every word (the voice model's hiss): rejected, and costly in the score
+    rng = np.random.default_rng(3)
+    hissy = (voice + rng.normal(0, 0.03, len(voice)) * (np.abs(voice) > 0.01)).astype("float32")
+    j = vc.judge(" ".join(w[2] for w in words), hissy, sr, words)
+    assert j["hiss"] > vc.HISS_MAX and not j["clean"] and j["score"] > vc.judge("a b c d", voice, sr, words)["score"] + 5
+    # the repair: a clean line is left alone, a hissy one is replaced by a cleaner copy, the original stays
+    exe = video.ffmpeg_exe()
+    if not (shutil.which(exe) or os.path.exists(exe)) or "afftdn" not in subprocess.run(
+            [exe, "-hide_banner", "-filters"], capture_output=True, text=True).stdout:
+        pytest.skip("no ffmpeg with afftdn")
+
+    def write(path, x):
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+            w.writeframes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes())
+    good, bad = str(tmp_path / "good.wav"), str(tmp_path / "bad.wav")
+    write(good, voice * 1.5)
+    write(bad, np.clip(hissy * 1.5, -1, 1))
+    logs = []
+    out = video.repair_hiss([good, bad], logs.append)
+    assert out[0] == good and out[1] == bad + ".denoised.wav" and os.path.exists(bad)
+    _, y = video.sound._read_mono(out[1])
+    assert vc.hiss_ratio(y, sr) < vc.hiss_ratio(hissy * 1.5, sr) - 3
+    assert len(logs) == 1 and "line 2 was hissy" in logs[0]
+    # silence and very short lines are never "repaired"
+    quiet = str(tmp_path / "quiet.wav")
+    write(quiet, np.zeros(sr * 2, "float32"))
+    assert video.repair_hiss([quiet], logs.append) == [quiet] and len(logs) == 1

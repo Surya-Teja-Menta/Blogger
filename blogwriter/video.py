@@ -998,6 +998,56 @@ def timeline(seconds: List[float], kinds: List[str], holds: Optional[List[int]] 
     return frames, starts, sum(frames) - TRANSITION * (len(frames) - 1)
 
 
+# the gentlest noise reduction that works, tried in this order (ffmpeg filters): measured on a hissy take from a real
+# video (-27.6 dB against about -43 for a clean line): the first two bring it to -35 and -44; the last is a strong one
+HISS_LADDER = ["afftdn=nr=12:nf=-45", "afftdn=nr=20:nf=-40:tn=1", "afftdn=nr=20:nf=-40:tn=1,lowpass=f=9000",
+               "afftdn=nr=30:nf=-35:tn=1,lowpass=f=8500"]
+
+
+def repair_hiss(clips: List[str], log: Callable[[str], None]) -> List[str]:
+    """Narration lines that are hissy get cleaned before mixing: each line's high-frequency noise is measured
+    (voicecheck.hiss_ratio); above HISS_MAX the gentlest filter of HISS_LADDER that brings it under HISS_FIX_TO is
+    applied to a copy (the original stays). A line already clean, silent, or too short is left alone, and a repair
+    that does not help is not used. Never raises: a line that cannot be measured is used as it is."""
+    import numpy as np
+    from . import voicecheck as vc
+    out = []
+    for k, clip in enumerate(clips):
+        try:
+            sr, x = sound._read_mono(clip)
+            if len(x) < 0.8 * sr or float(np.percentile(vc.frames_db(x, sr), 90)) < -45:
+                out.append(clip)
+                continue
+            before = vc.hiss_ratio(x, sr)
+            if before <= vc.HISS_MAX:
+                out.append(clip)
+                continue
+            best, best_db, best_filter = clip, before, ""
+            for flt in HISS_LADDER:
+                fixed = clip + ".clean.wav"
+                ffmpeg(["-i", clip, "-af", flt, "-ac", "1", "-c:a", "pcm_s16le", fixed])
+                _, y = sound._read_mono(fixed)
+                after = vc.hiss_ratio(y, sr)
+                if after < best_db - 3:
+                    best, best_db, best_filter = fixed, after, flt
+                    if after <= vc.HISS_FIX_TO:
+                        break
+            if best != clip:
+                kept = clip + ".denoised.wav"
+                os.replace(best, kept)
+                best = kept
+            log(f"[audio] line {k + 1} was hissy ({before:.1f} dB, a clean line is about -43): "
+                + (f"cleaned to {best_db:.1f} dB with {best_filter}" if best != clip else "no filter helped; left as it was"))
+            out.append(best)
+        except Exception as exc:
+            log(f"[audio] line {k + 1}: hiss check failed ({type(exc).__name__}: {str(exc)[:80]})")
+            out.append(clip)
+        finally:
+            if os.path.exists(clip + ".clean.wav"):
+                os.remove(clip + ".clean.wav")
+    return out
+
+
 def music_gain_for(clips: List[str], voice_at: List[float], tempos: Optional[List[float]], inputs: List[str],
                    pre: str, log: Callable[[str], None], seconds: float, rounds: int = 3) -> float:
     """The factor to put on the music bed so that, in the pauses, it sits at least sound.PAUSE_FLOOR_DB under the
@@ -1037,6 +1087,7 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
     """The finished soundtrack of one language: narration (cleaned up), music ducked under it, a whoosh on
     every transition and a hit under every figure, mastered to YouTube loudness. The music's level is measured in the
     pauses and lowered until it is well under the voice (music_gain_for)."""
+    clips = repair_hiss(clips, log)
     voice_at = [(st + LEAD) / FPS for st in starts]
     whoosh_at = [st / FPS - 0.25 for st in starts[1:]]
     hit_at = [(st + 14) / FPS for st, k in zip(starts, kinds) if k in CHART_KINDS]
