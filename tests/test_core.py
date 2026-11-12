@@ -3212,3 +3212,27 @@ def test_a_hissy_take_is_rejected_by_the_checker_and_a_hissy_line_is_cleaned_bef
     quiet = str(tmp_path / "quiet.wav")
     write(quiet, np.zeros(sr * 2, "float32"))
     assert video.repair_hiss([quiet], logs.append) == [quiet] and len(logs) == 1
+
+
+def test_websites_are_never_credited_as_the_ones_who_say_things():
+    # the owner: "those are web sites, not the scholars"
+    from blogwriter.writer import site_stems, strip_site_credits as s
+    urls = ["https://en.wikipedia.org/wiki/Median", "https://www.statisticsbyjim.com/basics/x",
+            "https://online.stat.psu.edu/stat500"]
+    assert site_stems(urls) == ["wikipedia", "statisticsbyjim"]           # "psu" is too short to be sure of
+    assert s("According to Wikipedia, the median is the middle value.", urls) == "The median is the middle value."
+    assert s("As GeeksforGeeks puts it, a sample is a small group. Easy.") == "A sample is a small group. Easy."
+    assert s("The mean is the balance point, according to Statistics by Jim.", urls) == "The mean is the balance point."
+    assert s("Wikipedia says that the mode is the most common value.") == "The mode is the most common value."
+    assert s("A poll asks a thousand people, as Investopedia notes.") == "A poll asks a thousand people."
+    assert s("Even Wikipedia has a page on this. The median ignores outliers.") == "The median ignores outliers."
+    for fine in ("Florence Nightingale used charts, and she said data could persuade.", "In nature, averages hide a lot.",
+                 "Statistics by itself proves nothing.", "Math is fun, they said.", "The medium sized sample works.",
+                 "Reuters reports that the vote was close."):
+        assert s(fine, urls) == fine
+    # written notes: the credit goes, headings and tables stay, nothing else is dropped
+    notes = "## Mean\n\nAccording to Wikipedia, the mean is the sum divided by the count.\n\n| a | b |\n|---|---|"
+    assert s(notes, urls, drop=False) == "## Mean\n\nThe mean is the sum divided by the count.\n\n| a | b |\n|---|---|"
+    # the script prompt no longer asks for named sources
+    from blogwriter import video
+    assert "Name sources naturally" not in video.SCRIPT_PROMPT and "Wikipedia says" in video.SCRIPT_PROMPT

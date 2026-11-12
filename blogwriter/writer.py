@@ -1,6 +1,7 @@
 """Content generation (chapters, blog, video scripts) plus output cleaning and validation, so model
 chatter, planning notes and off-topic text never reach the saved files."""
 import re
+from functools import lru_cache
 from typing import Callable, List, Optional
 
 from .config import Mode
@@ -85,6 +86,72 @@ def strip_unsupported_numbers(text: str, allowed_text: str) -> str:
         if kept:
             out.append(" ".join(kept))
     return "\n\n".join(out)
+
+
+# Websites, encyclopedias and online courses are where a fact was found, never who says it (the owner, 2026-11-13:
+# "those are web sites, not the scholars"). A narration sentence that still names one of these after its credit is
+# cut is dropped. Only unambiguous names: no ordinary English words ("medium", "brilliant", "math is fun").
+SITE_NAMES = ("wikipedia", "wikimedia", "wikibooks", "wikihow", "geeks for geeks", "investopedia", "britannica",
+              "khan academy", "stack overflow", "stack exchange", "towards data science", "analytics vidhya",
+              "w3schools", "javatpoint", "tutorialspoint", "programiz", "scribbr", "statology", "statisticshowto",
+              "statistics by jim", "simplilearn", "coursera", "udemy", "byjus", "byju's", "quora", "reddit",
+              "mathworld", "mathsisfun", "cuemath", "vedantu", "toppr", "datacamp", "chatgpt")
+_HOST_PARTS = {"com", "org", "net", "io", "in", "co", "uk", "edu", "gov", "ac", "info", "ai", "dev", "us", "au", "ca",
+               "www", "en", "m"}
+_CREDIT_VERBS = (r"(?:says|said|states|stated|explains|explained|notes|noted|reports|reported|tells us|told us|puts it|"
+                 r"put it|points out|pointed out|mentions|mentioned|writes|wrote|describes it|shows us|reminds us|"
+                 r"suggests|suggested|defines it)")
+_START = "\u0001"           # marks a cut at the start of a sentence, whose next letter becomes a capital
+
+
+def site_stems(urls) -> List[str]:
+    """The name part of each website address ("https://en.wikipedia.org/wiki/Mean" -> "wikipedia"), 5+ letters."""
+    out = []
+    for u in urls or []:
+        host = re.sub(r"^[a-z]+://", "", str(u).lower()).split("/")[0].split(":")[0]
+        parts = [p.replace("-", "") for p in host.split(".") if p and p not in _HOST_PARTS]
+        if parts and len(parts[-1]) >= 5 and parts[-1].isalnum() and parts[-1] not in out:
+            out.append(parts[-1])
+    return out
+
+
+@lru_cache(maxsize=64)
+def _credit_patterns(stems: tuple):
+    alts = [r"[\s\-]?".join(re.escape(w) for w in n.split()) for n in SITE_NAMES]
+    alts += [r"[\s.\-]?".join(map(re.escape, s)) for s in stems]          # "statisticsbyjim" = "Statistics by Jim"
+    name = (r"(?:the\s+)?(?:" + "|".join(alts) + r")(?:\.(?:com|org|net|io|in))?(?:['’]s)?"
+            r"(?:\s+(?:article|page|website|site|entry|tutorial|blog|guide))?")
+    flags = re.I
+    return (re.compile(rf"\b(?:according to|as|per)\s+{name}(?:\s+{_CREDIT_VERBS})?\s*,\s*", flags),
+            re.compile(rf"[ \t]*,?[ \t]*\b(?:according to|as per|per)\s+{name}\b", flags),
+            re.compile(rf"[ \t]*,?[ \t]*\b(?:as|like)\s+{name}\s+{_CREDIT_VERBS}\b", flags),
+            re.compile(rf"\b{name}\s+{_CREDIT_VERBS}(?:\s+that)?\s*[,:]?\s*", flags),
+            re.compile(r"\b(?:" + "|".join(alts[:len(SITE_NAMES)]) + r")\b", flags))
+
+
+def strip_site_credits(text: str, urls=(), drop: bool = True) -> str:
+    """Take websites out of the narration as the ones who say things: "According to Wikipedia, the median is..."
+    becomes "The median is...", "GeeksforGeeks explains that a sample..." becomes "A sample...", and ", according to
+    Statology" goes. `urls` adds this run's own source sites. drop: a sentence that still names a known website is
+    left out (for spoken lines; written notes keep it)."""
+    if not text:
+        return text
+    lead, tail, as_verb, subject, any_site = _credit_patterns(tuple(site_stems(urls)))
+
+    def cut(m):
+        before = m.string[:m.start()].rstrip(" \t\"“'‘(")
+        return _START if not before or before[-1] in ".!?:\n" else ""
+    out = lead.sub(cut, text)
+    out = tail.sub("", out)
+    out = as_verb.sub("", out)
+    out = subject.sub(cut, out)
+    out = re.sub(_START + r"\s*([a-z])", lambda m: m.group(1).upper(), out).replace(_START, "")
+    out = re.sub(r"[ \t]+([,.!?;:])", r"\1", out)
+    out = re.sub(r",([.!?])", r"\1", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    if drop:
+        out = " ".join(s for s in re.split(r"(?<=[.!?])\s+", out.strip()) if s and not any_site.search(s))
+    return out
 
 
 def strip_unverified_quotes(text: str, allowed_text: str) -> str:
@@ -447,10 +514,12 @@ class Writer:
                   "point matters, not only what it is. Do not write about news, events, countries, markets or "
                   "reactions unless the notes themselves are about that. State each fact ONCE. Do not attribute every "
                   "sentence; attribute only quotes, opinions and disputed claims, to the named person or book, never "
-                  "to a website address. No closing summary paragraph. Where the facts are thin, say what is not "
+                  "to a website, encyclopedia or online course, by address or by name (no 'Wikipedia says', no "
+                  "'according to GeeksforGeeks'): those are where a fact was found, not scholars. No closing summary "
+                  "paragraph. Where the facts are thin, say what is not "
                   f"covered instead of inventing detail. Every paragraph must tie back to \"{title}\".")
         draft = self._generate(prompt, title, target)
-        return self.ground(draft, notes, title, dossier.allowed_text(), strict=True)
+        return strip_site_credits(self.ground(draft, notes, title, dossier.allowed_text(), strict=True), drop=False)
 
     def executive_summary(self, dossier: Dossier, chapters: List[str]) -> str:
         """One page at the front that tells the whole story, written from the finished chapters."""

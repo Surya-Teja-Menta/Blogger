@@ -34,7 +34,7 @@ from . import composer, design, diagram, graphics, layout, looks, mathexpr, voic
 from .research import domain
 from .storage import link_for, upload_run
 from .web import UA
-from .writer import LANGS, strip_unsupported_numbers
+from .writer import LANGS, strip_site_credits, strip_unsupported_numbers
 
 VIDEO_APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "video")
 VOICES = {"en": "en-US-BrianMultilingualNeural", "hi": "hi-IN-MadhurNeural", "te": "te-IN-MohanNeural",
@@ -131,7 +131,7 @@ line, and carry the whole video with this device: {device}
 
 Subject: {title}
 
-Verified facts (number, [source], claim | supporting quote):
+Verified facts (number, [the website it was found on: for you only, never said aloud], claim | supporting quote):
 {facts}
 
 THE PLAN FOR THIS VIDEO (follow it; it was made for this subject)
@@ -216,8 +216,11 @@ SCRIPT_PROMPT = """{shape}
   End each act so it leads into the next ("But that was only half of it.").
 - The narration is read aloud by a voice: write maths in words ("y hat equals w times x plus b"), never LaTeX
   or symbols in the narration.
-- Spoken style: short sentences, plain words, contrast and stakes. Name sources naturally ("Reuters reports").
-  No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
+- Spoken style: short sentences, plain words, contrast and stakes. Never say where a fact was found: a website,
+  encyclopedia or online course is never named as the one who says something (no "Wikipedia says", no "according
+  to GeeksforGeeks"); those are not scholars. State established facts plainly, in the narrator's own voice. Credit
+  only a quote, an opinion or a disputed claim, and then to the person, scientist, book or organisation behind it;
+  in news, the agency that reported an event may be named ("Reuters reports"). No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
 - "outro": 1 or 2 closing sentences in this video's own voice that say {outro_ask} linked in the description,
   and invite the viewer to subscribe to {channel} (say the channel's name). Not a slogan; make it fit the story.
@@ -1827,6 +1830,15 @@ class VideoMaker:
         allowed = " ".join(f"{f['claim']} {f.get('quote', '')}" for f in facts)
         quotes = " ".join(_norm(f.get("quote", "")) for f in facts)
         countries = country_names()
+        # websites are where facts were found, not who says them; in a lesson that includes this run's own sources
+        # (news may still name the agency that reported an event)
+        site_urls = [s.get("url", "") for s in sources] if style == "education" else []
+
+        def uncredit(text: str) -> str:
+            clean = strip_site_credits(text, site_urls)
+            if clean != text:
+                self.log(f"[video] website credit taken out: \"{text[:90]}\" -> \"{clean[:90]}\"")
+            return clean
 
         def maths(p) -> int:
             return sum(1 for sc in (p.get("scenes") or [] if isinstance(p, dict) else [])
@@ -1874,8 +1886,8 @@ class VideoMaker:
             act = str(sc.get("act") or "").strip() or act
             scene = check_scene(sc, allowed, quotes, countries)
             # a fact's number must be in the research; a worked example's numbers must be on screen in the shot
-            narration = strip_persona(strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()),
-                                                                f"{allowed} {maths_shown(scene)}"))
+            narration = uncredit(strip_persona(strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()),
+                                                                         f"{allowed} {maths_shown(scene)}")))
             if not narration:
                 continue
             used = [int(n) for n in sc.get("facts", []) if str(n).isdigit() and 0 < int(n) <= len(facts)]
@@ -1925,7 +1937,7 @@ class VideoMaker:
         short = []
         for item in plan.get("short", [])[:4]:
             idx = item.get("scene")
-            text = strip_unsupported_numbers(str(item.get("narration", "")).strip(), allowed)
+            text = uncredit(strip_unsupported_numbers(str(item.get("narration", "")).strip(), allowed))
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
