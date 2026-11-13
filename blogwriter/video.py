@@ -32,7 +32,7 @@ from .mailer import send_email
 from .pricing import label
 from . import composer, design, diagram, graphics, layout, looks, mathexpr, voicefarm
 from .research import domain
-from .storage import link_for, upload_run
+from .storage import keep_latest_runs, link_for, upload_run
 from .web import UA
 from .writer import LANGS, strip_site_credits, strip_unsupported_numbers
 
@@ -64,7 +64,7 @@ DIAGRAM_MAX_LONG = 30     # ... and in a long video, where most shots are pictur
 CHECK_PAUSE = 3.0         # seconds of silence in a "check" shot for the viewer to think before the answer
 REVIEWERS = 4             # diagram critiques run side by side (each is a slow vision-model call)
 KEEP_SCORE = 5            # a diagram scoring this (of 10) stays: a fair picture of the idea beats words alone
-KEEP_VIDEOS = 3           # the weekly clean-up (cleanup.py) keeps this many newest video folders; older ones are emptied (PDFs stay)
+KEEP_VIDEOS = 4           # after every video, only this many newest video folders stay (the new one and the 3 before it); older ones are emptied (PDFs stay)
 KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "timeline", "steps", "map", "list",
          "quote", "equation", "plot", "graph", "derive", "surface", "check", "diagram")
 MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
@@ -944,25 +944,6 @@ def final_encode(video: str, soundtrack: str, dest: str, pixels: int, log: Calla
     return codec
 
 
-def review_copy(src: str, dest: str, log: Callable[[str], None] = print) -> bool:
-    """A light copy of the finished video to watch and review: 1080p H.264 at about 4 Mbit/s (a 4K file of 1 to 2 GB
-    stalls on a slow connection or a weak player; the 4K file is the one to upload to YouTube). The picture is
-    scaled, the soundtrack copied untouched, and the copy is checked like the original. Returns whether it was made;
-    never raises (the original is what matters)."""
-    try:
-        ffmpeg(["-i", src, "-vf", "scale=1920:1080:flags=lanczos", "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-                "-pix_fmt", "yuv420p", "-profile:v", "high", "-g", "30", "-maxrate", "8M", "-bufsize", "16M",
-                "-c:a", "copy", "-movflags", "+faststart", dest], timeout=3600)
-        log(f"[video] {os.path.basename(dest)}: {os.path.getsize(dest) / 1e6:.0f} MB; playback check: "
-            + playback_check(dest)["summary"])
-        return True
-    except Exception as exc:
-        log(f"[video] no 1080p review copy: {type(exc).__name__}: {str(exc)[:120]}")
-        if os.path.exists(dest):
-            os.remove(dest)
-        return False
-
-
 def playback_check(path: str) -> dict:
     """The file as a player meets it: codec and pixel format, every frame and audio packet one step after the other
     (a missing or doubled timestamp is a stall), the picture and the sound ending together, and how fast this machine
@@ -1134,11 +1115,11 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
 
 
 # The long video's resolution: its 1920x1080 layout is rendered at a higher device scale, so text, formulas and thin
-# lines are drawn sharp at that size (vector, not upscaled). 4K by default: YouTube streams a 4K upload at a far
-# higher bitrate on every screen. Set the repository variable VIDEO_RESOLUTION to 8k (7680x4320: about 4x the render
-# time and file size) or 1440. A render machine's share shrinks with the pixel count, so each part takes about as long.
+# lines are drawn sharp at that size (vector, not upscaled). 2K (2560x1440) by default, the owner's choice: sharper
+# than 1080p on YouTube, at about half the size and render time of 4K. Set the repository variable VIDEO_RESOLUTION
+# to 4k or 8k for more. A render machine's share shrinks with the pixel count, so each part takes about as long.
 RESOLUTIONS = {"1440": 1440, "1440p": 1440, "2160": 2160, "4k": 2160, "2160p": 2160, "4320": 4320, "8k": 4320, "4320p": 4320}
-RESOLUTION = RESOLUTIONS.get(os.environ.get("VIDEO_RESOLUTION", "4k").strip().lower(), 2160)
+RESOLUTION = RESOLUTIONS.get(os.environ.get("VIDEO_RESOLUTION", "1440").strip().lower(), 1440)
 LONG_SCALE = repr(RESOLUTION / 1080)
 
 
@@ -2352,8 +2333,6 @@ class VideoMaker:
         if not os.path.exists(dest):
             raise RuntimeError("the long video was not rendered")
         files, plan, texts = st["files"], st["plan"], st["texts"]
-        if review_copy(dest, os.path.join(out, "long_video_en_1080p.mp4"), self.log):
-            files["long_video_en_1080p.mp4"] = "video"
         self.log("[video] quality check (contact sheet + stillness)")
         try:
             verdict = review(self.s, dest, st["total"] / FPS, os.path.join(out, "contact_sheet.jpg"))
@@ -2656,23 +2635,25 @@ class VideoMaker:
 
     def deliver(self, run_dir: str, out: str, files: Dict[str, str], plan: dict, email: bool,
                 verdict: Optional[dict] = None, meta: Optional[dict] = None, notes_at: str = "") -> None:
-        """Store the videos (the weekly clean-up keeps the KEEP_VIDEOS newest) and email the links plus the small files.
-        Never posts."""
+        """Store the videos, then empty every video folder but the KEEP_VIDEOS newest (this one included), and email the
+        links plus the small files. Never posts."""
         names = list(files) + ["posting_guide.txt"]
         links = upload_run(self.s, out, names, self.log,
                            prefix=f"videos/{os.path.basename(os.path.normpath(run_dir))}")
+        if links.get("long_video_en.mp4"):      # only once this video is safely stored: never leave fewer than before
+            try:
+                keep_latest_runs(self.s, keep=KEEP_VIDEOS, log=self.log)
+            except Exception as exc:            # the clean-up must never cost a video
+                self.log(f"[storage] clean-up skipped: {type(exc).__name__}: {str(exc)[:120]}")
         if not email:
             return
         listing = "\n".join(f"  {n}: {links[n]}" for n in names if n in links) or f"  saved in {out}"
-        if "long_video_en_1080p.mp4" in links:
-            listing += ("\n  (long_video_en_1080p.mp4 is a light copy to watch and review; upload long_video_en.mp4, "
-                        "the 4K file, to YouTube)")
         pdf_url = link_for(self.s, notes_at)      # the study notes in Cloudflare storage; made here, never in the artifact
         if pdf_url:
             listing += f"\n  study_notes.pdf: {pdf_url}"
         body = (f"Your videos for \"{plan['title']}\" are ready to review. Nothing has been posted.\n\n"
                 f"{summary(verdict or {})}\n(contact_sheet.jpg shows 12 frames at a glance)\n\n"
-                f"DOWNLOAD (links work for 7 days; storage keeps only the {KEEP_VIDEOS} newest videos, older ones are removed every Sunday, PDFs stay):\n"
+                f"DOWNLOAD (links work for 7 days; storage keeps only the {KEEP_VIDEOS} newest videos, older ones are removed after each new video, PDFs stay):\n"
                 f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
                 f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
         body += notes_section(meta or {}, pdf_url)

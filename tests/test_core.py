@@ -2007,12 +2007,12 @@ def test_the_video_is_encoded_once_with_the_best_codec_and_never_lost(monkeypatc
     assert any("AV1 encode failed" in m for m in logs) and any("H264, 2 MB" in m for m in logs)
 
 
-def test_the_resolution_is_4k_by_default_and_8k_on_request(monkeypatch):
+def test_the_resolution_is_2k_by_default_and_4k_or_8k_on_request(monkeypatch):
     import importlib
     from blogwriter import video
     try:
-        for value, height, scale, chunk in ((None, 2160, "2.0", 1200), ("8k", 4320, "4.0", 300), ("1440", 1440, None, 2700),
-                                            ("huh", 2160, "2.0", 1200)):
+        for value, height, scale, chunk in ((None, 1440, None, 2700), ("4k", 2160, "2.0", 1200), ("8k", 4320, "4.0", 300),
+                                            ("huh", 1440, None, 2700)):
             if value is None:
                 monkeypatch.delenv("VIDEO_RESOLUTION", raising=False)
             else:
@@ -3079,24 +3079,26 @@ def test_the_delivered_file_is_checked_the_way_a_player_meets_it(tmp_path):
     assert "fine" in ok["summary"] and "PROBLEMS" in video.playback_check(odd)["summary"]
 
 
-def test_a_light_1080p_copy_is_made_for_reviewing_and_never_costs_the_video(tmp_path, monkeypatch):
+def test_after_every_video_only_the_newest_four_video_folders_stay(tmp_path, monkeypatch):
+    # the owner: one video file (no 1080p copy), and after each video every folder but the last 3 plus this one goes
     from blogwriter import video
-    calls, logs = [], []
-    dest = tmp_path / "review.mp4"
-
-    def fake(args, timeout=0):
-        calls.append(args)
-        dest.write_bytes(b"x" * 1_000_000)
-    monkeypatch.setattr(video, "ffmpeg", fake)
-    monkeypatch.setattr(video, "playback_check", lambda p: {"summary": "h264 fine"})
-    assert video.review_copy("big.mp4", str(dest), logs.append) is True
-    a = calls[0]
-    assert a[a.index("-vf") + 1].startswith("scale=1920:1080") and a[a.index("-c:a") + 1] == "copy"
-    assert a[a.index("-maxrate") + 1] == "8M" and "-movflags" in a and "1 MB" in logs[0]
-    monkeypatch.setattr(video, "ffmpeg", lambda args, timeout=0: (_ for _ in ()).throw(RuntimeError("encoder died")))
-    assert video.review_copy("big.mp4", str(dest), logs.append) is False and not dest.exists()
-    assert "no 1080p review copy" in logs[-1]
-
+    assert video.KEEP_VIDEOS == 4 and not hasattr(video, "review_copy")
+    maker = video.VideoMaker.__new__(video.VideoMaker)
+    maker.s, logs, kept = object(), [], []
+    maker.log = logs.append
+    monkeypatch.setattr(video, "keep_latest_runs", lambda s, keep, log: kept.append(keep))
+    monkeypatch.setattr(video, "upload_run", lambda s, out, names, log, prefix: {"long_video_en.mp4": "https://x"})
+    maker.deliver(str(tmp_path / "run1"), str(tmp_path), {"long_video_en.mp4": "video"}, {"title": "t"}, email=False)
+    assert kept == [4]
+    # nothing stored (no storage, a failed upload): nothing is deleted
+    monkeypatch.setattr(video, "upload_run", lambda s, out, names, log, prefix: {})
+    maker.deliver(str(tmp_path / "run2"), str(tmp_path), {"long_video_en.mp4": "video"}, {"title": "t"}, email=False)
+    assert kept == [4]
+    # a clean-up that fails never costs the video
+    monkeypatch.setattr(video, "upload_run", lambda s, out, names, log, prefix: {"long_video_en.mp4": "https://x"})
+    monkeypatch.setattr(video, "keep_latest_runs", lambda s, keep, log: (_ for _ in ()).throw(RuntimeError("bucket")))
+    maker.deliver(str(tmp_path / "run3"), str(tmp_path), {"long_video_en.mp4": "video"}, {"title": "t"}, email=False)
+    assert "clean-up skipped" in logs[-1]
 
 class _ListingBucket:
     """Just enough of an S3 client for the clean-up: a paginator that lists keys, and delete_objects."""
@@ -3132,7 +3134,6 @@ def _bucket_objects(now):
 def _settings():
     from blogwriter.config import Settings
     return Settings(s3_endpoint="https://x", s3_bucket="b", s3_access_key="k", s3_secret_key="s")
-
 
 def test_the_weekly_clean_up_keeps_the_three_newest_videos_and_every_pdf(monkeypatch):
     from blogwriter import storage

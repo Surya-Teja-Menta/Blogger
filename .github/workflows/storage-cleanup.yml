@@ -15,7 +15,7 @@ on:
         default: true
       keep:
         description: "How many of the newest video folders to keep whole"
-        default: "3"
+        default: "4"
 
 concurrency:
   group: storage-cleanup
@@ -51,5 +51,5 @@ jobs:
         env:
           # a scheduled run has no inputs: it deletes for real; a manual run is a dry run unless unticked
           CLEANUP_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
-          CLEANUP_KEEP: ${{ inputs.keep || '3' }}
+          CLEANUP_KEEP: ${{ inputs.keep || '4' }}
         run: python -u -m blogwriter.cleanup
