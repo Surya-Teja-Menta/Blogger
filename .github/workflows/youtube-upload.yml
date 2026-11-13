@@ -1,0 +1,77 @@
+name: Upload to YouTube
+
+# Started by the Upload buttons in the video email. A button opens a ready-filled issue in this repository titled
+# "upload video|short|both <run folder>"; when the OWNER presses Create, this job takes the files from that run's
+# folder in the private bucket, uploads them to the channel (title, description and tags from youtube.json), answers
+# on the issue with the YouTube link and closes it. Issues opened by anyone else never start an upload. It can also
+# be started by hand from the Actions tab.
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      what:
+        description: "What to upload"
+        type: choice
+        options: [video, short, both]
+        default: video
+      run:
+        description: "The run folder, e.g. 20261113_053132_Statistics_Types_of_data"
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: youtube-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, 'upload '))
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'PY'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          PY
+      - name: Upload
+        env:
+          # inputs reach the script as environment variables, never pasted into the shell command; the script
+          # accepts only "upload video|short|both <run folder>"
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          WHAT: ${{ inputs.what }}
+          RUN_FOLDER: ${{ inputs.run }}
+        run: |
+          if [ -n "$ISSUE_TITLE" ]; then request="$ISSUE_TITLE"; else request="upload $WHAT $RUN_FOLDER"; fi
+          python -u -m blogwriter.youtube "$request" upload_result.md
+      - name: Answer on the issue
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          [ -s upload_result.md ] || echo "The upload job stopped before it could report. Run log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > upload_result.md
+          gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file upload_result.md
+          gh issue close "$NUMBER" --repo "$GITHUB_REPOSITORY"

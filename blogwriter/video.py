@@ -30,7 +30,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, graphics, layout, looks, mathexpr, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, upload_run
 from .web import UA
@@ -222,8 +222,8 @@ SCRIPT_PROMPT = """{shape}
   only a quote, an opinion or a disputed claim, and then to the person, scientist, book or organisation behind it;
   in news, the agency that reported an event may be named ("Reuters reports"). No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
-- "outro": 1 or 2 closing sentences in this video's own voice that say {outro_ask} linked in the description,
-  and invite the viewer to subscribe to {channel} (say the channel's name). Not a slogan; make it fit the story.
+- "outro": 1 or 2 closing sentences in this video's own voice that {outro_ask}invite the viewer to subscribe to
+  {channel} (say the channel's name). Not a slogan; make it fit the story.
 
 VISUALS: pick a "kind" per shot, never the same kind twice in a row, at least 7 different kinds overall.
 About a third of shots are "photo" shots; the rest are graphics. Whenever the facts hold several comparable
@@ -294,7 +294,7 @@ behind the sentence, concrete and filmable, e.g. "server racks", "container ship
 "rocket launch"; empty for the other kinds), "act" (see above), and "facts" (the fact numbers used).
 
 Return JSON:
-{{"title": "YouTube title, max 70 characters: the topic itself, in the plain words a student would search for, its key terms first (e.g. 'Mean, Median and Mode Explained', 'What Is Statistics? Descriptive vs Inferential'); no hooks, jokes, teasers, clickbait words or ALL CAPS",
+{{"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short catchy hook that makes a viewer curious (a question, a surprise, a stake), e.g. 'Mean, Median and Mode: Which Average Is Lying to You?', 'Statistics Explained: Why One Sample Can Fool You'; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
   "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
   "description": "2 or 3 plain sentences on what the video covers",
   "tags": ["8 to 12 search tags"],
@@ -314,6 +314,10 @@ OUTRO = ("That's the short version. The full report has {facts} verified facts, 
 OUTRO_SOURCES = ("Every one of the {facts} facts in this video was checked, and every source is linked in the "
                  "description. If you want more like this, explained properly, subscribe to {channel}.")
 SHORT_OUTRO = "Full story, with every source, on {channel}."
+# DESCRIPTION_REPORT off (the default): the description carries no links, so nothing may point there
+OUTRO_PLAIN = "That's the idea, minus the headache. If it finally clicked, subscribe to {channel} for the next one."
+SHORT_OUTRO_PLAIN = "The full lesson is on {channel}."
+POINTS_DOWN = re.compile(r"\b(description|link(ed|s)?|below|report|sources?)\b", re.I)
 # a long video is planned as an outline, then written part by part (placeholders are filled with fill())
 OUTLINE = """
 
@@ -322,7 +326,7 @@ Break it into the parts of the plan, in order: ONE entry in "parts" for EACH par
 for the whole video), and each part into beats. One beat is one thing the viewer SEES and learns (it becomes one or
 two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w slides, its lowest point marked"
 or "check: which way does w move if the slope is negative?". About [shots] beats in all.
-Reply with JSON: {"title": "YouTube title, max 70 characters: the topic itself, in the plain words a student would search for, its key terms first (e.g. 'Mean, Median and Mode Explained', 'What Is Statistics? Descriptive vs Inferential'); no hooks, jokes, teasers, clickbait words or ALL CAPS",
+Reply with JSON: {"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short catchy hook that makes a viewer curious (a question, a surprise, a stake), e.g. 'Mean, Median and Mode: Which Average Is Lying to You?', 'Statistics Explained: Why One Sample Can Fool You'; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
  "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
  "description": "2 or 3 plain sentences on what the video covers", "tags": ["8 to 12 search tags"],
  "outro": "the closing sentences described above",
@@ -1300,7 +1304,8 @@ def strip_persona(text: str) -> str:
 TITLE_SMALL = {"a", "an", "and", "or", "vs", "of", "the", "in", "on", "to", "for", "with", "at", "by", "from", "as"}
 TITLE_FILLER = TITLE_SMALL | {"what", "is", "are", "how", "why", "when", "does", "do", "its", "it", "explained",
                               "introduction", "intro", "basics", "guide", "lesson"}
-TITLE_BAIT = re.compile(r"\byou\b|\byour\b|\blying\b|\bsecret|\bshock|\bnobody\b|\bnever\b|\bactually\b|!|\.\.\.|…", re.I)
+# fake shock is not a hook: "you won't believe", "SHOCKING", "!!", emoji, a shouted word (acronyms up to 5 letters pass)
+TITLE_BAIT = re.compile(r"won'?t believe|\bshock|!!|[\U0001F300-\U0001FAFF☀-➿]|\b[A-Z]{6,}\b")
 
 
 def _title_words(text: str) -> set:
@@ -1322,15 +1327,21 @@ def title_case(text: str) -> str:
 
 
 def topic_title(candidate: str, topic: str) -> str:
-    """A lesson's YouTube title is the topic, plainly (the owner did not like catchy titles). The model's title is
-    kept when it carries most of the topic's key words and no bait ('you', 'lying', '!'); otherwise the topic
-    itself, in title case."""
+    """A lesson's YouTube title: the topic's key terms (found in search) plus a catchy hook (clicked in the feed),
+    the owner's wish. The model's title is kept when it carries most of the topic's key words and no fake shock. A
+    hook that forgot the topic gets the topic in front of it ("Mean, Median and Mode: Which Average Lies?") when that
+    fits; otherwise the topic itself, in title case."""
     candidate = " ".join(str(candidate or "").split())[:100]
     need = _title_words(topic)
     has = _title_words(candidate)
-    if candidate and need and len(need & has) >= 0.75 * len(need) and not TITLE_BAIT.search(candidate):
+    clean = candidate and not TITLE_BAIT.search(candidate)
+    if clean and need and len(need & has) >= 0.75 * len(need):
         return candidate
-    return title_case(" ".join(topic.split()))[:100]
+    plain = title_case(" ".join(topic.split()))
+    hook = candidate.split(":", 1)[-1].strip() if clean else ""
+    if hook and len(plain) + 2 + len(hook) <= 90:
+        return f"{plain}: {hook}"
+    return plain[:100]
 
 
 def maths_shown(scene: dict) -> str:
@@ -1630,9 +1641,10 @@ def opening_rule(brief: dict, style: str, title: str) -> str:
 
 
 def quizzes_on() -> bool:
-    """QUIZZES=off (a repository variable) takes the quiz shots out of every video: the owner's last resort if a quiz
-    ever sounds hissy again. On by default."""
-    return os.environ.get("QUIZZES", "on").strip().lower() not in ("off", "0", "no", "false")
+    """Quiz shots in a lesson. OFF by default since 2026-11-13: the owner heard hiss at the quizzes three times (the
+    music stops there, so any noise in the voice is heard) and asked to remove them. QUIZZES=on (a repository
+    variable) brings them back."""
+    return os.environ.get("QUIZZES", "off").strip().lower() in ("on", "1", "yes", "true")
 
 
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
@@ -1858,6 +1870,8 @@ class VideoMaker:
                brief: Optional[dict] = None, report: bool = False, lesson: Optional[dict] = None) -> dict:
         """report: a full report is for sale and linked; otherwise the outro points to the sources only.
         lesson: this video's place in a course (its goal, what it covers, what came before and after)."""
+        linked = self.s.description_report      # off: the description has no links, so nothing points there
+        report = report and linked
         lines = []
         for i, f in enumerate(facts, 1):
             src = sources[int(f["source"]) - 1] if str(f.get("source", "")).isdigit() else {}
@@ -1865,7 +1879,9 @@ class VideoMaker:
         brief = brief or check_brief({}, style)
         shape, shots = shape_prompt(brief, brief["style"], title, "\n".join(lines), lesson)
         prompt = SCRIPT_PROMPT.replace("{shape}", shape).replace("{shots}", shots).replace(
-            "{outro_ask}", "the full report, with every source, is" if report else "every source is").replace(
+            "{outro_ask}", ("say the full report, with every source, is linked in the description, and " if report
+                            else "say every source is linked in the description, and ") if linked
+            else "do not mention the description, links, sources or a report; ").replace(
             "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
         words_needed = round(brief["minutes"] * 160 * narration_pace())   # ~170 words a minute at full speed; pauses take the rest
@@ -1975,12 +1991,16 @@ class VideoMaker:
                 sc.pop("surface", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
         outro = strip_persona(strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed))
-        if not 8 <= len(outro.split()) <= 60 or (not report and "report" in outro.lower()):
-            outro = (OUTRO if report else OUTRO_SOURCES).format(facts=len(facts), channel=self.s.channel_name)
-        scenes.append({"kind": "outro", "narration": outro, "kicker": "Full report below" if report else "Sources below",
-                       "card": "Documentary report" if report else "Checked facts", "channel": self.s.channel_name,
+        pointless = (not report and "report" in outro.lower()) or (not linked and POINTS_DOWN.search(outro))
+        if not 8 <= len(outro.split()) <= 60 or pointless:
+            outro = (OUTRO if report else OUTRO_SOURCES if linked else OUTRO_PLAIN).format(
+                facts=len(facts), channel=self.s.channel_name)
+        scenes.append({"kind": "outro", "narration": outro,
+                       "kicker": ("Full report below" if report else "Sources below") if linked else "Subscribe",
+                       "card": ("Documentary report" if report else "Checked facts") if linked else self.s.channel_name,
+                       "channel": self.s.channel_name,
                        "headline": str(plan.get("thumb_text") or title)[:40],
-                       "highlight": "report" if report else "sources",
+                       "highlight": ("report" if report else "sources") if linked else "subscribe",
                        "label": f"{len(facts)} verified facts · {len(sources)} sources", "number": "", "items": [],
                        "events": [], "countries": [], "quote": "", "speaker": "", "source": "", "subjects": []})
         if plan.get("short") is None:      # a long video's Short is picked from its finished shots
@@ -1992,7 +2012,8 @@ class VideoMaker:
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
-        short.append({"scene": len(scenes) - 1, "narration": SHORT_OUTRO.format(channel=self.s.channel_name)})
+        short.append({"scene": len(scenes) - 1,
+                      "narration": (SHORT_OUTRO if linked else SHORT_OUTRO_PLAIN).format(channel=self.s.channel_name)})
         video_title = str(plan.get("title", title))[:100]
         if style == "education":
             chosen = topic_title(video_title, title)
@@ -2344,7 +2365,15 @@ class VideoMaker:
         self.log("[video] " + summary(verdict).replace("\n", "\n[video] "))
         with open(os.path.join(out, "posting_guide.txt"), "w", encoding="utf-8") as f:
             f.write(summary(verdict) + "\n\n" + posting_guide(plan, texts, st["n_lines"], st["credits"], st["product"],
-                                                                st["meta"], st["sources"], st.get("lesson")))
+                                                                st["meta"], st["sources"], st.get("lesson"),
+                                                                linked=self.s.description_report))
+        # exactly what the email shows and the upload button sends to YouTube (stored with the videos, no secrets)
+        yt = youtube_text(plan, texts, st["n_lines"], st["credits"], st["product"], st["meta"], st["sources"],
+                          linked=self.s.description_report)
+        yt.update(category="27", lesson=st.get("lesson") or {})        # 27 = Education
+        with open(os.path.join(out, "youtube.json"), "w", encoding="utf-8") as f:
+            json.dump(yt, f, ensure_ascii=False, indent=1)
+        files["youtube.json"] = "youtube"
         with open(os.path.join(out, "video_script.json"), "w", encoding="utf-8") as f:
             json.dump({"plan": plan, "texts": texts, "credits": st["credits"], "review": verdict}, f, indent=2,
                       ensure_ascii=False)
@@ -2647,24 +2676,23 @@ class VideoMaker:
                 self.log(f"[storage] clean-up skipped: {type(exc).__name__}: {str(exc)[:120]}")
         if not email:
             return
-        listing = "\n".join(f"  {n}: {links[n]}" for n in names if n in links) or f"  saved in {out}"
         pdf_url = link_for(self.s, notes_at)      # the study notes in Cloudflare storage; made here, never in the artifact
-        if pdf_url:
-            listing += f"\n  study_notes.pdf: {pdf_url}"
-        body = (f"Your videos for \"{plan['title']}\" are ready to review. Nothing has been posted.\n\n"
-                f"{summary(verdict or {})}\n(contact_sheet.jpg shows 12 frames at a glance)\n\n"
-                f"DOWNLOAD (links work for 7 days; storage keeps only the {KEEP_VIDEOS} newest videos, older ones are removed after each new video, PDFs stay):\n"
-                f"{listing}\n\nHOW TO POST: see the attached posting_guide.txt (titles, descriptions and tags in "
-                f"every language, photo credits, and the steps to add the extra audio tracks in YouTube Studio).\n")
-        body += notes_section(meta or {}, pdf_url)
-        block = youtube_block(os.path.join(out, "posting_guide.txt"))
-        if block:                         # the title and description, Gumroad link included, ready to paste
-            body += f"\nYOUTUBE TITLE AND DESCRIPTION (copy and paste):\n\n{block}\n"
+        shown = {**links, **({"study_notes.pdf": pdf_url} if pdf_url else {})}
+        yt = None
+        try:
+            with open(os.path.join(out, "youtube.json"), encoding="utf-8") as f:
+                yt = json.load(f)
+        except (OSError, ValueError):
+            pass
+        notes = [line.strip() for line in notes_section(meta or {}).strip().splitlines()[1:] if line.strip()]
+        page, body = email_page.build(plan["title"], shown, yt, summary(verdict or {}), notes,
+                                      email_page.repository(), os.path.basename(os.path.normpath(run_dir)),
+                                      KEEP_VIDEOS)
         small = [os.path.join(out, n) for n in names if n.endswith((".txt", ".srt", ".png", ".jpg"))]
         pdf = fetch_notes(self.s, notes_at, os.path.join(out, "study_notes.pdf"), self.log)
         if pdf:
             small.append(pdf)
-        send_email(self.s, f"[Video] {plan['title'][:120]}", body, small, self.log)
+        send_email(self.s, f"[Video] {plan['title'][:120]}", body, small, self.log, html=page)
 
 
 SR_SILENCE = sound.SR // 2
@@ -2716,8 +2744,6 @@ def notes_section(meta: dict, pdf_url: str = "") -> str:
         lines += [f"  PRICE: {label(g.get('price', 0), g.get('currency', 'inr'))}  ({meta.get('price_reason', 'see above')})",
                   f"  Gumroad: {g['url']}  "
                   f"({'LIVE: anyone can buy or get it now' if g.get('published') else 'DRAFT: not on sale until you publish it'})"]
-    else:
-        lines.append("  Not listed on Gumroad this time.")
     if chapters:
         lines.append("  Chapters: " + "; ".join(f"{i}. {c}" for i, c in enumerate(chapters, 1)))
     return "\n".join(lines) + "\n"
@@ -2734,15 +2760,50 @@ def youtube_block(guide_path: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def hashtags(tags: List[str], n: int = 3) -> List[str]:
+    """The first few tags as hashtags ("standard deviation" -> "#StandardDeviation"), short ones only."""
+    out = []
+    for tag in tags:
+        h = "#" + "".join(w[:1].upper() + w[1:] for w in re.findall(r"[A-Za-z0-9]+", str(tag)))
+        if 2 < len(h) <= 26 and h.lower() not in {x.lower() for x in out}:
+            out.append(h)
+        if len(out) == n:
+            break
+    return out
+
+
+def youtube_text(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
+                 meta: dict, sources: Optional[List[dict]] = None, lang: str = "en", linked: bool = False) -> dict:
+    """What goes into YouTube for one language: the title, the description and the tags of the long video and of its
+    Short. linked (DESCRIPTION_REPORT): the description also links the study notes and the sources; off (the
+    default): no links at all, the owner's wish. Photo credits the licences require are named (without links)."""
+    lines = texts[lang]
+    title, desc = lines[n_lines], lines[n_lines + 1]
+    tags = [str(t) for t in plan.get("tags", [])][:12]
+    tagline = " ".join(hashtags(tags))
+    extra = ""
+    if linked:
+        g = meta.get("gumroad") or {}
+        if product:
+            extra += f"Full study notes (PDF, {label(g.get('price', 0), g.get('currency', 'inr'))}): {product}\n"
+        urls = list(dict.fromkeys(x.get("url", "") for x in sources or [] if str(x.get("url", "")).startswith("http")))
+        if urls:
+            extra += (f"Sources ({len(urls)}):\n" + "".join(f"- {u}\n" for u in urls[:15])
+                      + (f"- and {len(urls) - 15} more\n" if len(urls) > 15 else ""))
+    photos = "; ".join(f"{c['subject']}: {c['author'] or 'Wikimedia Commons'}, {c['license']}" for c in credits)
+    description = "\n\n".join(x for x in (desc.strip(), extra.strip(), f"Photos: {photos}" if photos else "",
+                                          tagline) if x)
+    short_title = (title if len(title) <= 90 else title[:89].rsplit(" ", 1)[0]) + " #Shorts"
+    short_description = "\n\n".join(x for x in (desc.strip(), (tagline + " #Shorts").strip()) if x)
+    return {"title": title[:100], "description": description[:4900], "tags": tags,
+            "short_title": short_title, "short_description": short_description[:4900]}
+
+
 def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
-                  meta: dict, sources: Optional[List[dict]] = None, lesson: Optional[dict] = None) -> str:
+                  meta: dict, sources: Optional[List[dict]] = None, lesson: Optional[dict] = None,
+                  linked: bool = False) -> str:
     credit_lines = "\n".join(f"- {c['subject']}: {c['author'] or 'see file page'}, {c['license']}, {c['file']}"
                              for c in credits) or "- none (no photos used)"
-    g = meta.get("gumroad") or {}
-    report = (f"Full study notes (PDF, {label(g.get('price', 0), g.get('currency', 'inr'))}): {product}\n"
-              if product else "")
-    links = list(dict.fromkeys(s.get("url", "") for s in sources or [] if str(s.get("url", "")).startswith("http")))
-    listed = "".join(f"- {u}\n" for u in links[:15]) + (f"- and {len(links) - 15} more\n" if len(links) > 15 else "")
     dubbed = [lang for lang in texts if lang != "en"]
     course = (f"COURSE: {lesson['course']} - lesson {lesson['number']} of {lesson['total']}"
               f"{' (module: ' + lesson['module'] + ')' if lesson.get('module') else ''}. Add it to the playlist "
@@ -2758,13 +2819,11 @@ def posting_guide(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits
                if dubbed else [""]),
              "SHORTS: upload short_<lang>.mp4 as separate Shorts with that language's title.\n" if dubbed else
              "SHORT: upload short_en.mp4 as a YouTube Short with the title below.\n",
-             "Music and sound effects are generated by the pipeline itself: no licence or credit needed.\n"
-             "Credits below cover the photos and video clips (Wikimedia Commons, NASA, Pixabay).\n"]
-    for lang, lines in texts.items():
-        title, desc = lines[n_lines], lines[n_lines + 1]
-        parts.append(f"===== {LANGS[lang].upper()} =====\nTitle: {title}\nDescription:\n{desc}\n\n{report}"
-                     f"Sources: {meta.get('sources', '?')} sources, {meta.get('verified_facts', '?')} verified facts.\n"
-                     f"{listed}"
+             "Music and sound effects are generated by the pipeline itself: no licence or credit needed.\n"]
+    for lang in texts:
+        yt = youtube_text(plan, texts, n_lines, credits, product, meta, sources, lang, linked)
+        parts.append(f"===== {LANGS[lang].upper()} =====\nTitle: {yt['title']}\nDescription:\n{yt['description']}\n\n"
+                     f"Short title: {yt['short_title']}\n"
                      f"Photo and footage credits (required by the licences):\n{credit_lines}\n")
     parts.append("Tags: " + ", ".join(plan["tags"]))
     return "\n".join(parts) + "\n"

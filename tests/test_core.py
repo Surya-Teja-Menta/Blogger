@@ -1007,7 +1007,8 @@ def test_a_video_run_makes_only_the_video_no_report_and_no_report_email(tmp_path
     sent, written, made = [], [], []
     monkeypatch.setattr(P, "send_email", lambda *a, **k: sent.append(a[1]) or True)
     p = P.BlogPipeline.__new__(P.BlogPipeline)
-    p.s, p.log = Settings(output_dir=str(tmp_path)), lambda m: None
+    # STUDY_NOTES=off: a video run makes only the video (with notes on, the default, it also writes the notes)
+    p.s, p.log = Settings(output_dir=str(tmp_path), study_notes=False), lambda m: None
     p.llm = SimpleNamespace(last_endpoint="x", usage={})
     p.history = SimpleNamespace(add=lambda *a: None)
     p.news = SimpleNamespace(pool=None)
@@ -1098,7 +1099,12 @@ def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
 
     facts = [{"claim": "Marvell agreed to buy Lumentum for $115 billion", "quote": "", "source": "1"}]
     sources = [{"url": "https://www.reuters.com/x"}]
-    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", facts, sources)
+    from blogwriter import video
+    plain = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", facts, sources)
+    # DESCRIPTION_REPORT off (the default): the description has no links, so the outro never points there
+    assert plain["scenes"][-1]["kicker"] == "Subscribe" and not video.POINTS_DOWN.search(plain["scenes"][-1]["narration"])
+    assert "Adyora" in plain["scenes"][-1]["narration"] and "on Adyora" in plain["short"][-1]["narration"]
+    plan = VideoMaker(Settings(description_report=True), FakeLLM(), log=lambda m: None).script("T", facts, sources)
     narr = [s["narration"] for s in plan["scenes"]]
     assert plan["scenes"][0]["number"] == "$115B" and plan["scenes"][0]["source"] == "reuters.com"
     assert plan["scenes"][1]["number"] == "" and narr[1] == "It was big."      # 7 is not a verified number
@@ -1106,17 +1112,23 @@ def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
     assert plan["scenes"][-1]["kind"] == "outro" and "every source is linked" in narr[-1]
     assert plan["scenes"][-1]["kicker"] == "Sources below" and "report" not in narr[-1]     # no report to promise
     assert [b["scene"] for b in plan["short"]] == [0, len(plan["scenes"]) - 1]   # bad index dropped, ending added
-    sold = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", facts, sources, report=True)
+    sold = VideoMaker(Settings(description_report=True), FakeLLM(), log=lambda m: None).script("T", facts, sources,
+                                                                                               report=True)
     assert "1 verified facts" in sold["scenes"][-1]["narration"] and sold["scenes"][-1]["kicker"] == "Full report below"
 
 
 def test_posting_guide_lists_the_sources_and_only_the_languages_made():
     from blogwriter.video import posting_guide
     plan = {"title": "T", "tags": ["a"]}
+    srcs = [{"url": "https://a.org/x"}, {"url": "https://b.com/y"}, {"url": "https://a.org/x"}, {"url": ""}]
     guide = posting_guide(plan, {"en": ["line", "Title", "Desc"]}, 1, [], "", {"sources": 2, "verified_facts": 3},
-                          [{"url": "https://a.org/x"}, {"url": "https://b.com/y"}, {"url": "https://a.org/x"}, {"url": ""}])
+                          srcs, linked=True)
     assert "Add language" not in guide and "short_en.mp4" in guide
     assert guide.count("- https://a.org/x") == 1 and "- https://b.com/y" in guide
+    # by default (DESCRIPTION_REPORT off) the description carries no links at all, and gets hashtags
+    plain = posting_guide({"title": "T", "tags": ["standard deviation", "a"]}, {"en": ["line", "Title", "Desc"]}, 1, [],
+                          "", {"sources": 2, "verified_facts": 3}, srcs)
+    assert "http" not in plain and "#StandardDeviation" in plain and "Short title: Title #Shorts" in plain
 
 
 def test_video_translation_must_keep_the_line_count_or_the_language_is_skipped():
@@ -1221,7 +1233,8 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
                                {"kind": "photo", "narration": "That is the answer."}],
                     "short": []}
 
-    plan = VideoMaker(Settings(), FakeLLM(), log=lambda m: None).script("T", [], [], brief=brief)
+    # this plan's outro points at the description, which only DESCRIPTION_REPORT=on allows
+    plan = VideoMaker(Settings(description_report=True), FakeLLM(), log=lambda m: None).script("T", [], [], brief=brief)
     kicker = plan["scenes"][1]["chapter"]["kicker"]
     assert [s["narration"] for s in plan["scenes"]][:2] == ["Why does light win?", "Light is fast."]   # no title shot
     assert plan["scenes"][1]["chapter"]["title"] == "The idea" and kicker in [k(0) for k in KICKERS]
@@ -2142,7 +2155,7 @@ def test_a_video_run_sells_its_document_but_sends_only_the_video_email(tmp_path,
     monkeypatch.setattr(V.VideoMaker, "__init__", lambda self, *a: None)
     monkeypatch.setattr(V.VideoMaker, "make", lambda self, d, **k: {})
     for token, publish, video_on, sells, report, mails in (("t", False, True, True, True, False),   # the default
-                                                           ("", False, True, False, False, False),  # no Gumroad key
+                                                           ("", False, True, False, True, False),   # no Gumroad: notes still made
                                                            ("t", True, True, True, True, False),    # also posts
                                                            ("t", True, False, True, True, True)):   # report-only run
         p.s = Settings(gumroad_token=token)
@@ -2822,13 +2835,13 @@ def test_the_video_email_describes_the_notes_and_attaches_the_pdf(tmp_path):
     assert f"PDF download (Cloudflare): {url}" in video.notes_section(meta, url)           # the Cloudflare link, not Gumroad's
     assert "link works 7 days" in video.notes_section(meta, url + "?X-Amz-Signature=abc")
     assert "PDF download" not in video.notes_section(meta)
-    assert "Not listed" in video.notes_section({**meta, "gumroad": {}}) and video.notes_section({}) == ""
+    assert "Gumroad" not in video.notes_section({**meta, "gumroad": {}}) and video.notes_section({}) == ""   # selling paused
     assert video.notes_key("output/20261109_x", {"stored": {"documentary_report.pdf": "https://signed"}}) == \
         "reports/20261109_x/documentary_report.pdf"
     assert video.notes_key("output/x", {"stored": {}}) == ""
     assert video.fetch_notes(SimpleNamespace(storage_configured=False), "k", str(tmp_path / "n.pdf"), print) == ""
     guide = video.posting_guide({"title": "T", "tags": ["a"]}, {"en": ["l"] * 3 + ["Title", "Desc"]}, 3, [], "https://g/l/x",
-                                {"gumroad": {"price": 149, "currency": "inr"}})
+                                {"gumroad": {"price": 149, "currency": "inr"}}, linked=True)
     assert "Full study notes (PDF, ₹149): https://g/l/x" in guide
 
 
@@ -3239,20 +3252,20 @@ def test_websites_are_never_credited_as_the_ones_who_say_things():
     assert "Name sources naturally" not in video.SCRIPT_PROMPT and "Wikipedia says" in video.SCRIPT_PROMPT
 
 
-def test_lesson_titles_are_the_topic_not_a_hook():
-    # the owner: titles should be generic and topic driven
+def test_lesson_titles_carry_the_topic_and_a_catchy_hook():
+    # the owner: titles generic (the topic, for search) and catchy (a hook, for the feed)
     from blogwriter.video import topic_title as t
     t1 = "What statistics is: descriptive vs inferential, population vs sample"
-    assert t("Your Average Is Lying to You", "Mean, Median and Mode") == "Mean, Median and Mode"
-    assert t("Mean, Median and Mode Explained", "Mean, Median and Mode") == "Mean, Median and Mode Explained"
+    hooked = "Mean, Median and Mode: Which Average Is Lying to You?"
+    assert t(hooked, "Mean, Median and Mode") == hooked                                   # topic first, then a hook
     good = "What Is Statistics? Descriptive vs Inferential, Population vs Sample"
     assert t(good, t1) == good
+    # a hook that forgot the topic gets the topic in front, when it fits
+    assert t("Why the Bell Curve Shows Up Everywhere", "Central limit theorem") ==         "Central Limit Theorem: Why the Bell Curve Shows Up Everywhere"
     assert t("Descriptive vs Inferential Statistics", t1) != "Descriptive vs Inferential Statistics"   # half the topic
-    assert t("Stats: The Art of Guessing Right", t1) == \
-        "What Statistics Is: Descriptive vs Inferential, Population vs Sample"
-    assert t("Why the Bell Curve Shows Up Everywhere", "Central limit theorem") == "Central Limit Theorem"
-    assert t("x", "p-values and the t-test") == "p-values and the t-test"            # written forms kept
-
+    # fake shock is never kept
+    assert t("Mean, Median and Mode: You WON'T BELIEVE This!!", "Mean, Median and Mode") == "Mean, Median and Mode"
+    assert t("x", "p-values and the t-test") == "p-values and the t-test: x"
 
 def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_path, monkeypatch):
     # the owner still heard hiss in a quiz: the re-speak with more takes judged only unsure words, so a hissy take
@@ -3324,13 +3337,13 @@ def test_quiz_lines_are_held_to_a_stricter_hiss_limit_and_quizzes_can_be_switche
     assert out == [path + ".denoised.wav"] and "quiz line 1 was hissy" in logs[0]
     _, y = video.sound._read_mono(out[0])
     assert vc.hiss_ratio(y, sr) < vc.hiss_ratio(some, sr) - 3
-    # the last resort: QUIZZES=off takes the quiz out of the script and tells the writer
-    monkeypatch.setenv("QUIZZES", "off")
+    # quizzes are OFF by default (the owner asked to remove them); QUIZZES=on brings them back
+    monkeypatch.delenv("QUIZZES", raising=False)
     assert not video.quizzes_on()
     brief = video.check_brief({"minutes": 9}, "education")
     text, _ = video.shape_prompt(brief, "education", "Mean", "1. [x] a | b")
     assert "NO QUIZ" in text
-    monkeypatch.delenv("QUIZZES")
+    monkeypatch.setenv("QUIZZES", "on")
     assert video.quizzes_on() and "NO QUIZ" not in video.shape_prompt(brief, "education", "Mean", "1. [x] a | b")[0]
 
 
@@ -3339,3 +3352,46 @@ def test_a_line_without_a_website_credit_is_left_exactly_as_written():
     for line in ("the man who decided data needed more folders. ... It is impressive",
                  "a deeply philosophical question:  which item?", "Wait , what?"):
         assert s(line) == line
+
+
+def test_the_video_email_is_a_clean_page_with_upload_buttons_and_no_pasted_links():
+    from urllib.parse import unquote
+    from blogwriter import email_page
+    links = {"long_video_en.mp4": "https://r2/long?sig=1", "short_en.mp4": "https://r2/short?sig=2",
+             "thumbnail.png": "https://r2/t.png", "study_notes.pdf": "https://r2/n.pdf"}
+    yt = {"title": "Mean, Median and Mode: Which Average Lies?", "description": "Three averages.\n\n#Statistics",
+          "tags": ["statistics", "mean"], "short_title": "Mean, Median and Mode #Shorts"}
+    page, text = email_page.build(yt["title"], links, yt, "QUALITY CHECK: 9/10", ["29 pages"], "owner/repo",
+                                  "20261113_053132_Mean", 4)
+    # links sit behind words: no URL is shown as text, every one is a link
+    for url in links.values():
+        assert f'href="{url}"' in page and f">{url}<" not in page
+    assert page.count(">Download</a>") == 4 and "Upload video to YouTube" in page and "Upload both" in page
+    assert "Which Average Lies?" in page and "#Statistics" in page and "29 pages" in page
+    # the button opens a ready-filled issue; only pressing Create there uploads
+    up = email_page.upload_url("owner/repo", "video", "20261113_053132_Mean", yt["title"])
+    assert up.startswith("https://github.com/owner/repo/issues/new?title=") and \
+        unquote(up.split("title=")[1].split("&")[0]) == "upload video 20261113_053132_Mean"
+    assert "Upload the video:" in text and "Long video (2K): https://r2/long?sig=1" in text
+    # no buttons when the repository is unknown (a run on a laptop) or nothing was stored
+    assert "Upload video" not in email_page.build("T", {}, None, "", [], "owner/repo", "r", 4)[0]
+    assert "Upload video" not in email_page.build("T", links, None, "", [], "", "r", 4)[0]
+
+
+def test_the_upload_job_accepts_only_its_own_requests_and_reports_every_problem(monkeypatch):
+    from blogwriter import youtube
+    assert youtube.REQUEST.match("upload video 20261113_053132_Statistics_Types_of_data")
+    for bad in ("upload video ../../etc", "upload everything 20261113_053132_x", "please upload video x",
+                "upload video 20261113_053132_x; rm -rf /"):
+        assert youtube.run(bad).startswith("Not an upload request")
+    for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    report = youtube.run("upload video 20261113_053132_Mean")
+    assert report.startswith("Nothing uploaded") and "GitHub Secrets" in report
+    # the body YouTube gets: Education, not for kids, synthetic media disclosed, the Short's own title
+    meta = {"title": "T", "short_title": "T #Shorts", "description": "D", "short_description": "SD", "tags": ["a"]}
+    body = youtube.video_body(meta, short=True, privacy="public")
+    assert body["snippet"]["title"] == "T #Shorts" and body["snippet"]["categoryId"] == "27"
+    assert body["status"] == {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "embeddable": True,
+                              "containsSyntheticMedia": True}
+    assert "containsSyntheticMedia" not in youtube.video_body(meta, False, "public", synthetic=False)["status"]

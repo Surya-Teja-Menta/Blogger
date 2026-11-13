@@ -251,8 +251,8 @@ class BlogPipeline:
         email is for report-only runs."""
         if sell is None:
             sell = publish or (video and bool(self.s.gumroad_token))
-        if report is None:
-            report = not video or publish or sell
+        if report is None:      # a video run keeps its study notes even when nothing is sold
+            report = not video or publish or sell or (video and self.s.study_notes)
         for value, allowed, what in ((source, ("news", "topic"), "source"), (level, LEVELS, "level"),
                                      (niche, NICHES, "niche"), (lang, LANGS, "lang")):
             if value not in allowed:

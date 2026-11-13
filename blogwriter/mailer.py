@@ -9,12 +9,15 @@ from typing import Callable, List
 from .config import Settings
 
 
-def build_message(settings: Settings, subject: str, body: str, attachments: List[str]) -> EmailMessage:
+def build_message(settings: Settings, subject: str, body: str, attachments: List[str],
+                  html: str = "") -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.mail_from or settings.smtp_user
     msg["To"] = ", ".join(settings.mail_to)
     msg.set_content(body)
+    if html:                   # the HTML page, with the plain text as the fallback for mail apps without HTML
+        msg.add_alternative(html, subtype="html")
     for path in attachments:
         if not os.path.exists(path):
             continue
@@ -28,14 +31,14 @@ def build_message(settings: Settings, subject: str, body: str, attachments: List
 
 
 def send_email(settings: Settings, subject: str, body: str, attachments: List[str],
-               log: Callable[[str], None] = print) -> bool:
+               log: Callable[[str], None] = print, html: str = "") -> bool:
     """Send the message; returns True on success. Never raises - the files are already saved on disk,
     so a mail problem must not throw the finished work away."""
     if not settings.email_configured:
         log("[mail] SMTP not configured (set SMTP_HOST, MAIL_TO, SMTP_USER/SMTP_PASSWORD in .env) - skipping email")
         return False
     try:
-        msg = build_message(settings, subject, body, attachments)
+        msg = build_message(settings, subject, body, attachments, html)
         ctx = ssl.create_default_context()
         if settings.smtp_port == 465:
             server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=60, context=ctx)

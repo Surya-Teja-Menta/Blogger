@@ -12,6 +12,11 @@ def _split(value: str) -> List[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def _on(value: str) -> bool:
+    """A yes/no setting: on, true, yes or 1."""
+    return str(value).strip().lower() in ("on", "true", "yes", "1")
+
+
 @dataclass(frozen=True)
 class Mode:
     name: str
@@ -97,10 +102,14 @@ class Settings:
     s3_secret_key: str = ""
     s3_region: str = "auto"
     s3_public_url: str = ""      # public base URL of the bucket (e.g. https://pub-xxxx.r2.dev); else signed links
-    # each report is listed as a Gumroad product (a draft unless gumroad_publish is on)
+    # each report is listed as a Gumroad product (a draft unless gumroad_publish is on). Off unless GUMROAD=on
+    # (the owner paused selling on 2026-11-13): with it off the key is ignored and nothing is listed
     gumroad_token: str = ""
     gumroad_price: str = "auto"            # "auto" = priced by level and size (pricing.py); or fixed: "<amount> <currency>"
     gumroad_publish: bool = False
+    study_notes: bool = True               # a video run also writes the study-notes PDF (STUDY_NOTES=off to skip)
+    description_report: bool = False       # DESCRIPTION_REPORT=on: the description links the notes and the sources,
+                                           # and the outro says so; off (default): no links, no such line
     # blog / article posting: each platform is used only when its credentials are set
     publish_live: bool = True            # False: save drafts instead of publishing (Telegram is then skipped)
     devto_api_key: str = ""
@@ -162,9 +171,11 @@ class Settings:
             s3_secret_key=e("S3_SECRET_ACCESS_KEY", ""),
             s3_region=e("S3_REGION", "auto") or "auto",
             s3_public_url=e("S3_PUBLIC_URL", "").rstrip("/"),
-            gumroad_token=e("GUMROAD_ACCESS_TOKEN", ""),
+            gumroad_token=e("GUMROAD_ACCESS_TOKEN", "") if _on(e("GUMROAD", "off")) else "",
             gumroad_price=e("GUMROAD_PRICE", "") or "auto",
             gumroad_publish=e("GUMROAD_PUBLISH", "").strip().lower() in ("1", "true", "yes"),
+            study_notes=_on(e("STUDY_NOTES", "on")),
+            description_report=_on(e("DESCRIPTION_REPORT", "off")),
             publish_live=e("PUBLISH_LIVE", "true").strip().lower() not in ("0", "false", "no"),
             devto_api_key=e("DEVTO_API_KEY", ""),
             hashnode_token=e("HASHNODE_TOKEN", ""),
