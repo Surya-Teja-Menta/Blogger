@@ -45,15 +45,41 @@ def access_token() -> str:
     return data["access_token"]
 
 
+def safe_text(text: str, max_bytes: int = 5000, max_chars: int = 0) -> str:
+    """Text YouTube's API accepts: it refuses '<' and '>' (a statistics lesson writes "p < 0.05") with an
+    invalidTitle / invalidDescription error that costs the whole upload, so they become the look-alike single angle
+    quotes; control characters go; and the length is cut at YouTube's limits (the description's is 5000 BYTES, so
+    '₹' and curly quotes count more than one)."""
+    text = str(text or "").replace("<", "‹").replace(">", "›")
+    text = "".join(c for c in text if c in "\n\t" or ord(c) >= 32)
+    if max_chars:
+        text = text[:max_chars]
+    while len(text.encode("utf-8")) > max_bytes:
+        text = text[:-1]
+    return text.strip()
+
+
+def safe_tags(tags, limit: int = 450) -> list:
+    """Up to 15 tags that fit YouTube's 500 characters in all (commas count), without angle brackets."""
+    out, used = [], 0
+    for tag in tags or []:
+        tag = safe_text(tag, 100).replace(",", " ")
+        if not tag or used + len(tag) + 1 > limit or len(out) == 15:
+            continue
+        out.append(tag)
+        used += len(tag) + 1
+    return out
+
+
 def video_body(meta: dict, short: bool, privacy: str, synthetic: bool = True) -> dict:
     """The video's title, description, tags and settings: Education, not made for kids, English, and the
     disclosure that it contains synthetic media (the narration is a cloned voice)."""
     status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "embeddable": True}
     if synthetic:
         status["containsSyntheticMedia"] = True
-    return {"snippet": {"title": (meta["short_title"] if short else meta["title"])[:100],
-                        "description": (meta.get("short_description") if short else meta.get("description")) or "",
-                        "tags": meta.get("tags", [])[:15], "categoryId": str(meta.get("category") or "27"),
+    return {"snippet": {"title": safe_text(meta["short_title"] if short else meta["title"], 300, 100),
+                        "description": safe_text((meta.get("short_description") if short else meta.get("description")) or ""),
+                        "tags": safe_tags(meta.get("tags", [])), "categoryId": str(meta.get("category") or "27"),
                         "defaultLanguage": "en", "defaultAudioLanguage": "en"},
             "status": status}
 
@@ -186,7 +212,7 @@ def add_link_line(token: str, vid: str, line: str, url: str, log=print) -> str:
         if url in sn.get("description", ""):
             return "already linked"
         keep = {k: sn[k] for k in ("title", "categoryId", "tags", "defaultLanguage", "defaultAudioLanguage") if k in sn}
-        keep["description"] = (line + "\n\n" + sn.get("description", ""))[:4900]
+        keep["description"] = safe_text(line + "\n\n" + sn.get("description", ""))
         r = requests.put(f"{API_URL}/videos", params={"part": "snippet"},
                          headers={**head, "Content-Type": "application/json"},
                          data=json.dumps({"id": vid, "snippet": keep}), timeout=30)
@@ -256,12 +282,14 @@ def run(request: str, log=print, privacy: str = "") -> str:
                 lines.append(f"- {label}: not found in storage, not uploaded.")
                 continue
             log(f"[youtube] uploading {name} ({os.path.getsize(files[name]) / 1e6:.0f} MB) as {privacy}")
+            token = access_token()                 # a sign-in lasts an hour: a fresh one for every upload
             vid = upload_video(token, files[name], meta, short, privacy, log)
             title = meta["short_title" if short else "title"]
             url = f"https://youtu.be/{vid}" if not short else f"https://youtube.com/shorts/{vid}"
             known[item] = {"id": vid, "url": url, "title": title, "at": int(time.time())}
             put_text(s, f"uploads/{folder}/{item}.json", json.dumps(known[item]), "application/json; charset=utf-8")
             extras = []
+            token = access_token()                 # the upload itself may have taken most of the hour
             if not short and "thumbnail.png" in files:
                 extras.append("thumbnail " + ("set" if add_thumbnail(token, vid, files["thumbnail.png"], log)
                                               else "NOT set (a channel needs phone verification for custom thumbnails)"))
@@ -274,7 +302,7 @@ def run(request: str, log=print, privacy: str = "") -> str:
             lines.append(f"- {label}: [{title}]({url}) is uploaded, now **{state}**"
                          f"{'; ' + ', '.join(extras) if extras else ''}.{note}")
         if "video" in known and "short" in known:
-            lines += link_pair(token, known["video"], known["short"], log)
+            lines += link_pair(access_token(), known["video"], known["short"], log)
         head = "Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else "Nothing new uploaded:"
         return head + "\n\n" + "\n".join(lines)
     except SignInError as exc:

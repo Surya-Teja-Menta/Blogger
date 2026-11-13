@@ -26,8 +26,11 @@ permissions:
   contents: read
   issues: write
 
+# one queue per video: GitHub keeps only ONE waiting run per group, so a single shared group would silently cancel
+# a click on a second video while a third waited. Different videos upload side by side; the Worker already refuses a
+# second job for the same video while one runs.
 concurrency:
-  group: youtube-upload
+  group: youtube-upload-${{ inputs.run || github.event.issue.title }}
   cancel-in-progress: false
 
 jobs:

@@ -108,6 +108,17 @@ def whoosh_level() -> float:
         return 0.12
 
 
+# Every voice line loses everything above ~10.5 kHz before the mix. The cloned voice is 24 kHz, and its leftover hiss
+# sits at 11-12 kHz, just under that rate's ceiling: on the "Types of data" video (2026-11-13) the hissy quiz lines
+# were 12 dB louder there than clean lines, while 6-11 kHz (all that voicecheck.hiss_ratio measures) was the same, so
+# the hiss was never caught. Clean speech has nothing up there (-104 dB), so the cut is inaudible on a clean line. A
+# linear-phase FIR: flat to 10.2 kHz, -87 dB from 10.8 kHz. It delays by a fixed 20 ms AND shifts the timestamps, so
+# the timestamps are first rebuilt from the sample count and then exactly 960 samples (20 ms at 48 kHz) are cut:
+# every word stays where the captions put it (measured at three placements: 0.02 ms; a time-based trim was 20 ms off).
+VOICE_TOP_CUT = ("firequalizer=gain='if(lt(f,10200),0,-90)':delay=0.02:zero_phase=on,"
+                 "asetpts=N/SR/TB,atrim=start_sample=960,asetpts=N/SR/TB")
+
+
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
                tempos: Optional[List[float]] = None, final: bool = True, music_gain: float = 1.0,
                stems: bool = False) -> Tuple[str, int]:
@@ -117,7 +128,8 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
     v = len(voice_at)
     m, w, h = v, v + 1, v + 2
     speed = lambda k: f"atempo={tempos[k]:.3f}," if tempos and tempos[k] > 1.005 else ""
-    parts = [f"[{k}:a]aresample=48000,{speed(k)}adelay=delays={int(t * 1000)}:all=1[v{k}]" for k, t in enumerate(voice_at)]
+    parts = [f"[{k}:a]aresample=48000,{VOICE_TOP_CUT},{speed(k)}adelay=delays={int(t * 1000)}:all=1[v{k}]"
+             for k, t in enumerate(voice_at)]
     parts.append("".join(f"[v{k}]" for k in range(v)) + f"amix=inputs={v}:normalize=0,aformat=channel_layouts=stereo,"
                  "highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=5:release=150:makeup=2,"
                  "equalizer=f=3500:t=q:w=1.2:g=1.5,apad,asplit=2[voice][key]")   # apad: music runs past the last word

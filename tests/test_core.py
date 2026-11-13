@@ -3493,3 +3493,51 @@ def test_the_video_and_its_short_point_to_each_other_once(monkeypatch):
     assert state["v1"]["title"] == "Long" and state["v1"]["tags"] == ["a"] and len(puts) == 2
     # a second run changes nothing
     assert youtube.link_pair("tok", video, short)[0].count("(already linked)") == 2 and len(puts) == 2
+
+
+def test_the_voice_s_top_band_hiss_is_cut_in_the_real_mix_without_moving_or_dulling_the_words(tmp_path):
+    """The hiss that slipped through the quizzes sat at 11-12 kHz of the 24 kHz voice, above what hiss_ratio
+    measures: the mix itself now removes it, keeps speech up to 10 kHz, and keeps every word where it was."""
+    import subprocess
+    import wave
+    import numpy as np
+    from scipy.signal import welch
+    from blogwriter import sound
+    from blogwriter.footage import ffmpeg_exe
+    sr, n = 24000, 24000 * 2
+    t = np.arange(n) / sr
+    rng = np.random.default_rng(1)
+    voice = 0.3 * np.sin(2 * np.pi * 500 * t) + 0.05 * np.sin(2 * np.pi * 9000 * t)
+    hiss = np.fft.irfft(np.fft.rfft(rng.normal(0, 0.05, n)) * ((np.fft.rfftfreq(n, 1 / sr) > 11000)), n)
+    voice[: sr // 2] = 0                                        # half a second of silence, then the "word"
+    clip = tmp_path / "line.wav"
+    with wave.open(str(clip), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes((np.clip(voice + hiss * (voice != 0), -1, 1) * 32767).astype("<i2").tobytes())
+    silent = tmp_path / "s.wav"
+    subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+                    "-t", "3", str(silent)], check=True)
+    graph, _ = sound.mix_filter([1.0], [], [], None, final=False, music_gain=0.0)
+    out = tmp_path / "mix.wav"
+    subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(clip), "-i", str(silent), "-i", str(silent),
+                    "-i", str(silent), "-filter_complex", graph, "-map", "[out]", "-t", "3", "-ac", "2", "-ar", "48000",
+                    "-c:a", "pcm_s16le", str(out)], check=True)
+    with wave.open(str(out)) as w:
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").reshape(-1, 2).mean(1) / 32768
+    f, p = welch(x[int(1.6 * 48000):int(2.9 * 48000)], 48000, nperseg=4096)
+    band = lambda lo, hi: 10 * np.log10(p[(f >= lo) & (f < hi)].mean())          # noqa: E731
+    assert band(11000, 12000) - band(400, 600) < -75              # the hiss is gone (it was about -25 here)
+    assert band(8800, 9200) - band(400, 600) > -30                # speech up to 10 kHz is kept
+    onset = np.argmax(np.abs(x) > 0.5 * np.abs(x).max()) / 48000
+    assert abs(onset - 1.5) < 0.01                                # 1.0 s placement + 0.5 s silence, not moved
+
+
+def test_youtube_never_gets_text_it_refuses():
+    from blogwriter import youtube
+    meta = {"title": "P-values: Is p < 0.05 Magic? <script>", "description": "When p < 0.05 and n > 30 ... " + "₹" * 3000,
+            "tags": ["p<0.05", "a, b"] + [f"tag{i}" for i in range(40)], "short_title": "x #Shorts"}
+    sn = youtube.video_body(meta, short=False, privacy="public")["snippet"]
+    assert "<" not in sn["title"] + sn["description"] and ">" not in sn["title"] + sn["description"]
+    assert "p \u2039 0.05" in sn["title"] and len(sn["title"]) <= 100
+    assert len(sn["description"].encode("utf-8")) <= 5000                        # bytes, not characters
+    assert len(sn["tags"]) <= 15 and sum(len(t) + 1 for t in sn["tags"]) <= 500 and "a  b" in sn["tags"]
