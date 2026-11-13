@@ -26,3 +26,4 @@ video/out/
 /*.aac
 voices/
 .voice/
+upload_worker/.wrangler/

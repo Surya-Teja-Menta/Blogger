@@ -3501,7 +3501,6 @@ def test_the_voice_s_top_band_hiss_is_cut_in_the_real_mix_without_moving_or_dull
     import subprocess
     import wave
     import numpy as np
-    from scipy.signal import welch
     from blogwriter import sound
     from blogwriter.footage import ffmpeg_exe
     sr, n = 24000, 24000 * 2
@@ -3524,7 +3523,10 @@ def test_the_voice_s_top_band_hiss_is_cut_in_the_real_mix_without_moving_or_dull
                     "-c:a", "pcm_s16le", str(out)], check=True)
     with wave.open(str(out)) as w:
         x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").reshape(-1, 2).mean(1) / 32768
-    f, p = welch(x[int(1.6 * 48000):int(2.9 * 48000)], 48000, nperseg=4096)
+    seg = x[int(1.6 * 48000):int(2.9 * 48000)]                   # averaged spectrum, numpy only (CI has no scipy)
+    frames = [seg[i:i + 4096] * np.hanning(4096) for i in range(0, len(seg) - 4096, 2048)]
+    p = np.mean([np.abs(np.fft.rfft(fr)) ** 2 for fr in frames], axis=0)
+    f = np.fft.rfftfreq(4096, 1 / 48000)
     band = lambda lo, hi: 10 * np.log10(p[(f >= lo) & (f < hi)].mean())          # noqa: E731
     assert band(11000, 12000) - band(400, 600) < -75              # the hiss is gone (it was about -25 here)
     assert band(8800, 9200) - band(400, 600) > -30                # speech up to 10 kHz is kept
