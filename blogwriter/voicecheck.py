@@ -20,6 +20,10 @@ HOLE_TO = 0.28                # a hole is shortened to this
 WORDS_PER_SECOND = (1.7, 4.4)  # slower or faster than this is a dragged or a rushed take
 HISS_MAX = -34.0              # hiss_ratio above this is a hissy take (measured on a finished video: clean lines -43 +/- 3, the worst clean one -36.5, a hissy one -28)
 HISS_FIX_TO = -38.0           # a repaired line should get under this
+# a quiz line plays while the music stops, so what is fine elsewhere is heard there (the owner still heard the
+# leftover of a line cleaned to -41): it is cleaned from STRICT_MAX and down to a clean line's level
+HISS_STRICT_MAX = -38.0
+HISS_STRICT_TO = -43.0
 SIMILAR = 0.86                # a heard word this close to the script's word is the same word (recogniser noise)
 
 SMALL = {w: k for k, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "

@@ -614,11 +614,24 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
                     items = {}                       # never half one voice and half another: the standard voice speaks all
                 else:
                     items.update(made)
-        weak = [k for k, it in items.items() if it.get("ok") and (it.get("checks") or {}).get("bad", 0) > 0]
+        from . import voicecheck as vc
+
+        def hissy(it) -> bool:
+            return float((it.get("checks") or {}).get("hiss", -99.0)) > vc.HISS_MAX
+
+        def rank(it) -> tuple:
+            """Lower is better: a hissy take is worse than any clean one (hiss is heard by every viewer, above all
+            in a quiz where the music stops), then fewer unsure words, then less hiss."""
+            c = it.get("checks") or {}
+            return (hissy(it), c.get("bad", 99), float(c.get("hiss", -99.0)))
+
+        weak = [k for k, it in items.items() if it.get("ok") and ((it.get("checks") or {}).get("bad", 0) > 0 or hissy(it))]
         if weak and python and os.path.exists(python):
-            # a line whose words the checks could not get right in the usual number of takes: spoken again here, with
-            # far more takes, and kept only if it is better (the time does not matter, a missing word does)
-            log(f"[voice] {len(weak)} line(s) still have words the checks could not get right: spoken again with more takes")
+            # a line whose words the checks could not get right, or that came out hissy, in the usual number of takes:
+            # spoken again here, with far more takes, and kept only if it is better (the time does not matter, a
+            # missing word or a hiss does)
+            log(f"[voice] {len(weak)} line(s) still have words the checks could not get right or hiss "
+                f"({sum(hissy(items[k]) for k in weak)} hissy): spoken again with more takes")
             before = os.environ.get("CLONE_TAKES")
             os.environ["CLONE_TAKES"] = "16"
             try:
@@ -629,8 +642,12 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
                 else:
                     os.environ["CLONE_TAKES"] = before
             for k, it in again.items():
-                if it.get("ok") and (it.get("checks") or {}).get("bad", 99) < items[k]["checks"]["bad"]:
+                if it.get("ok") and rank(it) < rank(items[k]):
                     items[k] = it
+            still = sorted(k for k in weak if hissy(items[k]))
+            if still:
+                log(f"[voice] lines {still} are still hissy after 16 more takes; "
+                    "they will be cleaned before mixing")
         checked = [it.get("checks") or {} for it in items.values() if it.get("checks")]
         if checked:
             left = sorted(k for k, it in items.items() if (it.get("checks") or {}).get("bad", 0) > 0)
@@ -1002,16 +1019,20 @@ def timeline(seconds: List[float], kinds: List[str], holds: Optional[List[int]] 
 
 
 # the gentlest noise reduction that works, tried in this order (ffmpeg filters): measured on a hissy take from a real
-# video (-27.6 dB against about -43 for a clean line): the first two bring it to -35 and -44; the last is a strong one
-HISS_LADDER = ["afftdn=nr=12:nf=-45", "afftdn=nr=20:nf=-40:tn=1", "afftdn=nr=20:nf=-40:tn=1,lowpass=f=9000",
-               "afftdn=nr=30:nf=-35:tn=1,lowpass=f=8500"]
+# video (-27.6 dB against about -43 for a clean line): the first two bring it to -35 and -44; the last is a strong one.
+# Every step also cuts the top of the band: the leftover the owner still heard in a quiz sat above what hiss_ratio
+# measures (10-12 kHz of the 24 kHz voice, mirrored to 12-16 kHz in the 48 kHz mix, 25 dB over a clean line's)
+HISS_LADDER = ["afftdn=nr=12:nf=-45,lowpass=f=10500", "afftdn=nr=20:nf=-40:tn=1,lowpass=f=10000",
+               "afftdn=nr=20:nf=-40:tn=1,lowpass=f=9000", "afftdn=nr=30:nf=-35:tn=1,lowpass=f=8500"]
 
 
-def repair_hiss(clips: List[str], log: Callable[[str], None]) -> List[str]:
+def repair_hiss(clips: List[str], log: Callable[[str], None], strict=()) -> List[str]:
     """Narration lines that are hissy get cleaned before mixing: each line's high-frequency noise is measured
     (voicecheck.hiss_ratio); above HISS_MAX the gentlest filter of HISS_LADDER that brings it under HISS_FIX_TO is
     applied to a copy (the original stays). A line already clean, silent, or too short is left alone, and a repair
-    that does not help is not used. Never raises: a line that cannot be measured is used as it is."""
+    that does not help is not used. `strict`: the indices of quiz lines, which play with the music stopped: they are
+    cleaned from HISS_STRICT_MAX down to HISS_STRICT_TO, a clean line's level. Never raises: a line that cannot be
+    measured is used as it is."""
     import numpy as np
     from . import voicecheck as vc
     out = []
@@ -1022,7 +1043,9 @@ def repair_hiss(clips: List[str], log: Callable[[str], None]) -> List[str]:
                 out.append(clip)
                 continue
             before = vc.hiss_ratio(x, sr)
-            if before <= vc.HISS_MAX:
+            quiz = k in strict
+            limit, target = (vc.HISS_STRICT_MAX, vc.HISS_STRICT_TO) if quiz else (vc.HISS_MAX, vc.HISS_FIX_TO)
+            if before <= limit:
                 out.append(clip)
                 continue
             best, best_db, best_filter = clip, before, ""
@@ -1033,13 +1056,13 @@ def repair_hiss(clips: List[str], log: Callable[[str], None]) -> List[str]:
                 after = vc.hiss_ratio(y, sr)
                 if after < best_db - 3:
                     best, best_db, best_filter = fixed, after, flt
-                    if after <= vc.HISS_FIX_TO:
+                    if after <= target:
                         break
             if best != clip:
                 kept = clip + ".denoised.wav"
                 os.replace(best, kept)
                 best = kept
-            log(f"[audio] line {k + 1} was hissy ({before:.1f} dB, a clean line is about -43): "
+            log(f"[audio] {'quiz ' if quiz else ''}line {k + 1} was hissy ({before:.1f} dB, a clean line is about -43): "
                 + (f"cleaned to {best_db:.1f} dB with {best_filter}" if best != clip else "no filter helped; left as it was"))
             out.append(best)
         except Exception as exc:
@@ -1090,7 +1113,7 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
     """The finished soundtrack of one language: narration (cleaned up), music ducked under it, a whoosh on
     every transition and a hit under every figure, mastered to YouTube loudness. The music's level is measured in the
     pauses and lowered until it is well under the voice (music_gain_for)."""
-    clips = repair_hiss(clips, log)
+    clips = repair_hiss(clips, log, strict={k for k, kind in enumerate(kinds) if kind == "check"})
     voice_at = [(st + LEAD) / FPS for st in starts]
     whoosh_at = [st / FPS - 0.25 for st in starts[1:]]
     hit_at = [(st + 14) / FPS for st, k in zip(starts, kinds) if k in CHART_KINDS]
@@ -1625,6 +1648,12 @@ def opening_rule(brief: dict, style: str, title: str) -> str:
     return f"{brief['opening']} At most 28 words. No greeting, no \"in this video\"."
 
 
+def quizzes_on() -> bool:
+    """QUIZZES=off (a repository variable) takes the quiz shots out of every video: the owner's last resort if a quiz
+    ever sounds hissy again. On by default."""
+    return os.environ.get("QUIZZES", "on").strip().lower() not in ("off", "0", "no", "false")
+
+
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
     """The writer's brief: the style's voice plus the plan made for this subject (braces escaped for the
     script prompt), and the number of shots that fits the planned length."""
@@ -1638,6 +1667,8 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
         text += MATHS_RULES
     if style == "education":
         text += TEACHING + VOICE.replace("[examples]", brief.get("examples") or "everyday situations the viewer knows")
+        if not quizzes_on():
+            text += '\n- NO QUIZ in this video: no "check" shots at all; skip step (7) and go on to the recap.'
     if style in ("education", "concept"):
         text += LEVEL_RULES.get(brief.get("level") or "intermediate", "")
     text += lesson_text(lesson)
@@ -1921,6 +1952,9 @@ class VideoMaker:
                 continue
             act = str(sc.get("act") or "").strip() or act
             scene = check_scene(sc, allowed, quotes, countries)
+            if scene["kind"] == "check" and not quizzes_on():
+                self.log("[video] quiz shot left out (QUIZZES=off)")
+                continue
             # a fact's number must be in the research; a worked example's numbers must be on screen in the shot
             narration = uncredit(strip_persona(strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()),
                                                                          f"{allowed} {maths_shown(scene)}")))

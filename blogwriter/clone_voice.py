@@ -329,7 +329,7 @@ def main() -> int:
         missing. A long sentence that stays wrong is spoken in two halves, each chosen on its own."""
         import numpy as np
         pieces, words, offset = [], [], 0.0
-        stats = {"takes": 0, "mended": 0, "bad": 0, "split": 0}
+        stats = {"takes": 0, "mended": 0, "bad": 0, "split": 0, "hiss": -99.0}   # hiss: the worst sentence's (dB)
         for sentence in sentences(text):
             audio, heard, verdict = best_take(sentence, stats)
             part = None
@@ -344,10 +344,12 @@ def main() -> int:
                     shift = (len(a1) + len(pause)) / sr
                     part = np.concatenate([a1, pause, a2])
                     wds = h1 + [[a + shift, b + shift, w] for a, b, w in h2]
-                    verdict = {**verdict, "bad": t1[2]["bad"] + t2[2]["bad"]}
+                    verdict = {**verdict, "bad": t1[2]["bad"] + t2[2]["bad"],
+                               "hiss": max(t1[2].get("hiss", -99.0), t2[2].get("hiss", -99.0))}
             if part is None:
                 part, wds = finish(sentence, audio, heard, verdict, stats)
             stats["bad"] += verdict["bad"]
+            stats["hiss"] = round(max(stats["hiss"], float(verdict.get("hiss", -99.0))), 1)
             pieces += [torch.from_numpy(part)[None], gap]
             words += [[a + offset, b + offset, w] for a, b, w in wds]
             offset += len(part) / sr + gap.shape[1] / sr

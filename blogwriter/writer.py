@@ -141,10 +141,12 @@ def strip_site_credits(text: str, urls=(), drop: bool = True) -> str:
     def cut(m):
         before = m.string[:m.start()].rstrip(" \t\"“'‘(")
         return _START if not before or before[-1] in ".!?:\n" else ""
-    out = lead.sub(cut, text)
-    out = tail.sub("", out)
-    out = as_verb.sub("", out)
-    out = subject.sub(cut, out)
+    out, n1 = lead.subn(cut, text)
+    out, n2 = tail.subn("", out)
+    out, n3 = as_verb.subn("", out)
+    out, n4 = subject.subn(cut, out)
+    if not (n1 + n2 + n3 + n4) and not (drop and any_site.search(text)):
+        return text                  # nothing to take out: the line is left exactly as written
     out = re.sub(_START + r"\s*([a-z])", lambda m: m.group(1).upper(), out).replace(_START, "")
     out = re.sub(r"[ \t]+([,.!?;:])", r"\1", out)
     out = re.sub(r",([.!?])", r"\1", out)

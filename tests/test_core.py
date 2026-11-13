@@ -3251,3 +3251,90 @@ def test_lesson_titles_are_the_topic_not_a_hook():
         "What Statistics Is: Descriptive vs Inferential, Population vs Sample"
     assert t("Why the Bell Curve Shows Up Everywhere", "Central limit theorem") == "Central Limit Theorem"
     assert t("x", "p-values and the t-test") == "p-values and the t-test"            # written forms kept
+
+
+def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_path, monkeypatch):
+    # the owner still heard hiss in a quiz: the re-speak with more takes judged only unsure words, so a hissy take
+    # with clearer words won
+    from blogwriter import video, voicefarm
+    from blogwriter.config import Settings
+    a, b, c = (tmp_path / n for n in ("a.wav", "b.wav", "c.wav"))
+    for f in (a, b, c):
+        f.write_bytes(b"x")
+    monkeypatch.setattr(voicefarm, "available", lambda s: True)
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [
+        {"ok": True, "words": [[0, 1, "hissy"]], "out": str(a), "checks": {"bad": 0, "hiss": -29.3}},
+        {"ok": True, "words": [[0, 1, "fine"]], "out": str(b), "checks": {"bad": 0, "hiss": -44.0}}])
+    monkeypatch.setattr(video, "ffmpeg", lambda args, **k: None)
+    monkeypatch.setattr(video, "align_words", lambda text, words: [tuple(w) for w in words])
+    monkeypatch.setenv("VOICE_PYTHON", __import__("sys").executable)
+    jobs = [("Can you?", "v", str(tmp_path / "1.wav")), ("Yes.", "v", str(tmp_path / "2.wav"))]
+    asked, logs = [], []
+
+    def again(take):
+        def clone_here(py, jobs_, which, s, job, log):
+            asked.append((which, os.environ.get("CLONE_TAKES")))
+            return {0: take}
+        return clone_here
+    # a re-take that is as hissy (and has a wrong word) is not used
+    monkeypatch.setattr(video, "clone_here", again({"ok": True, "words": [[0, 1, "worse"]], "out": str(c),
+                                                       "checks": {"bad": 1, "hiss": -30.0}}))
+    out = video.speak_cloned(jobs, Settings(), str(tmp_path), logs.append)
+    assert asked == [([0], "16")] and out[0][0][2] == "hissy" and out[1][0][2] == "fine"
+    assert any("1 hissy" in m for m in logs) and any("still hissy" in m for m in logs)
+    # a clean re-take wins, even with one unsure word: hiss is heard by every viewer
+    c.write_bytes(b"x")
+    monkeypatch.setattr(video, "clone_here", again({"ok": True, "words": [[0, 1, "clean"]], "out": str(c),
+                                                       "checks": {"bad": 1, "hiss": -42.0}}))
+    out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
+    assert out[0][0][2] == "clean"
+
+
+def test_quiz_lines_are_held_to_a_stricter_hiss_limit_and_quizzes_can_be_switched_off(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    import wave
+    import numpy as np
+    from blogwriter import video, voicecheck as vc
+    assert vc.HISS_STRICT_MAX < vc.HISS_MAX and vc.HISS_STRICT_TO < vc.HISS_FIX_TO
+    assert all("lowpass" in f for f in video.HISS_LADDER)            # the band above what hiss_ratio sees is cut too
+    exe = video.ffmpeg_exe()
+    if not (shutil.which(exe) or os.path.exists(exe)) or "afftdn" not in subprocess.run(
+            [exe, "-hide_banner", "-filters"], capture_output=True, text=True).stdout:
+        pytest.skip("no ffmpeg with afftdn")
+    sr = 24000
+    voice, words = _fake_voice([x for k in range(8) for x in (("w", 0.3), ("s", 0.08))])
+    rng = np.random.default_rng(5)
+    noise = rng.normal(0, 1, len(voice)) * (np.abs(voice) > 0.01)
+    # a little hiss: fine in a normal line, too much for a quiz line, where the music stops
+    for amount in np.linspace(0.002, 0.03, 40):
+        some = (voice + noise * amount).astype("float32")
+        if vc.HISS_STRICT_MAX + 0.5 < vc.hiss_ratio(some, sr) < vc.HISS_MAX - 0.5:
+            break
+    else:
+        pytest.skip("no noise level in the band")
+    path = str(tmp_path / "line.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+        w.writeframes((np.clip(some * 1.5, -1, 1) * 32767).astype("<i2").tobytes())
+    logs = []
+    assert video.repair_hiss([path], logs.append) == [path] and not logs                 # a normal line: left alone
+    out = video.repair_hiss([path], logs.append, strict={0})
+    assert out == [path + ".denoised.wav"] and "quiz line 1 was hissy" in logs[0]
+    _, y = video.sound._read_mono(out[0])
+    assert vc.hiss_ratio(y, sr) < vc.hiss_ratio(some, sr) - 3
+    # the last resort: QUIZZES=off takes the quiz out of the script and tells the writer
+    monkeypatch.setenv("QUIZZES", "off")
+    assert not video.quizzes_on()
+    brief = video.check_brief({"minutes": 9}, "education")
+    text, _ = video.shape_prompt(brief, "education", "Mean", "1. [x] a | b")
+    assert "NO QUIZ" in text
+    monkeypatch.delenv("QUIZZES")
+    assert video.quizzes_on() and "NO QUIZ" not in video.shape_prompt(brief, "education", "Mean", "1. [x] a | b")[0]
+
+
+def test_a_line_without_a_website_credit_is_left_exactly_as_written():
+    from blogwriter.writer import strip_site_credits as s
+    for line in ("the man who decided data needed more folders. ... It is impressive",
+                 "a deeply philosophical question:  which item?", "Wait , what?"):
+        assert s(line) == line
