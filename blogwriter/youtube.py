@@ -174,6 +174,36 @@ def fetch(run: str, names, dest: str, log=print) -> dict:
     return got
 
 
+def add_link_line(token: str, vid: str, line: str, url: str, log=print) -> str:
+    """Put `line` at the top of the video's description, once: 'linked', 'already linked' or why not."""
+    head = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(f"{API_URL}/videos", params={"part": "snippet", "id": vid}, headers=head, timeout=30)
+        items = r.json().get("items") or []
+        if r.status_code != 200 or not items:
+            return f"not changed ({r.status_code}: video not found)"
+        sn = items[0]["snippet"]
+        if url in sn.get("description", ""):
+            return "already linked"
+        keep = {k: sn[k] for k in ("title", "categoryId", "tags", "defaultLanguage", "defaultAudioLanguage") if k in sn}
+        keep["description"] = (line + "\n\n" + sn.get("description", ""))[:4900]
+        r = requests.put(f"{API_URL}/videos", params={"part": "snippet"},
+                         headers={**head, "Content-Type": "application/json"},
+                         data=json.dumps({"id": vid, "snippet": keep}), timeout=30)
+        if r.status_code != 200:
+            log(f"[youtube] description not updated ({r.status_code}): {r.text[:200]}")
+        return "linked" if r.status_code == 200 else f"not changed ({r.status_code})"
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        return f"not changed ({type(exc).__name__})"
+
+
+def link_pair(token: str, video: dict, short: dict, log=print) -> list:
+    """The long video and its Short point to each other from the top of their descriptions (skipped once done)."""
+    a = add_link_line(token, video["id"], f"Short version, 30 seconds: {short['url']}", short["url"], log)
+    b = add_link_line(token, short["id"], f"The full lesson: {video['url']}", video["url"], log)
+    return [f"- Links: the video's description points to the Short ({a}); the Short's points to the full lesson ({b})."]
+
+
 def _settings():
     from .config import Settings
     return Settings.from_env()
@@ -195,14 +225,15 @@ def run(request: str, log=print, privacy: str = "") -> str:
         token = access_token()
         from .storage import get_text, put_text
         s = _settings()
-        done = {}
-        for item in items:
+        known = {}                                 # both items' markers: the pair is linked whenever both exist
+        for item in ("video", "short"):
             try:
                 mark = json.loads(get_text(s, f"uploads/{folder}/{item}.json") or "null")
             except ValueError:
                 mark = None
-            if isinstance(mark, dict) and mark.get("url"):
-                done[item] = mark
+            if isinstance(mark, dict) and mark.get("url") and mark.get("id"):
+                known[item] = mark
+        done = {item: known[item] for item in items if item in known}
         wanted = ["youtube.json", "thumbnail.png", "subtitles_en.srt"]
         wanted += ["long_video_en.mp4"] if "video" in items and "video" not in done else []
         wanted += ["short_en.mp4"] if "short" in items and "short" not in done else []
@@ -228,9 +259,8 @@ def run(request: str, log=print, privacy: str = "") -> str:
             vid = upload_video(token, files[name], meta, short, privacy, log)
             title = meta["short_title" if short else "title"]
             url = f"https://youtu.be/{vid}" if not short else f"https://youtube.com/shorts/{vid}"
-            put_text(s, f"uploads/{folder}/{item}.json",
-                     json.dumps({"id": vid, "url": url, "title": title, "at": int(time.time())}),
-                     "application/json; charset=utf-8")
+            known[item] = {"id": vid, "url": url, "title": title, "at": int(time.time())}
+            put_text(s, f"uploads/{folder}/{item}.json", json.dumps(known[item]), "application/json; charset=utf-8")
             extras = []
             if not short and "thumbnail.png" in files:
                 extras.append("thumbnail " + ("set" if add_thumbnail(token, vid, files["thumbnail.png"], log)
@@ -243,6 +273,8 @@ def run(request: str, log=print, privacy: str = "") -> str:
                     "in YouTube Studio and set it to Public." if state == "private" and privacy != "private" else "")
             lines.append(f"- {label}: [{title}]({url}) is uploaded, now **{state}**"
                          f"{'; ' + ', '.join(extras) if extras else ''}.{note}")
+        if "video" in known and "short" in known:
+            lines += link_pair(token, known["video"], known["short"], log)
         head = "Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else "Nothing new uploaded:"
         return head + "\n\n" + "\n".join(lines)
     except SignInError as exc:

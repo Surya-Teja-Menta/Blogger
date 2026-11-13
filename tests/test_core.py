@@ -3403,7 +3403,7 @@ def test_with_the_relay_one_click_uploads_and_the_key_never_lands_in_the_run_fol
 def test_an_item_already_on_youtube_is_never_uploaded_twice(monkeypatch, tmp_path):
     import json as _json
     from blogwriter import storage, youtube
-    store = {"uploads/20261113_053132_Mean/video.json": _json.dumps({"url": "https://youtu.be/abc", "title": "T"}),
+    store = {"uploads/20261113_053132_Mean/video.json": _json.dumps({"id": "abc", "url": "https://youtu.be/abc", "title": "T"}),
              "uploads/20261113_053132_Mean/requested-video.json": "{}",
              "uploads/20261113_053132_Mean/requested-short.json": "{}"}
     monkeypatch.setattr(youtube, "access_token", lambda: "tok")
@@ -3422,10 +3422,12 @@ def test_an_item_already_on_youtube_is_never_uploaded_twice(monkeypatch, tmp_pat
     monkeypatch.setattr(youtube, "fetch", fake_fetch)
     monkeypatch.setattr(youtube, "upload_video", lambda *a, **k: "s1")
     monkeypatch.setattr(youtube, "privacy_of", lambda *a: "public")
+    pairs = []
+    monkeypatch.setattr(youtube, "link_pair", lambda tok, v, sh, log=print: pairs.append((v["id"], sh["id"])) or ["- Links: ok"])
     report = youtube.run("upload both 20261113_053132_Mean", log=lambda *_: None)
     assert "long_video_en.mp4" not in asked                       # not even downloaded again
     assert "already on YouTube" in report and "https://youtube.com/shorts/s1" in report
-    assert report.startswith("Uploaded")
+    assert report.startswith("Uploaded") and pairs == [("abc", "s1")] and "Links: ok" in report
     assert _json.loads(store["uploads/20261113_053132_Mean/short.json"])["url"] == "https://youtube.com/shorts/s1"
     assert not any("requested-" in k for k in store)              # the relay may start a new job again
     # both already there: nothing new, and the run still counts as fine
@@ -3457,3 +3459,37 @@ def test_the_upload_job_accepts_only_its_own_requests_and_reports_every_problem(
     assert body["status"] == {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "embeddable": True,
                               "containsSyntheticMedia": True}
     assert "containsSyntheticMedia" not in youtube.video_body(meta, False, "public", synthetic=False)["status"]
+
+
+def test_the_video_and_its_short_point_to_each_other_once(monkeypatch):
+    import json as _json
+    from blogwriter import youtube
+    state = {"v1": {"title": "Long", "categoryId": "27", "description": "About it.", "tags": ["a"]},
+             "s1": {"title": "Short #Shorts", "categoryId": "27", "description": "Quick.", "tags": ["a"]}}
+    puts = []
+
+    class R:
+        def __init__(self, code, data=None):
+            self.status_code, self._d, self.text = code, data or {}, ""
+
+        def json(self):
+            return self._d
+
+    monkeypatch.setattr(youtube.requests, "get", lambda url, params=None, headers=None, timeout=0:
+                        R(200, {"items": [{"snippet": state[params["id"]]}]}))
+
+    def put(url, params=None, headers=None, data=None, timeout=0):
+        body = _json.loads(data)
+        puts.append(body)
+        state[body["id"]] = body["snippet"]
+        return R(200)
+    monkeypatch.setattr(youtube.requests, "put", put)
+    video = {"id": "v1", "url": "https://youtu.be/v1"}
+    short = {"id": "s1", "url": "https://youtube.com/shorts/s1"}
+    out = youtube.link_pair("tok", video, short)[0]
+    assert out.count("(linked)") == 2
+    assert state["v1"]["description"].startswith("Short version, 30 seconds: https://youtube.com/shorts/s1\n\nAbout it.")
+    assert state["s1"]["description"].startswith("The full lesson: https://youtu.be/v1\n\nQuick.")
+    assert state["v1"]["title"] == "Long" and state["v1"]["tags"] == ["a"] and len(puts) == 2
+    # a second run changes nothing
+    assert youtube.link_pair("tok", video, short)[0].count("(already linked)") == 2 and len(puts) == 2
