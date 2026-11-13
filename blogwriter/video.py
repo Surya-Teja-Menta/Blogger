@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -32,7 +33,7 @@ from .mailer import send_email
 from .pricing import label
 from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, voicefarm
 from .research import domain
-from .storage import keep_latest_runs, link_for, upload_run
+from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
 from .writer import LANGS, strip_site_credits, strip_unsupported_numbers
 
@@ -2676,6 +2677,15 @@ class VideoMaker:
                 self.log(f"[storage] clean-up skipped: {type(exc).__name__}: {str(exc)[:120]}")
         if not email:
             return
+        # the Upload buttons' key: random per video, kept only in the private bucket and in this email (never in
+        # the run folder, which may become a public artifact). The button relay checks it before starting the job.
+        upload_key = ""
+        if links.get("long_video_en.mp4") and email_page.button_base():
+            key = secrets.token_urlsafe(24)
+            if put_text(self.s, f"videos/{os.path.basename(os.path.normpath(run_dir))}/upload_key.txt", key):
+                upload_key = key
+            else:
+                self.log("[mail] the upload key could not be stored: the email gets the GitHub-page buttons")
         pdf_url = link_for(self.s, notes_at)      # the study notes in Cloudflare storage; made here, never in the artifact
         shown = {**links, **({"study_notes.pdf": pdf_url} if pdf_url else {})}
         yt = None
@@ -2687,7 +2697,7 @@ class VideoMaker:
         notes = [line.strip() for line in notes_section(meta or {}).strip().splitlines()[1:] if line.strip()]
         page, body = email_page.build(plan["title"], shown, yt, summary(verdict or {}), notes,
                                       email_page.repository(), os.path.basename(os.path.normpath(run_dir)),
-                                      KEEP_VIDEOS)
+                                      KEEP_VIDEOS, upload_key)
         small = [os.path.join(out, n) for n in names if n.endswith((".txt", ".srt", ".png", ".jpg"))]
         pdf = fetch_notes(self.s, notes_at, os.path.join(out, "study_notes.pdf"), self.log)
         if pdf:

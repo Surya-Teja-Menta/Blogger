@@ -1,10 +1,13 @@
 name: Upload to YouTube
+run-name: "Upload ${{ inputs.what || 'from issue' }} ${{ inputs.run || github.event.issue.title }}"
 
-# Started by the Upload buttons in the video email. A button opens a ready-filled issue in this repository titled
-# "upload video|short|both <run folder>"; when the OWNER presses Create, this job takes the files from that run's
-# folder in the private bucket, uploads them to the channel (title, description and tags from youtube.json), answers
-# on the issue with the YouTube link and closes it. Issues opened by anyone else never start an upload. It can also
-# be started by hand from the Actions tab.
+# Started by the Upload buttons in the video email. One click goes to the upload relay (upload_worker/, a Cloudflare
+# Worker), which checks the video's private key and starts this job through workflow_dispatch. This job holds the
+# YouTube sign-in (GitHub Secrets YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN): it takes the files of that run
+# from the private bucket, uploads them (title, description and tags from youtube.json) and emails the YouTube links.
+# An item already uploaded is never uploaded twice. Without the relay, the buttons open a ready-filled issue
+# "upload video|short|both <run folder>" instead: when the OWNER presses Create, this job runs too and also answers on
+# the issue. Issues opened by anyone else never start an upload. It can also be started by hand from the Actions tab.
 on:
   issues:
     types: [opened]

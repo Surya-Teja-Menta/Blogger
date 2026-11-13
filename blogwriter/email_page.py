@@ -4,7 +4,7 @@ mail apps ignore style sheets. A plain-text copy goes with it for mail apps that
 import html
 import os
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 # what each delivered file is, in the order the table lists them
 FILES = [("long_video_en.mp4", "Long video (2K)", "the one to upload"),
@@ -27,6 +27,17 @@ def upload_url(repo: str, what: str, run: str, title: str) -> str:
     return (f"https://github.com/{repo}/issues/new?title={quote(f'upload {what} {run}')}&body={quote(body)}")
 
 
+def button_base() -> str:
+    """The address of the upload relay (a Cloudflare Worker, see upload_worker/), from the UPLOAD_BUTTON_URL
+    repository variable; '' when it is not set up, and then the buttons open the GitHub page instead."""
+    return (os.environ.get("UPLOAD_BUTTON_URL") or "").strip().rstrip("/")
+
+
+def click_url(base: str, what: str, run: str, key: str) -> str:
+    """One click uploads: the relay checks the video's key and starts the GitHub upload job."""
+    return f"{base}/upload?{urlencode({'what': what, 'run': run, 'key': key})}"
+
+
 def _button(href: str, label: str, filled: bool) -> str:
     style = (f"background:{BRAND};color:#ffffff;border:1px solid {BRAND};" if filled
              else f"background:#ffffff;color:{BRAND};border:1px solid {BRAND};")
@@ -47,17 +58,26 @@ def _section(title: str, inner: str) -> str:
 
 
 def build(title: str, links: Dict[str, str], yt: Optional[dict], quality: str, notes: List[str], repo: str,
-          run: str, keep: int) -> Tuple[str, str]:
+          run: str, keep: int, upload_key: str = "") -> Tuple[str, str]:
     """(html, text) of the video email. links: file name -> download URL. yt: youtube.json (title, description,
-    tags, short title). Upload buttons appear only when the repository is known and the video was stored."""
+    tags, short title). Upload buttons appear only when the repository is known and the video was stored. With the
+    relay set up and the video's key stored (upload_key), one click uploads; otherwise a button opens a ready-filled
+    GitHub page where pressing Create uploads."""
     stored = bool(links.get("long_video_en.mp4"))
+    base = button_base() if upload_key else ""
+    link = ((lambda what: click_url(base, what, run, upload_key)) if base
+            else (lambda what: upload_url(repo, what, run, title)))
     buttons = ""
     if repo and run and stored:
-        buttons = (_button(upload_url(repo, "video", run, title), "Upload video to YouTube", True)
-                   + (_button(upload_url(repo, "short", run, title), "Upload Short", False) if links.get("short_en.mp4") else "")
-                   + (_button(upload_url(repo, "both", run, title), "Upload both", False) if links.get("short_en.mp4") else "")
-                   + f'<div style="color:{MUTED};font-size:12px;margin-top:4px">Each button opens a ready-filled '
-                     f'GitHub page: press <b>Create</b> there to upload. Nothing is posted until you do.</div>')
+        short = bool(links.get("short_en.mp4"))
+        how = ("One click starts the upload on GitHub (it holds the YouTube sign-in); an email with the YouTube link "
+               "follows in a few minutes. A second click never uploads twice." if base else
+               "Each button opens a ready-filled GitHub page: press <b>Create</b> there to upload.")
+        buttons = (_button(link("video"), "Upload video to YouTube", True)
+                   + (_button(link("short"), "Upload Short", False) if short else "")
+                   + (_button(link("both"), "Upload both", False) if short else "")
+                   + f'<div style="color:{MUTED};font-size:12px;margin-top:4px">{how} Nothing is posted until you '
+                     f'click.</div>')
     files = "".join(
         f'<tr><td style="padding:8px 12px;border-top:1px solid {LINE};color:{INK};font-weight:600">{html.escape(label)}</td>'
         f'<td style="padding:8px 12px;border-top:1px solid {LINE};color:{MUTED}">{html.escape(what)}</td>'
@@ -86,7 +106,8 @@ def build(title: str, links: Dict[str, str], yt: Optional[dict], quality: str, n
     # the plain-text copy, for mail apps without HTML
     text = [f"{title}: ready to review. Nothing has been posted.", ""]
     if repo and run and stored:
-        text += [f"Upload the video: {upload_url(repo, 'video', run, title)}", ""]
+        text += [f"Upload the video: {link('video')}"] + ([f"Upload the Short: {link('short')}"]
+                                                           if links.get("short_en.mp4") else []) + [""]
     text += [f"{label}: {links[name]}" for name, label, _ in FILES if links.get(name)]
     if yt:
         text += ["", f"Title: {yt.get('title', '')}", "Description:", yt.get("description", ""),

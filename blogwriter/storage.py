@@ -32,6 +32,36 @@ def link_for(settings: Settings, key: str, s3=None) -> str:
         return ""
 
 
+def put_text(settings: Settings, key: str, text: str, mime: str = "text/plain; charset=utf-8", s3=None) -> bool:
+    """Store a small text file at `key` in the private bucket. Never raises; False when it could not."""
+    if not settings.storage_configured:
+        return False
+    try:
+        (s3 or _client(settings)).put_object(Bucket=settings.s3_bucket, Key=key, Body=text.encode("utf-8"),
+                                             ContentType=mime)
+        return True
+    except Exception:
+        return False
+
+
+def get_text(settings: Settings, key: str, s3=None) -> str:
+    """A small text file from the private bucket ('' when it is missing or storage fails)."""
+    if not settings.storage_configured:
+        return ""
+    try:
+        return (s3 or _client(settings)).get_object(Bucket=settings.s3_bucket, Key=key)["Body"].read().decode("utf-8")
+    except Exception:
+        return ""
+
+
+def remove(settings: Settings, key: str, s3=None) -> None:
+    if settings.storage_configured:
+        try:
+            (s3 or _client(settings)).delete_object(Bucket=settings.s3_bucket, Key=key)
+        except Exception:
+            pass
+
+
 def zip_run(run_dir: str, files: List[str]) -> str:
     """Bundle `files` (names inside run_dir) into <run folder>.zip inside run_dir; returns the zip's name."""
     name = os.path.basename(os.path.normpath(run_dir)) + ".zip"

@@ -174,8 +174,15 @@ def fetch(run: str, names, dest: str, log=print) -> dict:
     return got
 
 
+def _settings():
+    from .config import Settings
+    return Settings.from_env()
+
+
 def run(request: str, log=print, privacy: str = "") -> str:
-    """Do what the button asked; returns the report (Markdown). Raises nothing: every problem becomes the report."""
+    """Do what the button asked; returns the report (Markdown). Raises nothing: every problem becomes the report.
+    An item already on YouTube (uploads/<run>/<item>.json) is never uploaded again; the 'started' marks the button
+    relay leaves (uploads/<run>/requested-<item>.json) are removed at the end, whatever happened."""
     m = REQUEST.match(" ".join(str(request).split()))
     if not m:
         return "Not an upload request. The title must read `upload video|short|both <run folder>`."
@@ -183,11 +190,22 @@ def run(request: str, log=print, privacy: str = "") -> str:
     privacy = privacy or os.environ.get("YT_PRIVACY", "public").strip().lower()
     if privacy not in ("public", "unlisted", "private"):
         privacy = "public"
-    wanted = ["youtube.json", "thumbnail.png", "subtitles_en.srt"]
-    wanted += ["long_video_en.mp4"] if what in ("video", "both") else []
-    wanted += ["short_en.mp4"] if what in ("short", "both") else []
+    items = {"video": ["video"], "short": ["short"], "both": ["video", "short"]}[what]
     try:
         token = access_token()
+        from .storage import get_text, put_text
+        s = _settings()
+        done = {}
+        for item in items:
+            try:
+                mark = json.loads(get_text(s, f"uploads/{folder}/{item}.json") or "null")
+            except ValueError:
+                mark = None
+            if isinstance(mark, dict) and mark.get("url"):
+                done[item] = mark
+        wanted = ["youtube.json", "thumbnail.png", "subtitles_en.srt"]
+        wanted += ["long_video_en.mp4"] if "video" in items and "video" not in done else []
+        wanted += ["short_en.mp4"] if "short" in items and "short" not in done else []
         files = fetch(folder, wanted, os.path.join("yt_upload", folder), log)
         if "youtube.json" not in files:
             return (f"Nothing uploaded: `videos/{folder}` has no youtube.json. The video may be older than the "
@@ -195,14 +213,24 @@ def run(request: str, log=print, privacy: str = "") -> str:
         with open(files["youtube.json"], encoding="utf-8") as f:
             meta = json.load(f)
         lines = []
-        for name, short in (("long_video_en.mp4", False), ("short_en.mp4", True)):
-            if name not in wanted:
+        for item, name, short in (("video", "long_video_en.mp4", False), ("short", "short_en.mp4", True)):
+            label = "Short" if short else "Video"
+            if item not in items:
+                continue
+            if item in done:
+                lines.append(f"- {label}: already on YouTube as [{done[item].get('title') or done[item]['url']}]"
+                             f"({done[item]['url']}), not uploaded again.")
                 continue
             if name not in files:
-                lines.append(f"- {'Short' if short else 'Video'}: not found in storage, not uploaded.")
+                lines.append(f"- {label}: not found in storage, not uploaded.")
                 continue
             log(f"[youtube] uploading {name} ({os.path.getsize(files[name]) / 1e6:.0f} MB) as {privacy}")
             vid = upload_video(token, files[name], meta, short, privacy, log)
+            title = meta["short_title" if short else "title"]
+            url = f"https://youtu.be/{vid}" if not short else f"https://youtube.com/shorts/{vid}"
+            put_text(s, f"uploads/{folder}/{item}.json",
+                     json.dumps({"id": vid, "url": url, "title": title, "at": int(time.time())}),
+                     "application/json; charset=utf-8")
             extras = []
             if not short and "thumbnail.png" in files:
                 extras.append("thumbnail " + ("set" if add_thumbnail(token, vid, files["thumbnail.png"], log)
@@ -213,14 +241,40 @@ def run(request: str, log=print, privacy: str = "") -> str:
             state = privacy_of(token, vid)
             note = (" YouTube kept it **private**: until Google audits the app, API uploads stay private. Open it "
                     "in YouTube Studio and set it to Public." if state == "private" and privacy != "private" else "")
-            url = f"https://youtu.be/{vid}" if not short else f"https://youtube.com/shorts/{vid}"
-            lines.append(f"- {'Short' if short else 'Video'}: [{meta['short_title' if short else 'title']}]({url}) "
-                         f"is uploaded, now **{state}**{'; ' + ', '.join(extras) if extras else ''}.{note}")
-        return "Uploaded to YouTube:\n\n" + "\n".join(lines)
+            lines.append(f"- {label}: [{title}]({url}) is uploaded, now **{state}**"
+                         f"{'; ' + ', '.join(extras) if extras else ''}.{note}")
+        head = "Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else "Nothing new uploaded:"
+        return head + "\n\n" + "\n".join(lines)
     except SignInError as exc:
         return f"Nothing uploaded: {exc}."
     except Exception as exc:
         return f"The upload failed: {type(exc).__name__}: {str(exc)[:400]}"
+    finally:
+        try:
+            from .storage import remove
+            s = _settings()
+            for item in items:
+                remove(s, f"uploads/{folder}/requested-{item}.json")
+        except Exception:
+            pass
+
+
+LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+
+
+def email_report(report: str, folder: str, log=print) -> bool:
+    """The result, emailed to the owner (the button click has no GitHub page to answer on)."""
+    import html as H
+    from .mailer import send_email
+    ok = report.startswith("Uploaded")
+    subject = f"[{'Uploaded' if ok else 'Upload: nothing done' if report.startswith('Nothing') else 'Upload failed'}] {folder}"
+    text = LINK.sub(lambda m: f"{m.group(1)}: {m.group(2)}", report).replace("**", "")
+    body = H.escape(report)
+    body = LINK.sub(lambda m: f'<a href="{m.group(2)}" style="color:#c4302b;font-weight:600">{m.group(1)}</a>', body)
+    body = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", body).replace("\n", "<br>")
+    page = (f'<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:14px;line-height:1.6;'
+            f'color:#1f2328;max-width:620px;margin:0 auto;padding:8px">{body}</div>')
+    return send_email(_settings(), subject, text, [], log, html=page)
 
 
 def main(argv=None) -> int:
@@ -230,10 +284,13 @@ def main(argv=None) -> int:
         return 2
     report = run(argv[0])
     print(report)
+    m = REQUEST.match(" ".join(str(argv[0]).split()))
+    if m and os.environ.get("UPLOAD_EMAIL", "on").strip().lower() not in ("off", "0", "false", "no"):
+        email_report(report, m.group(2))
     if len(argv) > 1:
         with open(argv[1], "w", encoding="utf-8") as f:
             f.write(report + "\n")
-    return 0 if report.startswith("Uploaded") else 1
+    return 0 if report.startswith(("Uploaded", "Nothing new")) else 1
 
 
 if __name__ == "__main__":

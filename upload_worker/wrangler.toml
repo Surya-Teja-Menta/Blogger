@@ -1,0 +1,15 @@
+# The Upload-button relay (see worker.js). Deploy from this folder:  npx wrangler deploy
+# Its one secret, a GitHub token limited to this repository's Actions:  npx wrangler secret put GH_TOKEN
+name = "adyora-upload"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+REPO = "Surya-Teja-Menta/Blogger"
+WORKFLOW = "youtube-upload.yml"
+BRANCH = "main"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "blog-reports"

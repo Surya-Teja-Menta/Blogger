@@ -3378,6 +3378,68 @@ def test_the_video_email_is_a_clean_page_with_upload_buttons_and_no_pasted_links
     assert "Upload video" not in email_page.build("T", links, None, "", [], "", "r", 4)[0]
 
 
+def test_with_the_relay_one_click_uploads_and_the_key_never_lands_in_the_run_folder(monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+    from blogwriter import email_page
+    links = {"long_video_en.mp4": "https://r2/long?sig=1", "short_en.mp4": "https://r2/short?sig=2"}
+    monkeypatch.setenv("UPLOAD_BUTTON_URL", "https://adyora-upload.example.workers.dev/")
+    page, text = email_page.build("T", links, None, "", [], "owner/repo", "20261113_053132_Mean", 4, "k" * 32)
+    up = email_page.click_url(email_page.button_base(), "both", "20261113_053132_Mean", "k" * 32)
+    assert up.startswith("https://adyora-upload.example.workers.dev/upload?")
+    assert parse_qs(urlsplit(up).query) == {"what": ["both"], "run": ["20261113_053132_Mean"], "key": ["k" * 32]}
+    assert "github.com" not in page.split("Download")[0] and "One click" in page and "Create" not in page
+    assert "Upload the Short: https://adyora-upload" in text
+    # no key stored (or no relay): the buttons fall back to the GitHub page
+    assert "issues/new" in email_page.build("T", links, None, "", [], "owner/repo", "r", 4)[0]
+    monkeypatch.delenv("UPLOAD_BUTTON_URL")
+    assert "issues/new" in email_page.build("T", links, None, "", [], "owner/repo", "r", 4, "k" * 32)[0]
+    # the relay and the workflow agree on the names
+    worker = open(os.path.join(os.path.dirname(__file__), "..", "upload_worker", "worker.js"), encoding="utf-8").read()
+    toml = open(os.path.join(os.path.dirname(__file__), "..", "upload_worker", "wrangler.toml"), encoding="utf-8").read()
+    assert "videos/${run}/upload_key.txt" in worker and "uploads/${run}/requested-${item}.json" in worker
+    assert 'WORKFLOW = "youtube-upload.yml"' in toml and "timingSafeEqual" in worker
+
+
+def test_an_item_already_on_youtube_is_never_uploaded_twice(monkeypatch, tmp_path):
+    import json as _json
+    from blogwriter import storage, youtube
+    store = {"uploads/20261113_053132_Mean/video.json": _json.dumps({"url": "https://youtu.be/abc", "title": "T"}),
+             "uploads/20261113_053132_Mean/requested-video.json": "{}",
+             "uploads/20261113_053132_Mean/requested-short.json": "{}"}
+    monkeypatch.setattr(youtube, "access_token", lambda: "tok")
+    monkeypatch.setattr(storage, "get_text", lambda s, k, s3=None: store.get(k, ""))
+    monkeypatch.setattr(storage, "put_text", lambda s, k, t, mime="", s3=None: store.__setitem__(k, t) or True)
+    monkeypatch.setattr(storage, "remove", lambda s, k, s3=None: store.pop(k, None))
+    asked = []
+
+    def fake_fetch(run, names, dest, log=print):
+        asked.extend(names)
+        meta = tmp_path / "youtube.json"
+        meta.write_text(_json.dumps({"title": "T", "short_title": "T #Shorts"}), encoding="utf-8")
+        short = tmp_path / "short_en.mp4"
+        short.write_bytes(b"x")
+        return {"youtube.json": str(meta), "short_en.mp4": str(short)}
+    monkeypatch.setattr(youtube, "fetch", fake_fetch)
+    monkeypatch.setattr(youtube, "upload_video", lambda *a, **k: "s1")
+    monkeypatch.setattr(youtube, "privacy_of", lambda *a: "public")
+    report = youtube.run("upload both 20261113_053132_Mean", log=lambda *_: None)
+    assert "long_video_en.mp4" not in asked                       # not even downloaded again
+    assert "already on YouTube" in report and "https://youtube.com/shorts/s1" in report
+    assert report.startswith("Uploaded")
+    assert _json.loads(store["uploads/20261113_053132_Mean/short.json"])["url"] == "https://youtube.com/shorts/s1"
+    assert not any("requested-" in k for k in store)              # the relay may start a new job again
+    # both already there: nothing new, and the run still counts as fine
+    report = youtube.run("upload both 20261113_053132_Mean", log=lambda *_: None)
+    assert report.startswith("Nothing new uploaded") and report.count("already on YouTube") == 2
+    # the emailed result shows words, not pasted links
+    sent = {}
+    monkeypatch.setattr("blogwriter.mailer.send_email",
+                        lambda s, subj, body, att, log=print, html="": sent.update(subj=subj, html=html) or True)
+    youtube.email_report("Uploaded to YouTube:\n\n- Short: [T #Shorts](https://youtube.com/shorts/s1) is uploaded, now "
+                         "**public**.", "20261113_053132_Mean")
+    assert sent["subj"].startswith("[Uploaded]") and '>T #Shorts</a>' in sent["html"] and "<b>public</b>" in sent["html"]
+
+
 def test_the_upload_job_accepts_only_its_own_requests_and_reports_every_problem(monkeypatch):
     from blogwriter import youtube
     assert youtube.REQUEST.match("upload video 20261113_053132_Statistics_Types_of_data")
