@@ -294,7 +294,7 @@ behind the sentence, concrete and filmable, e.g. "server racks", "container ship
 "rocket launch"; empty for the other kinds), "act" (see above), and "facts" (the fact numbers used).
 
 Return JSON:
-{{"title": "YouTube title, max 70 characters, specific and curious, no clickbait words or ALL CAPS",
+{{"title": "YouTube title, max 70 characters: the topic itself, in the plain words a student would search for, its key terms first (e.g. 'Mean, Median and Mode Explained', 'What Is Statistics? Descriptive vs Inferential'); no hooks, jokes, teasers, clickbait words or ALL CAPS",
   "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
   "description": "2 or 3 plain sentences on what the video covers",
   "tags": ["8 to 12 search tags"],
@@ -322,7 +322,7 @@ Break it into the parts of the plan, in order: ONE entry in "parts" for EACH par
 for the whole video), and each part into beats. One beat is one thing the viewer SEES and learns (it becomes one or
 two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w slides, its lowest point marked"
 or "check: which way does w move if the slope is negative?". About [shots] beats in all.
-Reply with JSON: {"title": "YouTube title, max 70 characters, specific and curious, no clickbait words or ALL CAPS",
+Reply with JSON: {"title": "YouTube title, max 70 characters: the topic itself, in the plain words a student would search for, its key terms first (e.g. 'Mean, Median and Mode Explained', 'What Is Statistics? Descriptive vs Inferential'); no hooks, jokes, teasers, clickbait words or ALL CAPS",
  "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
  "description": "2 or 3 plain sentences on what the video covers", "tags": ["8 to 12 search tags"],
  "outro": "the closing sentences described above",
@@ -1293,6 +1293,42 @@ def strip_persona(text: str) -> str:
     return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s and not PERSONA.search(s))
 
 
+TITLE_SMALL = {"a", "an", "and", "or", "vs", "of", "the", "in", "on", "to", "for", "with", "at", "by", "from", "as"}
+TITLE_FILLER = TITLE_SMALL | {"what", "is", "are", "how", "why", "when", "does", "do", "its", "it", "explained",
+                              "introduction", "intro", "basics", "guide", "lesson"}
+TITLE_BAIT = re.compile(r"\byou\b|\byour\b|\blying\b|\bsecret|\bshock|\bnobody\b|\bnever\b|\bactually\b|!|\.\.\.|…", re.I)
+
+
+def _title_words(text: str) -> set:
+    return {w.rstrip("s") for w in re.findall(r"[a-z0-9][a-z0-9'\-]*", text.lower()) if w not in TITLE_FILLER and len(w) > 1}
+
+
+def title_case(text: str) -> str:
+    """'what statistics is: descriptive vs inferential' -> 'What Statistics Is: Descriptive vs Inferential'. Words
+    that already carry capitals or a hyphenated letter ('ANOVA', 'p-value', 't-test') are left as written."""
+    words = text.strip().split()
+    out = []
+    for i, w in enumerate(words):
+        bare = w.strip(":,;?()\"'")
+        lower = bare.lower() in TITLE_SMALL and i and not words[i - 1].endswith(":")
+        if bare.isalpha() and bare.islower() and not lower:
+            w = w.replace(bare, bare[0].upper() + bare[1:], 1)
+        out.append(w)
+    return " ".join(out)
+
+
+def topic_title(candidate: str, topic: str) -> str:
+    """A lesson's YouTube title is the topic, plainly (the owner did not like catchy titles). The model's title is
+    kept when it carries most of the topic's key words and no bait ('you', 'lying', '!'); otherwise the topic
+    itself, in title case."""
+    candidate = " ".join(str(candidate or "").split())[:100]
+    need = _title_words(topic)
+    has = _title_words(candidate)
+    if candidate and need and len(need & has) >= 0.75 * len(need) and not TITLE_BAIT.search(candidate):
+        return candidate
+    return title_case(" ".join(topic.split()))[:100]
+
+
 def maths_shown(scene: dict) -> str:
     """Everything mathematical a shot shows on screen (its numbers may be spoken in its narration)."""
     bits = [p["tex"] for p in scene.get("parts", [])] + [st["tex"] for st in scene.get("steps", [])]
@@ -1942,7 +1978,13 @@ class VideoMaker:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
         short.append({"scene": len(scenes) - 1, "narration": SHORT_OUTRO.format(channel=self.s.channel_name)})
-        return {"title": str(plan.get("title", title))[:100], "thumb_text": str(plan.get("thumb_text", ""))[:40],
+        video_title = str(plan.get("title", title))[:100]
+        if style == "education":
+            chosen = topic_title(video_title, title)
+            if chosen != video_title:
+                self.log(f"[video] title \"{video_title}\" is not the topic; using \"{chosen}\"")
+            video_title = chosen
+        return {"title": video_title, "thumb_text": str(plan.get("thumb_text", ""))[:40],
                 "thumb_highlight": str(plan.get("thumb_highlight", ""))[:20],
                 "description": str(plan.get("description", "")), "tags": [str(t) for t in plan.get("tags", [])][:12],
                 "scenes": scenes, "short": short}

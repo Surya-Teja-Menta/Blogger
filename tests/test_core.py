@@ -3236,3 +3236,18 @@ def test_websites_are_never_credited_as_the_ones_who_say_things():
     # the script prompt no longer asks for named sources
     from blogwriter import video
     assert "Name sources naturally" not in video.SCRIPT_PROMPT and "Wikipedia says" in video.SCRIPT_PROMPT
+
+
+def test_lesson_titles_are_the_topic_not_a_hook():
+    # the owner: titles should be generic and topic driven
+    from blogwriter.video import topic_title as t
+    t1 = "What statistics is: descriptive vs inferential, population vs sample"
+    assert t("Your Average Is Lying to You", "Mean, Median and Mode") == "Mean, Median and Mode"
+    assert t("Mean, Median and Mode Explained", "Mean, Median and Mode") == "Mean, Median and Mode Explained"
+    good = "What Is Statistics? Descriptive vs Inferential, Population vs Sample"
+    assert t(good, t1) == good
+    assert t("Descriptive vs Inferential Statistics", t1) != "Descriptive vs Inferential Statistics"   # half the topic
+    assert t("Stats: The Art of Guessing Right", t1) == \
+        "What Statistics Is: Descriptive vs Inferential, Population vs Sample"
+    assert t("Why the Bell Curve Shows Up Everywhere", "Central limit theorem") == "Central Limit Theorem"
+    assert t("x", "p-values and the t-test") == "p-values and the t-test"            # written forms kept
