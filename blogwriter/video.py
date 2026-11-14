@@ -1668,11 +1668,13 @@ REAL_WORLD = r"""
   Credit people, papers, books and organisations, never websites."""
 
 
-def technique_text(title: str) -> str:
-    """The animated techniques this video may use as shot kinds and plot types: a selection made for its
-    subject (and different for every title), so each video draws from its own set of pictures."""
-    shots = vizlib.pick(title, 26, pool=vizlib.SHOT_KINDS)
-    plots = vizlib.pick(title, 8, pool=vizlib.PLOT_TYPES)
+def technique_text(title: str, facts: str = "") -> str:
+    """The animated techniques this video may use as shot kinds and plot types. The menu is ranked by what the video
+    is about (its title AND its research facts) across the whole library, whatever field a technique belongs to;
+    and any technique of the library may be named, the menu only describes the likeliest ones."""
+    shots = vizlib.match(f"{title} {facts}", 26, pool=vizlib.SHOT_KINDS, title=title, seed=title)
+    plots = vizlib.match(f"{title} {facts}", 8, pool=vizlib.PLOT_TYPES, title=title, seed=title)
+    others = [n for n in vizlib.SHOT_KINDS if n not in shots]
     lines = "\n".join(f'  - "{n}": {vizlib.TECH[n]["use"]}' for n in shots)
     plot_lines = "\n".join(f'  - "{n}": {vizlib.TECH[n]["use"]}' for n in plots)
     return ("\n- TECHNIQUE SHOTS: besides the kinds listed, a shot's \"kind\" may be one of these animated "
@@ -1680,7 +1682,9 @@ def technique_text(title: str) -> str:
             "one SHOWS the mechanism better than a plain diagram; give \"picture\": what it shows for THIS "
             "sentence, naming the real things (max 35 words). The diagram designer fills in its data."
             "\n" + lines +
-            "\n- More \"plot\" types (give \"plot\": the type and \"picture\": what it shows):\n" + plot_lines)
+            "\n- More \"plot\" types (give \"plot\": the type and \"picture\": what it shows):\n" + plot_lines
+            + "\n  Any other technique of the library may be a shot kind the same way when it fits a sentence better: " + ", ".join(others)
+            + "\n  Other plot types: " + ", ".join(n for n in vizlib.PLOT_TYPES if n not in plots))
 
 
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
@@ -1700,7 +1704,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
             text += '\n- NO QUIZ in this video: no "check" shots at all; skip step (7) and go on to the recap.'
     if style in ("education", "concept"):
         text += LEVEL_RULES.get(brief.get("level") or "intermediate", "")
-        text += REAL_WORLD + technique_text(title)
+        text += REAL_WORLD + technique_text(title, facts)
     text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots

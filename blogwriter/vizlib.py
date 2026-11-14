@@ -911,29 +911,57 @@ GRAPHIC_TYPES = tuple(n for n, t in TECH.items() if t["fam"] == "explain") + (
 SHOT_KINDS = tuple(n for n in TECH if n not in PLOT_TYPES and n not in GRAPHIC_TYPES)
 
 
-def pick(title: str, n: int = 28, used: Optional[set] = None, pool: Optional[tuple] = None) -> List[str]:
-    """The techniques offered to one video: only the ones that fit its subject (a tag or its family matches the
-    title), best first, then neutral explainers if the subject has few; never a technique from an unrelated field
-    (the owner: everything must be in sync with the topic). Equal fits are ordered by the title, so videos on the
-    same subject still rotate through them. Techniques already used in this video are left out. pool limits the
-    choice to one role (SHOT_KINDS, PLOT_TYPES, GRAPHIC_TYPES)."""
-    used = used or set()
-    raw = re.findall(r"[a-z]+", title.lower())
-    words = {_stem(w) for w in set(raw) - GENERIC}
+# everyday words that say nothing about which picture fits (they would match every technique's description)
+STOP = GENERIC | set("""when each one two three then there their they them its as at by be or but not no so up out
+more most less other same every which who has have had was were will can could would should may might than too very
+just only also like over under between after before while where until again back down off own both few some such
+new old first last long little big small high low make makes made get gets go goes show shows way ways thing things
+time times left right side top bottom put puts take takes come comes give gives keep keeps let lets turn turns see
+seen look looks fit fits whole part parts kind kinds lot lots far near next end ends start starts once still even
+much many any every here these those our its it his her him she he we us me my do does did done being been""".split())
 
-    def hits(tags) -> int:
-        return sum(1 for t in tags if _stem(t) in words)
-    fam_boost = {f: hits(set(w.split()) - GENERIC) for f, w in FAMILY_WORDS.items()}
+
+def _keys(text: str) -> set:
+    return {_stem(w) for w in re.findall(r"[a-z]+", str(text).lower()) if len(w) > 2 and w not in STOP}
+
+
+def _family_boost(text: str) -> Dict[str, int]:
+    raw = re.findall(r"[a-z]+", str(text).lower())
+    words = {_stem(w) for w in set(raw) - GENERIC}
+    boost = {f: sum(1 for t in set(w.split()) - GENERIC if _stem(t) in words) for f, w in FAMILY_WORDS.items()}
     for (a, b), fam in PHRASES.items():          # "system design", "design patterns": the subject is the phrase
         if any(x == a and y == b for x, y in zip(raw, raw[1:])):
-            fam_boost[fam] = fam_boost.get(fam, 0) + 3
-    rng = random.Random(re.sub(r"\W", "", title.lower()) or "x")
+            boost[fam] = boost.get(fam, 0) + 3
+    return boost
+
+
+def match(context: str, n: int = 8, used: Optional[set] = None, pool: Optional[tuple] = None, title: str = "",
+          seed: str = "") -> List[str]:
+    """The techniques that fit a context best, from the WHOLE library: the family table is only how the library is
+    organised, never a limit (a research-paper video may use attention, a loss curve and a data pipeline). context
+    is what is being shown (a shot's headline, narration and picture, or the video's facts); the title counts too,
+    lightly. Words of the context matching a technique's own words count most, its subject family a little. Neutral
+    explainers fill up when little fits. Equal fits are ordered by seed (the title), so videos on the same subject
+    still rotate. Techniques already used in the video are left out; pool limits the choice to one role."""
+    used = used or set()
+    ctx, ttl = _keys(context), _keys(title)
+    fam_c, fam_t = _family_boost(context), _family_boost(title)
+    rng = random.Random(re.sub(r"\W", "", (seed or title or context)[:200].lower()) or "x")
     scored = []
     for name, t in TECH.items():
         if name in used or (pool is not None and name not in pool):
             continue
-        fit = 3 * hits(t["tags"]) + 2 * fam_boost.get(t["fam"], 0)
+        keys = TECH_KEYS[name]
+        fit = 3 * len(keys & ctx) + len(keys & ttl) + fam_c.get(t["fam"], 0) + 0.5 * fam_t.get(t["fam"], 0)
         scored.append((fit, t["fam"] == "explain", rng.random(), name))
-    relevant = sorted((x for x in scored if x[0] > 0), reverse=True)
-    neutral = sorted((x for x in scored if x[0] == 0 and x[1]), key=lambda x: x[2], reverse=True)
+    relevant = sorted((x for x in scored if x[0] >= 2), reverse=True)
+    neutral = sorted((x for x in scored if x[0] < 2 and x[1]), key=lambda x: (x[0], x[2]), reverse=True)
     return [x[3] for x in relevant + neutral][:n]
+
+
+def pick(title: str, n: int = 28, used: Optional[set] = None, pool: Optional[tuple] = None) -> List[str]:
+    """The techniques that fit a title (match with the title as its only context)."""
+    return match(title, n, used, pool, seed=title)
+
+
+TECH_KEYS: Dict[str, set] = {name: _keys(" ".join([name, t["use"], " ".join(t["tags"])])) for name, t in TECH.items()}

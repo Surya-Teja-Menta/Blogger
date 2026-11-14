@@ -124,8 +124,14 @@ def more_types() -> tuple:
 
 def prompt(scenes: List[dict], only: Optional[set] = None) -> str:
     from . import vizlib
-    seed = " ".join(str(s.get("headline", "")) for s in scenes)          # each video gets its own selection
-    more = MORE.replace("{catalogue}", vizlib.catalogue(vizlib.pick(seed, 14, pool=vizlib.GRAPHIC_TYPES)))
+    seed = " ".join(str(s.get("headline", "")) for s in scenes)
+    fits = []                    # each shot's own best fits among the library graphics, by what that shot says
+    for s in scenes:
+        if s.get("kind") in ELIGIBLE and not s.get("video"):
+            fits += vizlib.match(f"{s.get('headline', '')} {s.get('narration', '')}", 3, pool=vizlib.GRAPHIC_TYPES,
+                                 seed=seed)
+    names = list(dict.fromkeys(fits))[:16] or vizlib.pick(seed, 12, pool=vizlib.GRAPHIC_TYPES)
+    more = MORE.replace("{catalogue}", vizlib.catalogue(names))
     rows = "\n".join(f"{i} | {s['kind']} | {s.get('headline', '')} | {s.get('number', '')} | {s.get('narration', '')}"
                      for i, s in enumerate(scenes) if s["kind"] in ELIGIBLE and not s.get("video")
                      and (only is None or i in only))

@@ -74,6 +74,25 @@ def test_each_video_gets_its_own_topic_first_selection():
     assert vizlib.pick("Same title", 10) == vizlib.pick("Same title", 10)        # repeatable for one video
 
 
+def test_pictures_follow_the_context_across_the_whole_library_not_the_subject_family():
+    from collections import Counter
+    facts = ("The Transformer replaces recurrence with self-attention; ablations removed attention heads; dropout; "
+             "beam search decoding; training loss fell over steps")
+    picked = vizlib.match(facts, 24, title="Research paper: Attention Is All You Need")
+    fams = Counter(vizlib.TECH[n]["fam"] for n in picked)
+    assert {"attention", "transformer", "ablation", "beam"} <= set(picked)
+    assert len(fams) >= 4 and fams["paper"] <= 2              # a paper video is not limited to the 2 paper parts
+    # one shot's words decide its candidates, whatever the video's title
+    assert {"shards", "hashring"} <= set(vizlib.match("Netflix splits users across shards with consistent hashing", 6,
+                                                      title="Statistics: types of data"))
+    scenes = [{"headline": "Hot keys", "narration": "consistent hashing spreads keys over a ring of servers"},
+              {"headline": "The long tail", "narration": "most requests are fast but the p99 latency tail is slow"}]
+    p = diagram.prompt(scenes, [0, 1], "Statistics: averages", "calm")
+    assert '"hashring"' in p and '"latency"' in p
+    menu = video.technique_text("Research paper: Attention Is All You Need", facts)
+    assert all(f"{n}" in menu for n in vizlib.SHOT_KINDS) and "Any other technique" in menu
+
+
 def test_a_technique_kind_from_the_script_becomes_a_diagram_that_wants_it():
     sc = video.check_scene({"kind": "raft", "headline": "A leader falls", "narration": "The leader fails and a vote",
                             "picture": "five servers elect a new leader"}, "", "", {})

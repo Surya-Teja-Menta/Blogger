@@ -187,7 +187,7 @@ counter) are what make the video
 worth watching: use one wherever the sentence fits one, and "click", "mark" and "glow" to point at what matters. A
 shot with only labels and arrows is the last resort.
 
-MORE MOVING PARTS: the technique library, a selection for this video. Each fills a region like the parts above
+MORE MOVING PARTS: the technique library, the parts that best fit these shots. Each fills a region like the parts above
 (give x, y, w, h and the fields named), at most one per shot. A technique already used in another shot of this
 video is not used again. When a shot's WANTED names a part ("a "hashring" part ..."), build that shot around
 exactly that part, filled with this sentence's own things.
@@ -243,7 +243,11 @@ def used_parts(scenes: List[dict]) -> set:
 def prompt(scenes: List[dict], idx: List[int], title: str, mood: str, style: str = "") -> str:
     used = used_parts(scenes)
     wanted = [scenes[i]["want"] for i in idx if scenes[i].get("want") in vizlib.TECH]
-    names = list(dict.fromkeys(wanted + vizlib.pick(title, 22, used)))
+    per_shot = []                # each shot's own best fits, from the whole library, by what that shot says
+    for i in idx:
+        context = " ".join(str(scenes[i].get(k, "")) for k in ("headline", "narration", "picture"))
+        per_shot += vizlib.match(context, 7, used, title=title, seed=title)
+    names = list(dict.fromkeys(wanted + per_shot))[:34]
     rows = "\n".join(f"{i} | {scenes[i].get('headline', '')} | {scenes[i].get('narration', '')}"
                      + (f" | WANTED: {scenes[i]['picture']}" if scenes[i].get("picture") else "") for i in idx)
     return PROMPT.format(title=title, mood=mood or "-", icons=" ".join(sorted(graphics.ICONS)), shots=rows,
