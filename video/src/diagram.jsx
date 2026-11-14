@@ -99,7 +99,7 @@ const Crowd = ({e, w, h, frame, color, size}) => {
 export const DiagramScene = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
-  const box = vertical ? {x0: 80, x1: 1000, y0: 600, y1: 1560} : {x0: 150, x1: 1770, y0: 310, y1: 925};
+  const box = vertical ? {x0: 80, x1: 1000, y0: 600, y1: 1390} : {x0: 150, x1: 1770, y0: 310, y1: 925};
   const u = (box.y1 - box.y0) / 100;                       // size unit: 1% of the canvas height
   const X = (x) => box.x0 + ((box.x1 - box.x0) * x) / 100;
   const Y = (y) => box.y0 + ((box.y1 - box.y0) * y) / 100;

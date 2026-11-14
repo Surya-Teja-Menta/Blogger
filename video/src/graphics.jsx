@@ -112,9 +112,9 @@ const Flow = ({s, i, vertical}) => {
   const {width, height} = useVideoConfig();
   const nodes = s.graphic.nodes;
   const n = nodes.length;
-  const size = vertical ? 200 : n > 3 ? 210 : 240;
+  const size = vertical ? Math.min(200, 700 / n - 20) : n > 3 ? 210 : 240;
   const pos = nodes.map((_, k) => vertical
-    ? [width / 2, 720 + (k + 0.5) * (1050 / n)]
+    ? [width / 2, 640 + (k + 0.5) * (720 / n)]          // ends above the Short's captions (74%)
     : [width * (0.14 + 0.72 * (n === 1 ? 0.5 : k / (n - 1))), height * 0.62]);
   // the camera follows the flow: each step with the link that leads into it
   const focus = nodes.map((nd, k) => {
@@ -150,11 +150,11 @@ const Hub = ({s, i, vertical}) => {
   // the ring of players fits the band between the headline's real bottom edge (a long headline wraps to two lines) and
   // the captions: the top label never reaches the headline, the lowest one never reaches the captions
   const cx = width / 2;
-  const bandTop = titleBottom(s, vertical, {maxWidth: vertical ? 940 : 1500}) + 16, bandEnd = vertical ? 1500 : 955;
-  const labelRoom = vertical ? 330 : 340;                             // a disc, its gap and its label (up to two lines), both ends
+  const bandTop = titleBottom(s, vertical, {maxWidth: vertical ? 940 : 1500}) + 16, bandEnd = vertical ? 1400 : 955;
+  const labelRoom = vertical ? 420 : 340;                             // a disc, its gap and its label (up to two lines), both ends
   const rx = vertical ? 360 : 640;
-  const ry = vertical ? 440 : Math.max(110, Math.min(232, (bandEnd - bandTop - labelRoom) / 2));
-  const cy = vertical ? 1150 : (bandTop + bandEnd) / 2 + 6;
+  const ry = Math.max(110, Math.min(vertical ? 440 : 232, (bandEnd - bandTop - labelRoom) / 2));
+  const cy = (bandTop + bandEnd) / 2 + 6;
   const turn = 0;                           // the players stay where they were drawn: an orbit swung labels into each other
   // no node straight below the centre, where the centre's own label sits
   const below = nodes.some((_, k) => Math.abs(((-90 + (360 * k) / n) % 360 + 360) % 360 - 90) < 25);
@@ -282,7 +282,7 @@ const Kinetic = ({s, i, vertical}) => {
       </svg>
       {(g.nodes || []).slice(0, 2).map((nd, k) => (
         <div key={k} style={{position: "absolute", left: k ? undefined : (vertical ? 70 : 90), right: k ? (vertical ? 70 : 90) : undefined,
-                             top: vertical ? (k ? 1560 : 300) : (k ? 120 : 790),
+                             top: vertical ? (k ? 1200 : 300) : (k ? 120 : 790),
                              transform: `translateY(${Math.sin((frame + k * 40) / 25) * 14}px)`}}>
           <Disc icon={nd.icon} at={nd.at} size={vertical ? 170 : 150} color={SERIES[(k + 1) % SERIES.length]}/>
         </div>
@@ -320,8 +320,8 @@ const Spotlight = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
   const g = s.graphic;
-  const cx = vertical ? width / 2 : width * 0.32, cy = vertical ? 1000 : height * 0.6;
-  const R = vertical ? 260 : 230;
+  const cx = vertical ? width / 2 : width * 0.32, cy = vertical ? 820 : height * 0.6;
+  const R = vertical ? 200 : 230;
   const at = g.center.at;
   const p = pop(frame - at);
   // the tags are read in close; the camera then returns to the whole
@@ -377,34 +377,34 @@ const Versus = ({s, i, vertical}) => {
   const vsAt = Math.max(a.at, b.at) + 4;
   const pv = pop(frame - vsAt);
   // one side, then the other, then both with the VS between them
-  const half = (k) => (vertical ? [width / 2 - 300, k ? 1330 : 600, width / 2 + 300, k ? 1720 : 990]
+  const half = (k) => (vertical ? [width / 2 - 300, k ? 1000 : 520, width / 2 + 300, k ? 1380 : 900]
     : [width * (k ? 0.75 : 0.25) - 300, 380, width * (k ? 0.75 : 0.25) + 300, 860]);
   const focus = [{at: a.at, box: half(0)}, {at: b.at, box: half(1)},
                  {at: vsAt + 30, box: [0, 0, width, height]}];
   const side = (nd, k, p) => (
     <div style={{position: "absolute", display: "flex", justifyContent: "center", alignItems: "center",
-                 ...(vertical ? {left: 0, right: 0, top: k ? 1300 : 560, height: 420} : {top: 300, bottom: 60, left: k ? width / 2 : 0, width: width / 2}),
+                 ...(vertical ? {left: 0, right: 0, top: k ? 1000 : 520, height: 380} : {top: 300, bottom: 60, left: k ? width / 2 : 0, width: width / 2}),
                  transform: vertical ? `translateX(${(1 - p) * (k ? 1 : -1) * 700}px)` : `translateX(${(1 - p) * (k ? 1 : -1) * 900}px)`}}>
-      <Disc icon={nd.icon} at={nd.at} size={vertical ? 230 : 260} color={k ? C.cool : C.accent} label={nd.label}
+      <Disc icon={nd.icon} at={nd.at} size={vertical ? 200 : 260} color={k ? C.cool : C.accent} label={nd.label}
             labelSize={vertical ? 54 : 52}/>
     </div>
   );
   return (
     <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <svg width={width} height={height} style={{position: "absolute"}}>
-        <polygon points={vertical ? `0,${height * 0.62} ${width},${height * 0.55} ${width},${height} 0,${height}`
+        <polygon points={vertical ? `0,${height * 0.52} ${width},${height * 0.48} ${width},${height} 0,${height}`
                                   : `${width * 0.55},0 ${width},0 ${width},${height} ${width * 0.45},${height}`}
                  fill={alpha(C.cool, 0.07)} opacity={pb}/>
-        <polygon points={vertical ? `0,0 ${width},0 ${width},${height * 0.55} 0,${height * 0.62}`
+        <polygon points={vertical ? `0,0 ${width},0 ${width},${height * 0.48} 0,${height * 0.52}`
                                   : `0,0 ${width * 0.55},0 ${width * 0.45},${height} 0,${height}`}
                  fill={alpha(C.accent, 0.06)} opacity={pa}/>
-        <line x1={vertical ? 0 : width * 0.55} y1={vertical ? height * 0.62 : 0} x2={vertical ? width : width * 0.45}
-              y2={vertical ? height * 0.55 : height} stroke={C.text} strokeOpacity={0.25} strokeWidth={3}
+        <line x1={vertical ? 0 : width * 0.55} y1={vertical ? height * 0.52 : 0} x2={vertical ? width : width * 0.45}
+              y2={vertical ? height * 0.48 : height} stroke={C.text} strokeOpacity={0.25} strokeWidth={3}
               pathLength={1} strokeDasharray={1} strokeDashoffset={1 - ease((frame - vsAt + 10) / 20)}/>
       </svg>
       {side(a, 0, pa)}
       {side(b, 1, pb)}
-      <div style={{position: "absolute", left: width / 2, top: vertical ? height * 0.585 : height * 0.58,
+      <div style={{position: "absolute", left: width / 2, top: vertical ? height * 0.5 : height * 0.58,
                    transform: `translate(-50%, -50%) scale(${pv}) rotate(${(1 - pv) * -30}deg)`,
                    width: 150, height: 150, borderRadius: "50%", background: C.hot, display: "flex", alignItems: "center",
                    justifyContent: "center", fontFamily: FONT.display, fontWeight: 900, fontSize: 64, color: "#fff",

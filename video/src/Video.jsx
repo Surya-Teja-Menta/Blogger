@@ -60,7 +60,8 @@ const Caption = ({captions, vertical, aside = 0}) => {
           acc += w.length + 1;
           const on = spoken >= start && spoken < acc;
           return <span key={k} style={{color: on ? C.accent : C.text, display: "inline-block",
-                                       transform: `scale(${on ? 1.1 : 1})`, marginRight: 14}}>{w}</span>;
+                                       // the gap grows with the font, so the lit word's pop never closes it
+                                       transform: `scale(${on ? 1.06 : 1})`, marginRight: "0.45em"}}>{w}</span>;
         })}
       </span>
     </div>

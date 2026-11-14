@@ -143,3 +143,38 @@ def test_lessons_research_real_cases_and_references_early():
     names = [n for n, _ in research.STUDY_PERSPECTIVES]
     assert names.index("Case studies") < 4 and "References" in names          # even the fast mode asks for cases
     assert "REAL-WORLD DEPTH" in video.REAL_WORLD and "never websites" in video.REAL_WORLD
+
+
+def test_a_lone_moving_part_named_nodes_and_a_stray_stamp_keep_the_picture():
+    # run 43496592054: ~15 diagrams were refused as "only 1-2 elements", "S1"/"DB 1" read as unspoken figures, and a
+    # stamp on top of a box threw away the whole picture
+    from blogwriter.video import _verified
+    shot = {"narration": "the primary copies every write to its replicas", "headline": "Replicas"}
+    net = {"type": "network", "x": 5, "y": 5, "w": 90, "h": 88, "nodes": [{"id": "a", "text": "S1"},
+           {"id": "b", "text": "DB 2"}, {"id": "c", "text": "replica"}], "edges": [["a", "b"], ["a", "c"]]}
+    d = diagram.check({"elements": [net]}, shot, _verified, lambda t: True, [])
+    assert d and [n["text"] for n in d["elements"][0]["nodes"]] == ["S1", "DB 2", "replica"]
+    why = []
+    box = {"type": "box", "x": 10, "y": 10, "w": 40, "h": 30, "text": "primary"}
+    d = diagram.check({"elements": [box, {**box, "x": 55, "text": "replicas"}, {"type": "arrow", "x1": 50, "y1": 25,
+                       "x2": 55, "y2": 25}, {"type": "stamp", "x": 30, "y": 25, "text": "copied"}]}, shot, _verified,
+                      lambda t: True, why)
+    assert d and "stamp" not in [el["type"] for el in d["elements"]] and any("stamp" in w for w in why)
+
+
+def test_a_graphic_keeps_its_usable_players():
+    # one over-long label threw the whole hub away (shots 35, 55, 59 of run 43496592054)
+    sc = {"kind": "photo", "headline": "Who is involved", "narration": "clients, servers and a cache"}
+    g = graphics.check({"type": "hub", "center": {"icon": "server", "label": "servers"}, "nodes": [
+        {"icon": "user", "label": "clients"}, {"icon": "database", "label": "cache"}, {"icon": "cog", "label": "every single guiding principle"},
+        {"icon": "x", "label": "servers"}]}, sc, ok)
+    assert g and [n["label"] for n in g["nodes"]] == ["clients", "cache", "servers"]
+
+
+def test_a_box_never_runs_off_the_canvas():
+    d = diagram.check({"elements": [{"type": "box", "x": 80, "y": 85, "w": 40, "h": 30, "text": "auth"},
+                                    {"type": "network", "x": 5, "y": 5, "w": 60, "h": 60, "nodes": [{"id": "a"}, {"id": "b"},
+                                     {"id": "c"}], "edges": [["a", "b"]]}]}, {"narration": "auth", "headline": "h"}, ok,
+                      lambda t: True, [])
+    box = d["elements"][0]
+    assert box["x"] + box["w"] <= 97 and box["y"] + box["h"] <= 97

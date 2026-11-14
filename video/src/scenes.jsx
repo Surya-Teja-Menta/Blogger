@@ -600,7 +600,7 @@ export const QuoteScene = ({s, i, vertical}) => {
       <Camera i={i}>
         <div style={{position: "absolute", left: vertical ? 70 : 220, right: vertical ? 70 : 220, top: vertical ? 300 : 0,
                      bottom: vertical ? undefined : 0, display: "flex", flexDirection: "column", justifyContent: "center"}}>
-          <div style={{fontFamily: "Georgia, serif", fontSize: 340, lineHeight: 0.55, color: C.accent, opacity: p,
+          <div data-audit="skip" style={{fontFamily: "Georgia, serif", fontSize: 340, lineHeight: 0.55, color: C.accent, opacity: p,
                        transform: `translateY(${(1 - p) * 40}px) scale(${0.6 + 0.4 * p})`, transformOrigin: "left",
                        textShadow: `0 0 60px ${alpha(C.accent, 0.4)}`}}>&ldquo;</div>
           <div style={{fontFamily: FONT.body, fontWeight: 700, fontSize: vertical ? 56 : 64, lineHeight: 1.3, color: C.text}}>
@@ -635,11 +635,12 @@ export const OutroScene = ({s, i, vertical}) => {
   const button = useEnter(26);
   const press = frame > 64 ? spring({frame: frame - 64, fps: 30, config: {damping: 10}}) : 0;
   return (
-    <AbsoluteFill style={{alignItems: "center", justifyContent: "center"}}>
+    // a Short's outro is top-aligned and compact: its subscribe button ends above the captions at 74%
+    <AbsoluteFill style={{alignItems: "center", justifyContent: vertical ? "flex-start" : "center", paddingTop: vertical ? 170 : 0}}>
       <Backdrop word={s.card ? "" : "REPORT"} i={i}/>
-      <div style={{display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: vertical ? 70 : 120}}>
+      <div style={{display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: vertical ? 50 : 120}}>
         <div style={{perspective: 1400}}>
-          <div style={{width: vertical ? 560 : 520, height: vertical ? 740 : 690, borderRadius: 18,
+          <div style={{width: vertical ? 560 : 520, height: vertical ? 600 : 690, borderRadius: 18,
                        background: `linear-gradient(160deg, ${C.panel}, ${C.bg})`, border: `2px solid ${alpha(C.text, 0.12)}`,
                        padding: 50, boxSizing: "border-box", position: "relative",
                        transform: `rotateY(${-22 + 8 * Math.sin(frame / 50)}deg) rotateX(6deg) translateY(${(1 - p) * 80}px)`,
@@ -659,7 +660,7 @@ export const OutroScene = ({s, i, vertical}) => {
                                                      filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
             {s.channel && <Words text={s.channel} size={84} delay={4} maxWidth={560}/>}
           </div>
-          <Words text={s.kicker} size={110} delay={10} align={vertical ? "center" : "left"} highlight={s.highlight} maxWidth={760}/>
+          <Words text={s.kicker} size={vertical ? 96 : 110} delay={10} align={vertical ? "center" : "left"} highlight={s.highlight} maxWidth={760}/>
           <div style={{display: "inline-flex", alignItems: "center", gap: 18, marginTop: 50, padding: "26px 54px",
                        borderRadius: 60, background: press > 0.5 ? alpha(C.text, 0.15) : C.hot,
                        transform: `scale(${1 - 0.08 * Math.sin(Math.PI * clamp(press))})`,

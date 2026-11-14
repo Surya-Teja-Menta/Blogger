@@ -2196,12 +2196,12 @@ def test_a_film_look_from_the_library_is_chosen_for_the_subject(monkeypatch):
         {"headline": "A myth", "narration": "People say averages are always normal. That is a myth."}, _verified, tex_complete)
     kinds = [e["type"] for e in stamped["elements"]]
     assert kinds.count("stamp") == 1 and stamped["elements"][1]["text"] == "MYTH BUSTED"    # one stamp, beside the claim
-    over = __import__("blogwriter.diagram", fromlist=["check"]).check(      # a stamp across the claim covers its words: refused
+    over = __import__("blogwriter.diagram", fromlist=["check"]).check(      # a stamp across the claim covers its words: it goes
         {"elements": [{"type": "label", "x": 30, "y": 40, "text": "averages are always normal"},
                       {"type": "stamp", "x": 32, "y": 42, "text": "myth busted now"},
                       {"type": "dot", "x": 80, "y": 20}, {"type": "dot", "x": 90, "y": 20}]},
         {"headline": "A myth", "narration": "People say averages are always normal. That is a myth."}, _verified, tex_complete)
-    assert over is None
+    assert [e["type"] for e in over["elements"]] == ["label", "dot", "dot"]                  # the picture stays
     assert t["accent"] == "#f48fb1" and t["display"] == "Kalam" and t["hand"] == "Kalam" and t["light"] is False
     assert t["fx"]["text"]["enter"] == "write" and {c["shape"] for c in t["fx"]["transitions"]} == {"fade", "split"}
     news = looks.theme_for("newsreel", "#efe7d6", design._finish, design.check_fx, "s")
@@ -3266,6 +3266,11 @@ def test_lesson_titles_carry_the_topic_and_a_catchy_hook():
     # fake shock is never kept
     assert t("Mean, Median and Mode: You WON'T BELIEVE This!!", "Mean, Median and Mode") == "Mean, Median and Mode"
     assert t("x", "p-values and the t-test") == "p-values and the t-test: x"
+    # a course line is a syllabus entry: the subject and one of its own words make a title
+    sd = "System Design: caching strategies, cache-aside, write-through, write-back and LRU eviction"
+    assert t("System Design: Caching Tricks Behind Netflix", sd) == "System Design: Caching Tricks Behind Netflix"
+    assert t("Caching Tricks Behind Netflix", sd).startswith("System Design: Caching Strategies")   # no subject
+    assert t("System Design: How Netflix Streams", sd) != "System Design: How Netflix Streams"      # no detail word
 
 def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_path, monkeypatch):
     # the owner still heard hiss in a quiz: the re-speak with more takes judged only unsure words, so a hissy take

@@ -203,8 +203,9 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool]) -> Optional[di
                 "label": scene.get("label") or ""}
     if kind == "kinetic" and len(str(scene.get("headline", "")).split()) > 7:
         return None
-    nodes = [_node(n, allowed, verified) for n in (raw.get("nodes") or [])[:hi]]
-    if any(n is None for n in nodes) or len(nodes) < lo:
+    # a player the narration never names is left out; the graphic stays if enough remain
+    nodes = [n for n in (_node(n, allowed, verified) for n in (raw.get("nodes") or [])[:hi]) if n]
+    if len(nodes) < lo:
         return None
     out = {"type": kind, "nodes": nodes}
     if kind in ("hub", "spotlight"):

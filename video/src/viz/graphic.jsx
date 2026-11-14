@@ -11,7 +11,7 @@ const VizGraphic = ({s, i, vertical}) => {
   const g = s.graphic || {};
   const Part = VIZ[g.type];
   if (!Part) return null;
-  const rect = vertical ? [80, 600, 1000, 1560] : [150, 310, 1770, 925];
+  const rect = vertical ? [80, 600, 1000, 1390] : [150, 310, 1770, 925];
   return (
     <AbsoluteFill>
       <Backdrop word={s.kicker} i={i}/>

@@ -1340,6 +1340,13 @@ def topic_title(candidate: str, topic: str) -> str:
     clean = candidate and not TITLE_BAIT.search(candidate)
     if clean and need and len(need & has) >= 0.75 * len(need):
         return candidate
+    # a course line ("System Design: caching strategies, cache-aside, write-through...") is a syllabus entry, too long
+    # for a title to carry 3/4 of: the subject in full and one of the detail's own words is enough
+    # (a subject is a name like "System Design", not a phrase like "What statistics is")
+    subject, _, detail = topic.partition(":")
+    subj = _title_words(subject)
+    if clean and detail and len(subj) == len(subject.split()) and subj <= has and (_title_words(detail) - subj) & has:
+        return candidate
     plain = title_case(" ".join(topic.split()))
     hook = candidate.split(":", 1)[-1].strip() if clean else ""
     if hook and len(plain) + 2 + len(hook) <= 90:
@@ -2517,7 +2524,7 @@ class VideoMaker:
         for s in scenes:
             if s.get("diagram") and bad:
                 s["diagram"]["elements"] = [el for el in s["diagram"]["elements"] if el.get("tex") not in bad]
-                if len(s["diagram"]["elements"]) < 3:
+                if not diagram.enough(s["diagram"]["elements"]):
                     s.pop("diagram")
         self.log(f"[diagram] {made} diagram(s) designed for {len(idx)} idea shot(s)")
 

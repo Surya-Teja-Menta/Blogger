@@ -326,6 +326,11 @@ def _solids(el: dict) -> List[tuple]:
     return []
 
 
+def enough(els: List[dict]) -> bool:
+    """A picture: 3 pieces or more, or one moving part (plot, network, a library technique...) that is whole alone."""
+    return len(els) >= 3 or any(el["type"] in REGIONS for el in els)
+
+
 def collision(els: List[dict]) -> Optional[tuple]:
     """The first two elements (indexes) where two labels, or a label and a solid piece, or two solid pieces sit on
     top of each other (a box's own text, inside it, is fine); None when nothing collides."""
@@ -433,7 +438,9 @@ def _rich(el: dict, e: dict, allowed: str, verified: Callable[[str, str], bool],
                 continue
             seen.add(nid)
             text = _words(n.get("text"), 2)
-            if text and not verified(text, allowed):
+            # the 1 of "S1", "DB 1" or "Node 2" names a node, it is not a figure to check
+            # shortcut: any lone digit 1-9 in a node name passes; a node "5 servers" would too, tighten if one shows up
+            if text and not verified(re.sub(r"(?<![\d.,])[1-9](?![\d.,%])", "", text), allowed):
                 why.append(f'{t} node "{text}" uses a number the narration never says; its label is left out')
                 text = ""
             item = {"id": nid, "text": text}
@@ -697,7 +704,8 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             need = len(el["text"]) * 1.45 + 4 if el["text"] else 0       # a box always holds its own words
             if el["w"] < need:
                 el["w"] = round(min(need, 90), 2)
-                el["x"] = round(min(el["x"], 97 - el["w"]), 2)
+            # a box stays on the canvas: y 80 with h 30 ran under the captions
+            el["x"], el["y"] = min(el["x"], round(97 - el["w"], 2)), min(el["y"], round(97 - el["h"], 2))
         if t == "label":
             el.update(text=_words(e.get("text"), 5), size=e.get("size") if e.get("size") in SIZES else "m",
                       align=e.get("align") if e.get("align") in ("left", "center", "right") else "center")
@@ -780,17 +788,25 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
     empty = {k for k, el in enumerate(out) if el["type"] == "box" and not el.get("text") and not any(
         j != k and el["x"] <= anchor(o)[0] <= el["x"] + el["w"] and el["y"] <= anchor(o)[1] <= el["y"] + el["h"]
         for j, o in enumerate(out))}
-    if empty:
-        why.append(f"{len(empty)} empty box(es) with no text and nothing inside were left out")
-        new_at = {k: n for n, k in enumerate(k for k in range(len(out)) if k not in empty)}
-        out = [el for k, el in enumerate(out) if k not in empty]
+    def without(out: List[dict], gone: set) -> List[dict]:     # leaves pieces out; a dot's curve keeps its new index
+        new_at = {k: n for n, k in enumerate(k for k in range(len(out)) if k not in gone)}
+        out = [el for k, el in enumerate(out) if k not in gone]
         for el in out:
             if el.get("move") and "along" in el["move"]:
                 el["move"]["along"] = new_at[el["move"]["along"]]
-    if len(out) < 3 and not any(el["type"] in vizlib.TECH for el in out):     # a library technique is a whole picture
+        return out
+    if empty:
+        why.append(f"{len(empty)} empty box(es) with no text and nothing inside were left out")
+        out = without(out, empty)
+    if not enough(out):
         why.append(f"only {len(out)} usable element(s); a diagram needs at least 3")
         return None
     hit = collision(out)
+    stamp = next((k for k in hit or () if out[k]["type"] == "stamp"), None)
+    if stamp is not None:                 # a stamp only decorates: a stamp on top of a piece goes, not the whole picture
+        why.append(f'stamp "{out[stamp]["text"]}" sat on another piece and was left out')
+        out = without(out, {stamp})
+        hit = collision(out)
     if hit:                               # pieces on top of each other read badly; the shot keeps its other picture
         why.append(f"{describe(out[hit[0]])} and {describe(out[hit[1]])} overlap; move them apart")
         return None

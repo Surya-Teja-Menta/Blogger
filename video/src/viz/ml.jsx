@@ -47,7 +47,7 @@ export const Attention = ({e, rect, frame, end, vertical}) => {
       {xs.map((x, k) => k !== f && <line key={`l${k}`} x1={xs[f]} y1={yq + B.fs} x2={x} y2={yk - B.fs} stroke={C.hot} strokeWidth={2 + 16 * weight(k) * q}
                                           opacity={0.15 + 0.85 * weight(k) * q} strokeLinecap="round"/>)}
       <Txt x={B.x0} y={yq} size={B.fs * 0.85} anchor="start" color={C.muted} op={clamp(T.t / 12)}>looking from</Txt>
-      {q > 0.8 && <Txt x={xs[Math.max(0, f - 3)]} y={yk + B.fs * 1.8} size={B.fs * 0.85} color={C.hot}>most attention</Txt>}
+      {q > 0.8 && <Txt x={xs[Math.max(0, f - 3)]} y={yk + B.fs * (vertical ? 4 : 1.8)} size={B.fs * 0.85} color={C.hot}>most attention</Txt>}
     </g>
   );
 };
