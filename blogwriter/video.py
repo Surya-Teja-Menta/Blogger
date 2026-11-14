@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -2292,6 +2292,7 @@ class VideoMaker:
                                       "to": starts[i] + LEAD + round(cz * FPS), "text": line})
         # every shot is measured as drawn, captions included: nothing may run into anything else
         self.audit_layout(scenes, long_scenes, spoken, theme, job, long_captions, starts)
+        self.log(variety.report(long_scenes))        # how samey is the finished plan? (it changes nothing)
         props = os.path.join(job, "long.json")
         with open(props, "w", encoding="utf-8") as f:
             sub = subscribe_at(starts, [s["kind"] for s in scenes], total)
