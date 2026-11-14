@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -70,6 +70,8 @@ KINDS = ("hook", "photo", "stat", "compare", "bars", "line", "donut", "kpis", "t
          "quote", "equation", "plot", "graph", "derive", "surface", "check", "diagram")
 MATH_KINDS = ("equation", "plot", "graph", "derive", "surface")   # lesson shots drawn from maths, not facts or photos
 PLOTS = ("scatter", "fit", "residuals", "squares", "descent")
+# plus vizlib.PLOT_TYPES (15 more plot types) and vizlib.SHOT_KINDS (125 more shot kinds): a shot that picks one
+# becomes a "diagram" shot that WANTS that technique, and the diagram designer fills it in (check_scene)
 FIGURE_KINDS = {"compare": (2, 3), "bars": (3, 6), "line": (3, 8), "donut": (2, 4), "kpis": (3, 4)}  # items (min, max)
 CHART_KINDS = ("stat", "hook", "compare", "bars", "line", "donut", "kpis")      # a hit sound lands under these
 ORDINALS = ("ONE", "TWO", "THREE", "FOUR", "FIVE")
@@ -1392,6 +1394,11 @@ def arithmetic_ok(lines: List[str]) -> bool:
 def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) -> dict:
     """Keep what the scene's visual needs and is verified; a visual whose data does not hold up becomes a photo."""
     words = lambda v, n: " ".join(str(v or "").split()[:n])
+    want = sc.get("kind") if sc.get("kind") in vizlib.SHOT_KINDS else (
+        sc.get("plot") if sc.get("kind") == "plot" and sc.get("plot") in vizlib.PLOT_TYPES else "")
+    if want:          # a library technique: a diagram shot that must be built around it
+        sc = {**sc, "kind": "diagram",
+              "picture": f'a "{want}" part ({vizlib.TECH[want]["use"][:70]}): {words(sc.get("picture"), 28)}'}
     kind = sc.get("kind") if sc.get("kind") in KINDS else "photo"
     out = {"kind": kind, "headline": words(sc.get("headline"), 8), "kicker": words(sc.get("kicker"), 3).upper(),
            "number": "", "label": "", "items": [], "events": [], "countries": [], "quote": "", "speaker": ""}
@@ -1430,7 +1437,9 @@ def check_scene(sc: dict, allowed: str, quotes: str, countries: Dict[str, str]) 
         if not names:
             out["kind"] = "photo"
     elif kind == "diagram":
-        out["picture"] = words(sc.get("picture"), 40)
+        out["picture"] = words(sc.get("picture"), 48)
+        if want:
+            out["want"] = want
     elif kind == "steps":
         out["items"] = [{"label": words((it or {}).get("label") if isinstance(it, dict) else it, 6)}
                         for it in sc.get("items") or []][:5]
@@ -1648,6 +1657,32 @@ def quizzes_on() -> bool:
     return os.environ.get("QUIZZES", "off").strip().lower() in ("on", "1", "yes", "true")
 
 
+REAL_WORLD = r"""
+- REAL-WORLD DEPTH: anchor every main idea in at least one REAL, NAMED case from the facts: a company, product
+  or system that uses it and how it does (how a named service splits its data, how a named model was
+  trained), a documented outage or failure and what it taught, or a well-known study and its finding. The
+  deep-dive parts carry two or more such cases each; an everyday analogy is still welcome first. Use only what
+  the facts support: never invent a company, a number, a date or an incident.
+- REFERENCES: when an idea comes from a paper, a book or a named team, say so in one short line ("this is the
+  idea behind Amazon's Dynamo paper"), once or twice per video; a "paper" shot can show the paper itself.
+  Credit people, papers, books and organisations, never websites."""
+
+
+def technique_text(title: str) -> str:
+    """The animated techniques this video may use as shot kinds and plot types: a selection made for its
+    subject (and different for every title), so each video draws from its own set of pictures."""
+    shots = vizlib.pick(title, 26, pool=vizlib.SHOT_KINDS)
+    plots = vizlib.pick(title, 8, pool=vizlib.PLOT_TYPES)
+    lines = "\n".join(f'  - "{n}": {vizlib.TECH[n]["use"]}' for n in shots)
+    plot_lines = "\n".join(f'  - "{n}": {vizlib.TECH[n]["use"]}' for n in plots)
+    return ("\n- TECHNIQUE SHOTS: besides the kinds listed, a shot's \"kind\" may be one of these animated "
+            "techniques, picked for this video. Use at least 5 different ones, each at most once, wherever "
+            "one SHOWS the mechanism better than a plain diagram; give \"picture\": what it shows for THIS "
+            "sentence, naming the real things (max 35 words). The diagram designer fills in its data."
+            "\n" + lines +
+            "\n- More \"plot\" types (give \"plot\": the type and \"picture\": what it shows):\n" + plot_lines)
+
+
 def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Optional[dict] = None) -> tuple:
     """The writer's brief: the style's voice plus the plan made for this subject (braces escaped for the
     script prompt), and the number of shots that fits the planned length."""
@@ -1665,6 +1700,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
             text += '\n- NO QUIZ in this video: no "check" shots at all; skip step (7) and go on to the recap.'
     if style in ("education", "concept"):
         text += LEVEL_RULES.get(brief.get("level") or "intermediate", "")
+        text += REAL_WORLD + technique_text(title)
     text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots

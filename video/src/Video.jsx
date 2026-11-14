@@ -11,6 +11,7 @@ import {pushCut} from "@remotion/transitions/push-cut";
 import {CUTS, ChapterSting, Finish, clamp} from "./fx";
 import {SCENES} from "./scenes";
 import {GRAPHICS} from "./graphics";
+import {VIZ_GRAPHICS} from "./viz/graphic";
 import {Texture, genCut} from "./gen";
 import {DiagramScene} from "./diagram";
 import {SUBSCRIBE_FRAMES, Subscribe} from "./subscribe";
@@ -100,7 +101,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
         {scenes.map((s, i) => {
           // a shot the art director gave a motion graphic plays that instead of its template
           // a diagram drawn for this sentence beats both
-          const Scene = (s.diagram && DiagramScene) || (s.graphic && GRAPHICS[s.graphic.type]) || SCENES[s.kind] || SCENES.photo;
+          const Scene = (s.diagram && DiagramScene) || (s.graphic && (GRAPHICS[s.graphic.type] || VIZ_GRAPHICS[s.graphic.type])) || SCENES[s.kind] || SCENES.photo;
           const scene = (x) => <Scene s={x} i={i} vertical={vertical}/>;
           // a shot that opens an act starts its own animation once the sting has passed; its cues move with it
           const late = (f) => (f == null ? f : Math.max(0, f - STING));

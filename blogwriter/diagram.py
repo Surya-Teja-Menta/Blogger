@@ -9,13 +9,15 @@ and a weak one is dropped (the shot falls back to its library graphic)."""
 import re
 from typing import Callable, Dict, List, Optional
 
-from . import graphics
+from . import graphics, vizlib
 from .mathexpr import compile_expr, finite_share
 
 TYPES = ("dot", "dots", "circle", "box", "label", "arrow", "line", "curve", "bar", "icon", "tex",
          "samples", "physics", "counter", "shape", "crowd", "stamp",
          "plot", "network", "tree", "grid", "venn", "cycle", "code", "wave", "surface", "bars", "flow")
 RICH = ("plot", "network", "tree", "grid", "venn", "cycle", "code", "wave", "surface", "bars", "flow")     # moving pictures of how a thing works (rich.jsx)
+TYPES = TYPES + tuple(vizlib.TECH)        # the visual-technique library (vizlib.py, video/src/viz/)
+RICH = RICH + tuple(vizlib.TECH)
 REGIONS = ("samples", "physics", "crowd") + RICH   # parts that fill a box of the canvas
 SOURCES = ("uniform", "skewed", "exponential", "bimodal", "normal", "dice", "coin")
 SHAPES = ("circle", "square", "triangle", "diamond", "hexagon", "star", "heart")
@@ -185,6 +187,12 @@ counter) are what make the video
 worth watching: use one wherever the sentence fits one, and "click", "mark" and "glow" to point at what matters. A
 shot with only labels and arrows is the last resort.
 
+MORE MOVING PARTS: the technique library, a selection for this video. Each fills a region like the parts above
+(give x, y, w, h and the fields named), at most one per shot. A technique already used in another shot of this
+video is not used again. When a shot's WANTED names a part ("a "hashring" part ..."), build that shot around
+exactly that part, filled with this sentence's own things.
+{library}
+
 Shots (index | headline | narration | WANTED: the picture the writer asked for, when given; build that):
 {shots}
 
@@ -227,11 +235,19 @@ def refine_prompt(scene: dict, d: dict, icons: str) -> str:
                          diagram=_json.dumps(plain), icons=icons)
 
 
+def used_parts(scenes: List[dict]) -> set:
+    """The library techniques the video's diagrams already use."""
+    return {el["type"] for s in scenes for el in (s.get("diagram") or {}).get("elements", []) if el["type"] in vizlib.TECH}
+
+
 def prompt(scenes: List[dict], idx: List[int], title: str, mood: str, style: str = "") -> str:
+    used = used_parts(scenes)
+    wanted = [scenes[i]["want"] for i in idx if scenes[i].get("want") in vizlib.TECH]
+    names = list(dict.fromkeys(wanted + vizlib.pick(title, 22, used)))
     rows = "\n".join(f"{i} | {scenes[i].get('headline', '')} | {scenes[i].get('narration', '')}"
                      + (f" | WANTED: {scenes[i]['picture']}" if scenes[i].get("picture") else "") for i in idx)
     return PROMPT.format(title=title, mood=mood or "-", icons=" ".join(sorted(graphics.ICONS)), shots=rows,
-                         style=style + "\n" if style else "")
+                         style=style + "\n" if style else "", library=vizlib.catalogue(names))
 
 
 ICON_LIST = " ".join(sorted(graphics.ICONS))
@@ -359,6 +375,8 @@ def _ident(v, n: int = 12) -> str:
 def _rich(el: dict, e: dict, allowed: str, verified: Callable[[str, str], bool], why: List[str]) -> bool:
     """Fill the rich part's own fields into el; True when it cannot be drawn (and say why)."""
     t = el["type"]
+    if t in vizlib.TECH:
+        return vizlib.fill(el, e, allowed, verified, why)
     if t == "plot":
         expr = str(e.get("expr") or "").strip()[:60]
         lo, hi = _num(e.get("lo"), -1e4, 1e4, -5), _num(e.get("hi"), -1e4, 1e4, 5)
@@ -619,7 +637,7 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
             lo_w, lo_h = {"samples": (40, 50), "physics": (20, 60), "crowd": (10, 10), "plot": (40, 45),
                           "network": (40, 45), "tree": (40, 40), "grid": (30, 35), "venn": (35, 45),
                           "cycle": (40, 50), "code": (35, 40), "wave": (40, 40), "surface": (40, 50),
-                          "bars": (35, 35), "flow": (45, 40)}[t]
+                          "bars": (35, 35), "flow": (45, 40)}.get(t) or vizlib.TECH[t]["size"]
             el.update(x=_num(e.get("x"), 3, 97 - lo_w, 10), y=_num(e.get("y"), 3, 97 - lo_h, 10))
             el.update(w=_num(e.get("w"), lo_w, 97 - el["x"], max(lo_w, 60)), h=_num(e.get("h"), lo_h, 97 - el["y"], max(lo_h, 70)))
         if t == "samples":
@@ -765,7 +783,7 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool], tex_ok: Callab
         for el in out:
             if el.get("move") and "along" in el["move"]:
                 el["move"]["along"] = new_at[el["move"]["along"]]
-    if len(out) < 3:
+    if len(out) < 3 and not any(el["type"] in vizlib.TECH for el in out):     # a library technique is a whole picture
         why.append(f"only {len(out)} usable element(s); a diagram needs at least 3")
         return None
     hit = collision(out)
@@ -795,6 +813,14 @@ def design(complete_json: Callable, scenes: List[dict], idx: List[int], title: s
                 if k in part and not scenes[k].get("diagram"):
                     why: List[str] = []
                     d = check(item, scenes[k], verified, tex_ok, why)
+                    parts = {el["type"] for el in d["elements"] if el["type"] in vizlib.TECH} if d else set()
+                    want = scenes[k].get("want")
+                    if d and not attempt and want and want not in parts:
+                        why.append(f'the writer asked for a "{want}" part: build this shot around it')
+                        d = None
+                    elif d and not attempt and parts & used_parts([s for j, s in enumerate(scenes) if j != k]):
+                        why.append(f'{", ".join(sorted(parts))} is already used in another shot: pick another part')
+                        d = None
                     if d:
                         scenes[k]["diagram"] = d
                         failed.pop(k, None)

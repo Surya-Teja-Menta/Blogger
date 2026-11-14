@@ -46,8 +46,12 @@ PERSPECTIVES = [
 STUDY_PERSPECTIVES = [
     ("Mechanism", "how it works: the exact statement, the steps, the formula with every symbol named, and the intuition"),
     ("Importance", "why it matters: what it makes possible, and what goes wrong or cannot be done without it"),
+    ("Case studies", "real systems and real incidents: named companies, products or projects that use it and how "
+                     "they built it, documented outages or failures it caused or prevented, with dates and figures"),
     ("Causes", "why it is true: the reasoning or the idea of the proof, in plain words"),
     ("Applications", "where it is used in the real world: fields, products and everyday situations, with figures"),
+    ("References", "the key papers, books and named researchers or engineering teams behind it: titles, authors, "
+                   "years and the one finding each is known for"),
     ("Examples", "worked examples and simple demonstrations with small concrete numbers"),
     ("Conditions", "when it holds and when it fails: the assumptions, limits and exceptions"),
     ("Misconceptions", "common mistakes and misunderstandings, and the correct view"),

@@ -11,6 +11,7 @@ import {Icon} from "./graphics";
 import {Physics, Samples, seedOf} from "./stats";
 import {Cursor, Cycle, Grid, Network, Plot, Tree, Venn} from "./rich";
 import {Bars, Code, Flow, Surface3D, Wave} from "./rich2";
+import {VIZ} from "./viz";
 import {HandText} from "./hand";
 import {Tex, useMathFonts} from "./math";
 import {delay, glide, pop} from "./motion";
@@ -18,7 +19,7 @@ import {C, FONT, alpha} from "./theme";
 
 const col = (name) => ({accent: C.accent, hot: C.hot, cool: C.cool, violet: C.violet, text: C.text, muted: C.muted}[name] || C.accent);
 const RICH = {plot: Plot, network: Network, tree: Tree, grid: Grid, venn: Venn, cycle: Cycle, code: Code, wave: Wave, surface: Surface3D,
-              bars: Bars, flow: Flow};      // parts that fill a region (rich.jsx)
+              bars: Bars, flow: Flow, ...VIZ};      // parts that fill a region (rich.jsx, rich2.jsx, viz/)
 const TexFonts = () => { useMathFonts(); return null; };
 
 // a smooth path through points (Catmull-Rom as cubic Beziers)

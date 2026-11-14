@@ -109,12 +109,28 @@ Reply with a JSON list: [{{"scene": index, "type": "...", "center": {{"icon": ".
 "nodes": [{{"icon": "...", "label": "..."}}], "icon": "..."}}] (center only for hub and spotlight, icon only for grid)."""
 
 
+MORE = """
+More graphics: animated explainers and charts from the library, drawn large under the headline. Give "type" and
+the fields named; each one at most once in the video; use them for shots where they fit better than the six above
+(a trade-off, a hidden cost, a ranking, a share, a before and after, a familiar screen):
+{catalogue}
+"""
+
+
+def more_types() -> tuple:
+    from . import vizlib
+    return vizlib.GRAPHIC_TYPES
+
+
 def prompt(scenes: List[dict], only: Optional[set] = None) -> str:
+    from . import vizlib
+    seed = " ".join(str(s.get("headline", "")) for s in scenes)          # each video gets its own selection
+    more = MORE.replace("{catalogue}", vizlib.catalogue(vizlib.pick(seed, 14, pool=vizlib.GRAPHIC_TYPES)))
     rows = "\n".join(f"{i} | {s['kind']} | {s.get('headline', '')} | {s.get('number', '')} | {s.get('narration', '')}"
                      for i, s in enumerate(scenes) if s["kind"] in ELIGIBLE and not s.get("video")
                      and (only is None or i in only))
     text = PROMPT.replace("{icons}", " ".join(sorted(ICONS))).replace("{shots}", rows) \
-        .replace("{{", "{").replace("}}", "}")
+        .replace("{{", "{").replace("}}", "}").replace("\n\nRules:", "\n" + more + "\nRules:", 1)
     if only is not None:
         text = text.replace("For as many shots as possible (aim for at least 3 in 4)",
                             "For EVERY shot listed (these are lessons: each idea needs a picture, not only words)") \
@@ -163,10 +179,14 @@ def _node(raw, allowed, verified) -> Optional[dict]:
 
 def check(raw, scene: dict, verified: Callable[[str, str], bool]) -> Optional[dict]:
     """The graphic as the video can draw it, or None if any part of it is unusable."""
+    allowed = " ".join(str(scene.get(k, "")) for k in ("narration", "headline", "number", "label"))
+    if isinstance(raw, dict) and raw.get("type") in more_types():       # a library technique: its own fields
+        from . import vizlib
+        el, why = {"type": raw["type"]}, []
+        return None if vizlib.fill(el, raw, allowed, verified, why) else el
     if not isinstance(raw, dict) or raw.get("type") not in TYPES:
         return None
     kind = raw["type"]
-    allowed = " ".join(str(scene.get(k, "")) for k in ("narration", "headline", "number", "label"))
     lo, hi = TYPES[kind]
     if kind == "grid":
         number = str(scene.get("number", ""))
@@ -200,11 +220,14 @@ def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log:
                 picks[k] = g
             else:
                 log(f"[graphics] shot {k}: unusable {str(raw)[:120]}")
-    last = None
+    last, used = None, set()
     for k, s in enumerate(scenes):
         g = picks.get(k)
+        if g and g["type"] in more_types() and g["type"] in used:       # a library graphic once per video
+            g = None
         if g and g["type"] != last:
             s["graphic"] = g
+            used.add(g["type"])
         last = s["graphic"]["type"] if s.get("graphic") else None
     return sum(1 for s in scenes if s.get("graphic"))
 
@@ -223,6 +246,8 @@ def no_stock_photos(scenes: List[dict]) -> int:
 def labels(g: Optional[dict]) -> List[str]:
     """The graphic's words, in a fixed order, for translation."""
     if not g:
+        return []
+    if g["type"] in more_types():
         return []
     return ([g["center"]["label"]] if g.get("center") else []) + [n["label"] for n in g.get("nodes", [])] + \
         ([g["label"]] if g["type"] == "grid" else [])
@@ -286,6 +311,8 @@ def timed(g: Optional[dict], headline: str, words: List[tuple], frames: int, fps
     match are spread over the first part of the shot, and a flow or stack never builds out of order."""
     if not g:
         return None
+    if g["type"] in more_types():          # a library technique times itself from its start and the shot's length
+        return {**g, "at": lead + 6}
     g = {**g, "nodes": [dict(n) for n in g.get("nodes", [])], **({"center": dict(g["center"])} if g.get("center") else {})}
     when = _finder(words, fps, lead)
 
