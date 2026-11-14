@@ -2270,12 +2270,14 @@ def test_each_film_look_cuts_in_its_own_medium_and_tells_the_designer_its_langua
     assert "stamp slammed on the verdict" in p and "native move" in p
 
 
-def test_the_cinematic_design_is_the_default_and_a_film_look_only_when_asked(monkeypatch):
-    from blogwriter import design, looks
+def test_about_one_video_in_three_gets_a_film_look_and_the_rest_a_design_of_their_own(monkeypatch):
+    from blogwriter import design
     picks = lambda *a, **k: {"look": "chalkboard", "accent": "pink", "why": "x"}
     monkeypatch.delenv("FILM_LOOK", raising=False)
-    d = design.design(picks, "Central Limit Theorem", "education", "", lambda m: None)
-    assert "look" not in d                                              # the design made for the video alone
+    got = [bool(design.design(picks, f"Topic {k}", "education", "", lambda m: None).get("look")) for k in range(60)]
+    assert 10 <= sum(got) <= 35                                         # the default mix: some films, mostly cinematic
+    monkeypatch.setenv("FILM_LOOK", "off")
+    assert not any(design.design(picks, f"Topic {k}", "education", "", lambda m: None).get("look") for k in range(20))
     monkeypatch.setenv("FILM_LOOK", "auto")
     assert design.design(picks, "Central Limit Theorem", "education", "", lambda m: None)["look"]["slug"] == "chalkboard"
 

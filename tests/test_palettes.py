@@ -46,3 +46,47 @@ def test_every_backdrop_and_every_shape_is_drawn():
     for shape in design.SHAPES:
         assert f'"{shape}"' in gen or f"{shape}:" in gen or shape in ("circle", "dot"), shape
     assert "{layer" in fx                                   # the chosen backdrop is on screen, not just computed
+
+
+def test_the_models_shortlist_decides_and_the_last_videos_are_not_repeated(monkeypatch):
+    monkeypatch.delenv("FILM_LOOK", raising=False)
+    asked = []
+
+    def model(prompt, **kw):
+        asked.append(prompt)
+        return {"worlds": ["plum", "ocean", "nonsense", "neon"], "backdrops": ["circuit", "mesh", "bogus"]}
+    worlds, backs = palettes.shortlist(model, "T", "education", "calm")
+    assert worlds == ["plum", "ocean", "neon"] and backs == ["circuit", "mesh"] and "ember" in asked[0]
+    assert palettes.shortlist(lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")), "T", "e", "") == ([], [])
+    # a model that always names the same three still varies from title to title, and skips what was just used
+    picks = [palettes.pick("x", f"title {k}", worlds)["world"] for k in range(120)]
+    assert {"plum", "ocean", "neon"} <= set(picks)                       # its three are used, with two keyword matches
+    assert sum(w in worlds for w in picks) >= 0.45 * len(picks)         # ...and are the most common picks
+    for k in range(30):
+        assert palettes.pick("x", f"title {k}", worlds, avoid=["plum"])["world"] != "plum"
+        assert palettes.backdrops("x", f"t{k}", (), backs, ["circuit"]) != "circuit"
+    assert palettes.pick("x", "t", ["plum"], avoid=["plum"])["world"] in palettes.WORLDS   # all used: still a world
+    d = design.design(model, "A title", "education", "calm", lambda m: None, {"worlds": ["plum"], "backs": ["circuit"]})
+    assert d["world"] != "plum" and d["back"] != "circuit"      # the recent ones are avoided
+
+
+def test_the_history_remembers_the_last_videos_and_no_two_film_looks_run_together(monkeypatch):
+    store = {}
+    from blogwriter import storage
+    monkeypatch.setattr(storage, "get_text", lambda s, key, **k: store.get(key, ""))
+    monkeypatch.setattr(storage, "put_text", lambda s, key, text, mime="", **k: store.update({key: text}) or True)
+    h = palettes.load_history(None)
+    assert h == {"worlds": [], "backs": [], "looks": []}
+    for k in range(12):
+        palettes.save_history(None, h, {"world": f"w{k}", "back": f"b{k}"})
+        h = palettes.load_history(None)
+    assert h["worlds"] == [f"w{k}" for k in range(4, 12)] and h["backs"][-1] == "b11" and len(h["backs"]) == 5
+    palettes.save_history(None, h, {"look": {"slug": "chalkboard"}})            # a film look has no world of the library
+    h = palettes.load_history(None)
+    assert h["looks"][-1] == "chalkboard" and h["worlds"][-1] == "w11"
+    assert not design.film_look_wanted("any title", "", h["looks"][-1:])            # the next one is a design of its own
+    assert any(design.film_look_wanted(f"t{k}", "", [""]) for k in range(40))       # and after that, films come back
+    # the same style is not used twice in a few videos: the model's pick is refused, the design is its own
+    monkeypatch.setenv("FILM_LOOK", "auto")
+    pick = lambda *a, **k: {"look": "chalkboard", "accent": "pink", "why": "x"}
+    assert "look" not in design.design(pick, "Topic", "education", "", lambda m: None, {"looks": ["chalkboard", "", ""]})

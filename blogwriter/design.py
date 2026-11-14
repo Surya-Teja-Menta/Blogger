@@ -281,33 +281,56 @@ def prompt(title: str, style: str, mood: str) -> str:
                          backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS), shapes=", ".join(SHAPES))
 
 
-def restyle(d: dict, raw_fx, title: str, style: str, mood: str) -> dict:
-    """The design with its colours and backdrop drawn from the libraries (palettes.py) by the video's subject. The art
-    director's own palette was always the same orange-red, so only its fonts, motion and cuts are kept."""
+def restyle(d: dict, raw_fx, title: str, style: str, mood: str, liked=((), ()), recent=None) -> dict:
+    """The design with its colours and backdrop drawn from the libraries (palettes.py): among the model's shortlist
+    for this subject, not what the last videos used. The art director's own palette was always the same orange-red,
+    so only its fonts, motion and cuts are kept."""
     context = f"{title} {style} {mood}"
-    pal = palettes.pick(context, title)
+    recent = recent or {}
+    pal = palettes.pick(context, title, liked[0], recent.get("worlds", ()))
     for key, need in NEEDS.items():
         pal[key] = fit(pal[key], pal["bg"], need)
     light = luminance(pal["bg"]) > 0.4
-    back = palettes.backdrops(context, title, DARK_ONLY if light else ("paper",))
+    back = palettes.backdrops(context, title, DARK_ONLY if light else ("paper",), liked[1], recent.get("backs", ()))
     return _finish(pal, d["display"], d["body"], d["upper"], back, d["named_cuts"], d["pace"], d["source"], d["title"],
                    d["kicker"], check_fx(raw_fx, pal["bg"] + d["display"] + pal["accent"], light))
 
 
-def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None]) -> dict:
-    """The video's look: by default a cinematic design made for the video alone (floating light, depth, glow: the
-    one the owner preferred to a flat film look). FILM_LOOK=auto lets the model pick a film style from the library
-    (looks.py) when one suits the subject; FILM_LOOK=<key> forces that style."""
+def film_look_wanted(title: str, setting: str, recent: List[str]) -> bool:
+    """Whether this video is drawn in a film look (looks.py) instead of a design of its own. FILM_LOOK: "auto" always
+    asks the model, "off" or "free" never, a style name forces it, and the default "mix" gives about one video in
+    three a film look (chalkboard, blueprint, risograph...), chosen by the title, never two looks running."""
+    if setting in ("auto",):
+        return True
+    if setting not in ("", "mix"):
+        return False
+    return not any(recent) and int(hashlib.sha256(("look" + title).encode()).hexdigest(), 16) % 100 < 35
+
+
+def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None],
+           history: Optional[dict] = None) -> dict:
+    """The video's look: a cinematic design made for the video alone (floating light, depth, glow: the one the owner
+    preferred to a flat film look), or, for about one video in three, one of the film looks in looks.py when the model
+    finds one that suits the subject. `history` (palettes.load_history) lists what the last videos used, so two in a
+    row never share a colour world, a backdrop or a film look."""
     import os
     from . import looks
+    history = history or {}
     forced = os.environ.get("FILM_LOOK", "").strip().lower()
-    picked = ((forced, next(iter(looks.LOOKS[forced]["accents"].values()))) if forced in looks.LOOKS else
-              looks.choose(complete_json, title, style, mood, log) if forced == "auto" else None)
+    picked = None
+    if forced in looks.LOOKS:
+        picked = (forced, next(iter(looks.LOOKS[forced]["accents"].values())))
+    elif film_look_wanted(title, forced, history.get("looks", [])[-1:]):
+        picked = looks.choose(complete_json, title, style, mood, log)
+        if picked and picked[0] in history.get("looks", []):          # the same style as one of the last videos
+            log(f"[look] {picked[0]} was used recently: a design of its own")
+            picked = None
     if picked:
         d = looks.theme_for(picked[0], picked[1], _finish, check_fx, title)
         log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
             f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
         return d
+    liked = palettes.shortlist(complete_json, title, style, mood, log)
     raw = {}
     try:
         raw = complete_json(prompt(title, style, mood), max_tokens=2000, temperature=1.0)
@@ -316,7 +339,8 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
         log(f"[design] no design from the model ({type(exc).__name__})")
         d = None
     d = d or generate(title)
-    d = restyle(d, (raw.get("fx") if isinstance(raw, dict) and d["source"] == "designed" else d["fx"]), title, style, mood)
+    d = restyle(d, (raw.get("fx") if isinstance(raw, dict) and d["source"] == "designed" else d["fx"]), title, style,
+                mood, liked, history)
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
     log(f"[design] motion: {layers}; "

@@ -118,13 +118,85 @@ def world(name: str, seed: str) -> dict:
             "accent": accent, "hot": hot, "cool": cool, "violet": violet}
 
 
-def pick(context: str, seed: str) -> dict:
-    """The colour world for a video: ranked by its subject and mood words, chosen by the title among the best eight."""
-    name = choose({k: v[5] for k, v in WORLDS.items()}, context, seed, 8)
+SHORTLIST = """You are the art director of an explainer YouTube channel. Choose the colours and the moving backdrop of ONE
+video so they suit its subject and feeling. Videos on one subject must not all look alike, so name your three best
+colour worlds and three best backdrops, best first.
+
+Video: {title}
+Style: {style}
+Mood: {mood}
+
+Colour worlds (name, lightness, what it suits):
+{worlds}
+
+Backdrops (name: what it suits):
+{backs}
+
+Reply with JSON: {{"worlds": ["", "", ""], "backdrops": ["", "", ""]}}"""
+
+
+def shortlist(complete_json, title: str, style: str, mood: str, log=print) -> tuple:
+    """(worlds, backdrops) the model finds best for this video, only names that exist; ([], []) if it cannot say, and
+    the keyword ranking below decides alone."""
+    nl = chr(10)
+    worlds = nl.join(f"- {k} ({'light' if colorsys.rgb_to_hls(*_rgb(v[0]))[1] > 0.5 else 'dark'}): {v[5]}"
+                     for k, v in WORLDS.items())
+    backs = nl.join(f"- {k}: {v}" for k, v in BACKDROPS.items())
+    try:
+        raw = complete_json(SHORTLIST.format(title=title, style=style, mood=mood or "-", worlds=worlds, backs=backs),
+                            max_tokens=300, temperature=0.8)
+    except Exception as exc:                        # colours are a nice-to-have; a failed call never stops the video
+        log(f"[design] no colour shortlist from the model ({type(exc).__name__})")
+        return [], []
+    raw = raw if isinstance(raw, dict) else {}
+    names = lambda key, known: [n for n in dict.fromkeys(str(x).strip().lower() for x in (raw.get(key) or [])[:8])
+                                if n in known][:3]  # noqa: E731
+    return names("worlds", WORLDS), names("backdrops", BACKDROPS)
+
+
+def _pool(options: Dict[str, str], context: str, seed: str, liked: Sequence[str], avoid: Sequence[str], top: int) -> str:
+    """The model's shortlist plus the two best keyword matches (so a model that always names the same three still
+    varies), without what the last videos used (unless that leaves nothing); the title picks one."""
+    pool = [n for n in dict.fromkeys(list(liked) + rank(options, context, seed, 2 if liked else top)) if n in options]
+    pool = [n for n in pool if n not in avoid] or pool
+    return pool[int(hashlib.sha256(("pick" + seed).encode()).hexdigest(), 16) % len(pool)]
+
+
+def pick(context: str, seed: str, liked: Sequence[str] = (), avoid: Sequence[str] = ()) -> dict:
+    """The colour world for a video: the model's shortlist (or, without one, the eight best keyword matches), not one
+    of the last videos' worlds, and the title decides among the rest."""
+    name = _pool({k: v[5] for k, v in WORLDS.items()}, context, seed, liked, avoid, 8)
     return {**world(name, seed), "world": name}
 
 
-def backdrops(context: str, seed: str, skip: Sequence[str]) -> str:
-    """The animated backdrop: the best-fitting few for the subject (leaving out those drawn for the other
-    lightness), the title picks one."""
-    return choose({k: v for k, v in BACKDROPS.items() if k not in skip}, context, seed, 5)
+def backdrops(context: str, seed: str, skip: Sequence[str], liked: Sequence[str] = (), avoid: Sequence[str] = ()) -> str:
+    """The animated backdrop, chosen the same way (leaving out those drawn for the other lightness)."""
+    return _pool({k: v for k, v in BACKDROPS.items() if k not in skip}, context, seed,
+                 [n for n in liked if n not in skip], avoid, 5)
+
+
+# ---- memory: what the last videos used, so two in a row never share a look --------------------------------------
+HISTORY_KEY = "design_history.json"
+KEEP = {"worlds": 8, "backs": 5, "looks": 3}
+
+
+def load_history(settings) -> dict:
+    """The recent worlds, backdrops and film looks ({} lists when storage is off or empty)."""
+    import json
+    from . import storage
+    try:
+        data = json.loads(storage.get_text(settings, HISTORY_KEY) or "{}")
+    except ValueError:
+        data = {}
+    return {k: [str(x) for x in (data.get(k) or [])][-n:] for k, n in KEEP.items()}
+
+
+def save_history(settings, history: dict, theme: dict) -> None:
+    """Add this video's world, backdrop and film look (if any) and keep the last few."""
+    import json
+    from . import storage
+    # a video in a film look has no world or backdrop of the libraries; every video adds to "looks" ("" = none), so
+    # the last entries say whether the last videos had one
+    new = {"worlds": theme.get("world"), "backs": theme.get("back"), "looks": (theme.get("look") or {}).get("slug", "")}
+    out = {k: ([*history.get(k, []), new[k]] if (new[k] or k == "looks") else history.get(k, []))[-n:] for k, n in KEEP.items()}
+    storage.put_text(settings, HISTORY_KEY, json.dumps(out), "application/json")
