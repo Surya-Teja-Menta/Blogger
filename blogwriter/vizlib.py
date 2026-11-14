@@ -653,6 +653,28 @@ _clash = {f"{n}.{f}" for n, t in TECH.items() for f in t["fields"] if f in RESER
 assert not _clash, f"technique fields reuse reserved keys: {_clash}"
 
 
+# words too common to say what a video is about (they pulled database pictures into "Types of data")
+GENERIC = {"data", "type", "types", "system", "systems", "design", "designs", "pattern", "patterns", "model", "models",
+           "what", "how", "why", "approach", "problem", "need", "needs", "all", "you", "your", "the", "and", "for",
+           "with", "explained", "introduction", "intro", "basics", "part", "guide", "using", "use", "work", "works",
+           "about", "into", "from", "this", "that", "is", "are", "a", "an", "of", "in", "on", "to", "vs", "versus"}
+# two-word subjects -> the family they name
+PHRASES = {("system", "design"): "system", ("design", "pattern"): "pattern", ("design", "patterns"): "pattern",
+           ("research", "paper"): "paper", ("research", "papers"): "paper", ("machine", "learning"): "ml",
+           ("deep", "learning"): "dl", ("data", "structure"): "data", ("data", "structures"): "data",
+           ("neural", "network"): "dl", ("language", "model"): "llm", ("language", "models"): "llm"}
+
+
+def _stem(w: str) -> str:
+    """sharding -> shard, quorums -> quorum, caches -> cache; short words stay as they are (mode is not model)."""
+    if len(w) <= 4:
+        return w
+    for end in ("ings", "ing", "ers", "er", "ies", "es", "ed", "s"):
+        if w.endswith(end) and len(w) - len(end) >= 4:
+            return w[: -len(end)] + ("y" if end == "ies" else "")
+    return w
+
+
 def _clean_num(v) -> Optional[float]:
     try:
         x = float(v)
@@ -890,25 +912,28 @@ SHOT_KINDS = tuple(n for n in TECH if n not in PLOT_TYPES and n not in GRAPHIC_T
 
 
 def pick(title: str, n: int = 28, used: Optional[set] = None, pool: Optional[tuple] = None) -> List[str]:
-    """The techniques offered to one video: the ones that fit its subject best, then a seeded random share of the
-    rest, so every video gets its own selection; techniques already used in this video are left out. pool limits
-    the choice to one role (SHOT_KINDS, PLOT_TYPES, GRAPHIC_TYPES)."""
+    """The techniques offered to one video: only the ones that fit its subject (a tag or its family matches the
+    title), best first, then neutral explainers if the subject has few; never a technique from an unrelated field
+    (the owner: everything must be in sync with the topic). Equal fits are ordered by the title, so videos on the
+    same subject still rotate through them. Techniques already used in this video are left out. pool limits the
+    choice to one role (SHOT_KINDS, PLOT_TYPES, GRAPHIC_TYPES)."""
     used = used or set()
-    words = set(re.findall(r"[a-z]+", title.lower()))
+    raw = re.findall(r"[a-z]+", title.lower())
+    words = {_stem(w) for w in set(raw) - GENERIC}
 
     def hits(tags) -> int:
-        return sum(1 for t in tags if any(w == t or (min(len(w), len(t)) >= 4 and (w.startswith(t[:5]) or t.startswith(w[:5])))
-                                          for w in words))
-    fam_boost = {f: hits(set(w.split())) for f, w in FAMILY_WORDS.items()}
+        return sum(1 for t in tags if _stem(t) in words)
+    fam_boost = {f: hits(set(w.split()) - GENERIC) for f, w in FAMILY_WORDS.items()}
+    for (a, b), fam in PHRASES.items():          # "system design", "design patterns": the subject is the phrase
+        if any(x == a and y == b for x, y in zip(raw, raw[1:])):
+            fam_boost[fam] = fam_boost.get(fam, 0) + 3
     rng = random.Random(re.sub(r"\W", "", title.lower()) or "x")
     scored = []
     for name, t in TECH.items():
         if name in used or (pool is not None and name not in pool):
             continue
-        s = 3 * hits(t["tags"]) + 2 * fam_boost.get(t["fam"], 0) + (1 if t["fam"] == "explain" else 0)
-        scored.append((s + rng.random(), name))
-    scored.sort(reverse=True)
-    top = [nm for _, nm in scored[: n * 3 // 5]]
-    rest = [nm for _, nm in scored[n * 3 // 5:]]
-    rng.shuffle(rest)
-    return top + rest[: n - len(top)]
+        fit = 3 * hits(t["tags"]) + 2 * fam_boost.get(t["fam"], 0)
+        scored.append((fit, t["fam"] == "explain", rng.random(), name))
+    relevant = sorted((x for x in scored if x[0] > 0), reverse=True)
+    neutral = sorted((x for x in scored if x[0] == 0 and x[1]), key=lambda x: x[2], reverse=True)
+    return [x[3] for x in relevant + neutral][:n]
