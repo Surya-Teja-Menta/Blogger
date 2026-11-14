@@ -7,6 +7,7 @@ import {pop} from "./motion";
 import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
 import {Surface} from "./looks";
+import {BACKS} from "./backdrops";
 import {HandText} from "./hand";
 
 export const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
@@ -217,7 +218,10 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
                  transform: `translateX(${width * 0.1 - frame * 1.2}px)`}}>{word}</div>
   );
   let layer = null;
-  if (C.back === "grid") {
+  if (BACKS[C.back]) {
+    const Named = BACKS[C.back];
+    layer = <Named frame={frame}/>;
+  } else if (C.back === "grid") {
     layer = (
       <>
         <AbsoluteFill style={{background: `radial-gradient(ellipse at 50% 60%, ${alpha(C.cool, 0.35)}, transparent 55%)`}}/>
@@ -303,6 +307,7 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
   if (C.fx && C.fx.layers && C.fx.layers.length) {
     return (
       <AbsoluteFill style={{background: C.bg, overflow: "hidden"}}>
+        {layer /* the chosen backdrop (it was computed but never drawn once every design had generated layers) */}
         <GenLayers i={i}/>
         {(C.fx.bigWord ?? true) && big}
       </AbsoluteFill>

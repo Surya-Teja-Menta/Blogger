@@ -28,6 +28,18 @@ const Shape = ({shape, s, col, stroke, rot}) => {
     <svg style={box} viewBox="0 0 100 100"><polygon points="50,6 96,92 4,92" fill={stroke ? "none" : col} stroke={col}
                                                      strokeWidth={stroke ? 5 : 0}/></svg>
   );
+  const outline = {fill: stroke ? "none" : col, stroke: col, strokeWidth: stroke ? 5 : 0, strokeLinejoin: "round"};
+  const path = {
+    hex: <polygon points="50,4 93,27 93,73 50,96 7,73 7,27" {...outline}/>,
+    diamond: <polygon points="50,4 96,50 50,96 4,50" {...outline}/>,
+    star: <polygon points="50,4 61,38 96,38 68,59 79,93 50,72 21,93 32,59 4,38 39,38" {...outline}/>,
+    chevron: <polyline points="22,6 72,50 22,94" fill="none" stroke={col} strokeWidth={14} strokeLinecap="round" strokeLinejoin="round"/>,
+    arc: <path d="M8,80 A42,42 0 0 1 92,80" fill="none" stroke={col} strokeWidth={12} strokeLinecap="round"/>,
+    squiggle: <path d="M4,50 Q16,18 28,50 T52,50 T76,50 T98,50" fill="none" stroke={col} strokeWidth={9} strokeLinecap="round"/>,
+    cross: <path d="M18,18 L82,82 M82,18 L18,82" fill="none" stroke={col} strokeWidth={13} strokeLinecap="round"/>,
+  }[shape];
+  if (path) return <svg style={box} viewBox="0 0 100 100">{path}</svg>;
+  if (shape === "pill") return <div style={{...box, height: s * 0.42, top: s * 0.29, borderRadius: s, ...line}}/>;
   // blob: a soft colour field
   return <div style={{...box, borderRadius: "50%", background: `radial-gradient(circle, ${col}, transparent 68%)`}}/>;
 };

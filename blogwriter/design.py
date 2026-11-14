@@ -1,12 +1,15 @@
-"""A fresh look for every video. A language model designs it from the topic and the mood of the script: a colour
-palette, a font pairing, a moving background, the transitions and the pace of motion. Nothing is a preset: the
-model writes the colours itself, and if its design fails a check (unreadable contrast, unknown font) a new design
-is generated from the title instead, so two videos never share a look. video/src/theme.js draws it."""
+"""A fresh look for every video. A language model designs it from the topic and the mood of the script: a font
+pairing, the motion, the transitions and the pace; the colours and the moving backdrop are then drawn from the
+libraries in palettes.py by the video's subject (the model's own palettes all looked alike). If its design fails a
+check (unknown font, unreadable text) a new design is generated from the title instead, so two videos never share a
+look. video/src/theme.js draws it."""
 import colorsys
 import hashlib
 import random
 import re
 from typing import Callable, Dict, List, Optional
+
+from . import palettes
 
 # font key (as imported in video/src/theme.js) -> (weights available, role)
 FONTS: Dict[str, tuple] = {
@@ -33,9 +36,9 @@ FONTS: Dict[str, tuple] = {
     "CormorantGaramond": ((400, 600, 700), "look"), "Limelight": ((400,), "look"), "Bungee": ((400,), "look"),
 }
 OPEN_FONTS = [f for f, (_, role) in FONTS.items() if role in ("display", "both", "body")]   # what a free design picks
-BACKGROUNDS = ("aurora", "orbs", "grid", "contour", "paper", "rays", "dots", "waves")
+BACKGROUNDS = tuple(palettes.BACKDROPS)         # 16 animated backdrops: 8 in fx.jsx, 8 in backdrops.jsx
 CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
-DARK_ONLY = ("grid", "orbs")      # backdrops drawn for dark backgrounds
+DARK_ONLY = ("grid", "orbs", "stars", "bokeh")      # backdrops drawn for dark backgrounds
 PACES = {"calm": (0.6, 22, 3.5), "steady": (1.0, 16, 2.5), "brisk": (1.5, 12, 1.6)}   # speed, damping, stagger
 COLOURS = ("bg", "panel", "line", "text", "muted", "accent", "hot", "cool", "violet")
 
@@ -62,7 +65,7 @@ Decide:
 - "title": "left" or "center" (where headlines sit); "kicker": "pill" (glass tag) or "rule" (accent line and
   spaced capitals) for the small label above each headline.
 - "fx": the motion language, invented for THIS video (be inventive; it must not look like a stock template):
-  "layers": 1 to 3 backdrop layers, each {{"shape": circle, ring, dot, square, line, plus, triangle or blob,
+  "layers": 1 to 3 backdrop layers, each {{"shape": {shapes},
   "count": 1-80, "size": 0.004-0.7 (share of the screen), "speed": 0-3, "drift": up, down, left, right, orbit,
   float or pulse, "opacity": 0.02-0.5, "color": accent, hot, cool, violet or text, "blur": 0-60, "stroke": true/false}}
   (e.g. a starfield of tiny dots drifting up; a few huge blurred blobs; thin lines sliding right like data);
@@ -121,7 +124,8 @@ def _weight(font: str, want: int) -> int:
     return min(FONTS[font][0], key=lambda w: abs(w - want))
 
 
-SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob")
+SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob",
+          "hex", "diamond", "star", "chevron", "arc", "squiggle", "cross", "pill")
 DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
 ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type")
@@ -274,7 +278,20 @@ def generate(seed: str) -> dict:
 
 def prompt(title: str, style: str, mood: str) -> str:
     return PROMPT.format(title=title, style=style, mood=mood or "-", fonts=", ".join(OPEN_FONTS),
-                         backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS))
+                         backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS), shapes=", ".join(SHAPES))
+
+
+def restyle(d: dict, raw_fx, title: str, style: str, mood: str) -> dict:
+    """The design with its colours and backdrop drawn from the libraries (palettes.py) by the video's subject. The art
+    director's own palette was always the same orange-red, so only its fonts, motion and cuts are kept."""
+    context = f"{title} {style} {mood}"
+    pal = palettes.pick(context, title)
+    for key, need in NEEDS.items():
+        pal[key] = fit(pal[key], pal["bg"], need)
+    light = luminance(pal["bg"]) > 0.4
+    back = palettes.backdrops(context, title, DARK_ONLY if light else ("paper",))
+    return _finish(pal, d["display"], d["body"], d["upper"], back, d["named_cuts"], d["pace"], d["source"], d["title"],
+                   d["kicker"], check_fx(raw_fx, pal["bg"] + d["display"] + pal["accent"], light))
 
 
 def design(complete_json: Callable, title: str, style: str, mood: str, log: Callable[[str], None]) -> dict:
@@ -291,17 +308,20 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
         log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
             f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
         return d
+    raw = {}
     try:
-        d = check(complete_json(prompt(title, style, mood), max_tokens=2000, temperature=1.0))
+        raw = complete_json(prompt(title, style, mood), max_tokens=2000, temperature=1.0)
+        d = check(raw)
     except Exception as exc:            # a design is a nice-to-have; a failed call never stops the video
         log(f"[design] no design from the model ({type(exc).__name__})")
         d = None
     d = d or generate(title)
+    d = restyle(d, (raw.get("fx") if isinstance(raw, dict) and d["source"] == "designed" else d["fx"]), title, style, mood)
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
     log(f"[design] motion: {layers}; "
         f"words {fx['text']['enter']}; arrivals {fx['motion']['ease']} {fx['motion']['frames']:g}f from "
         f"{fx['motion']['from']}; cuts {'/'.join(c['shape'] for c in fx['transitions'])}; cards {fx['cards']['fill']}")
     log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, {d['title']}/{d['kicker']}, "
-        f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
+        f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']} ({d['world']})")
     return d
