@@ -1704,6 +1704,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
             text += '\n- NO QUIZ in this video: no "check" shots at all; skip step (7) and go on to the recap.'
     if style in ("education", "concept"):
         text += LEVEL_RULES.get(brief.get("level") or "intermediate", "")
+    if style in ("education", "concept", "story"):          # whatever style "auto" lands on for a subject
         text += REAL_WORLD + technique_text(title, facts)
     text += lesson_text(lesson)
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
