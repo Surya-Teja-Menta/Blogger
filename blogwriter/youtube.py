@@ -7,7 +7,7 @@ The files come from the run's folder in the private bucket (videos/<run>/): long
 thumbnail.png, subtitles_en.srt and youtube.json (the title, description and tags shown in the email). It signs in
 with YT_CLIENT_ID, YT_CLIENT_SECRET and YT_REFRESH_TOKEN (GitHub Secrets), uploads (resumable, in chunks, retried),
 adds the thumbnail and the captions, and writes a short report (Markdown) for the GitHub issue. It never prints a
-secret. Until Google audits the app, YouTube keeps API uploads private: the report says so.
+secret. Each run also brings the video's and its Short's AI label in line with YT_SYNTHETIC (off by default).
 """
 import json
 import os
@@ -71,12 +71,19 @@ def safe_tags(tags, limit: int = 450) -> list:
     return out
 
 
-def video_body(meta: dict, short: bool, privacy: str, synthetic: bool = True) -> dict:
+def synthetic_on() -> bool:
+    """YouTube's "altered or synthetic content" label. OFF since 2026-11-14, the owner's decision for their own
+    channel: the narration is the owner's own cloned voice over animated lessons. The repository variable
+    YT_SYNTHETIC=on brings the label back (on new uploads and, at the next upload job of a video, on that one)."""
+    return os.environ.get("YT_SYNTHETIC", "off").strip().lower() in ("on", "1", "yes", "true")
+
+
+def video_body(meta: dict, short: bool, privacy: str, synthetic: Optional[bool] = None, omit: bool = False) -> dict:
     """The video's title, description, tags and settings: Education, not made for kids, English, and the
-    disclosure that it contains synthetic media (the narration is a cloned voice)."""
+    synthetic-media label as synthetic_on() says (omit: leave the field out, for an API that refuses it)."""
     status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "embeddable": True}
-    if synthetic:
-        status["containsSyntheticMedia"] = True
+    if not omit:
+        status["containsSyntheticMedia"] = synthetic_on() if synthetic is None else bool(synthetic)
     return {"snippet": {"title": safe_text(meta["short_title"] if short else meta["title"], 300, 100),
                         "description": safe_text((meta.get("short_description") if short else meta.get("description")) or ""),
                         "tags": safe_tags(meta.get("tags", [])), "categoryId": str(meta.get("category") or "27"),
@@ -131,8 +138,37 @@ def upload_video(token: str, path: str, meta: dict, short: bool, privacy: str, l
     except RuntimeError as exc:                # an API without the synthetic-media field: once more without it
         if "containsSyntheticMedia" not in str(exc):
             raise
-        log("[youtube] the synthetic-media flag was not accepted; uploading without it (set it in Studio)")
-        return upload_file(token, path, video_body(meta, short, privacy, synthetic=False), log)
+        log("[youtube] the synthetic-media field was not accepted; uploading without it")
+        return upload_file(token, path, video_body(meta, short, privacy, omit=True), log)
+
+
+STATUS_WRITABLE = ("privacyStatus", "embeddable", "license", "publicStatsViewable", "selfDeclaredMadeForKids",
+                   "publishAt", "containsSyntheticMedia")
+
+
+def set_label(token: str, vid: str, flag: bool, log=print) -> str:
+    """Set an uploaded video's synthetic-media label: 'on', 'off', 'already on/off' or why not. The whole status is
+    sent back (an update resets what it leaves out), with only the label changed."""
+    head = {"Authorization": f"Bearer {token}"}
+    try:
+        r = requests.get(f"{API_URL}/videos", params={"part": "status", "id": vid}, headers=head, timeout=30)
+        items = r.json().get("items") or []
+        if r.status_code != 200 or not items:
+            return f"not changed ({r.status_code}: video not found)"
+        st = items[0]["status"]
+        if bool(st.get("containsSyntheticMedia")) == flag:
+            return f"already {'on' if flag else 'off'}"
+        body = {k: st[k] for k in STATUS_WRITABLE if k in st}
+        body["containsSyntheticMedia"] = flag
+        r = requests.put(f"{API_URL}/videos", params={"part": "status"},
+                         headers={**head, "Content-Type": "application/json"},
+                         data=json.dumps({"id": vid, "status": body}), timeout=30)
+        if r.status_code != 200:
+            log(f"[youtube] label not changed ({r.status_code}): {r.text[:200]}")
+            return f"not changed ({r.status_code})"
+        return "on" if flag else "off"
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        return f"not changed ({type(exc).__name__})"
 
 
 def add_thumbnail(token: str, vid: str, png: str, log=print) -> bool:
@@ -303,7 +339,13 @@ def run(request: str, log=print, privacy: str = "") -> str:
                          f"{'; ' + ', '.join(extras) if extras else ''}.{note}")
         if "video" in known and "short" in known:
             lines += link_pair(access_token(), known["video"], known["short"], log)
-        head = "Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else "Nothing new uploaded:"
+        if known:                                  # every run brings this video's AI label in line with the setting
+            token, flag = access_token(), synthetic_on()
+            got = {item: set_label(token, known[item]["id"], flag, log) for item in ("video", "short") if item in known}
+            lines.append("- AI label: " + ", ".join(f"{'Short' if k == 'short' else 'video'} {v}" for k, v in got.items())
+                         + ".")
+        head = ("Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else
+                "Nothing new uploaded:")
         return head + "\n\n" + "\n".join(lines)
     except SignInError as exc:
         return f"Nothing uploaded: {exc}."

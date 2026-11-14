@@ -3422,12 +3422,15 @@ def test_an_item_already_on_youtube_is_never_uploaded_twice(monkeypatch, tmp_pat
     monkeypatch.setattr(youtube, "fetch", fake_fetch)
     monkeypatch.setattr(youtube, "upload_video", lambda *a, **k: "s1")
     monkeypatch.setattr(youtube, "privacy_of", lambda *a: "public")
+    labels = []
+    monkeypatch.setattr(youtube, "set_label", lambda tok, vid, flag, log=print: labels.append((vid, flag)) or "off")
     pairs = []
     monkeypatch.setattr(youtube, "link_pair", lambda tok, v, sh, log=print: pairs.append((v["id"], sh["id"])) or ["- Links: ok"])
     report = youtube.run("upload both 20261113_053132_Mean", log=lambda *_: None)
     assert "long_video_en.mp4" not in asked                       # not even downloaded again
     assert "already on YouTube" in report and "https://youtube.com/shorts/s1" in report
     assert report.startswith("Uploaded") and pairs == [("abc", "s1")] and "Links: ok" in report
+    assert labels == [("abc", False), ("s1", False)] and "AI label: video off, Short off" in report
     assert _json.loads(store["uploads/20261113_053132_Mean/short.json"])["url"] == "https://youtube.com/shorts/s1"
     assert not any("requested-" in k for k in store)              # the relay may start a new job again
     # both already there: nothing new, and the run still counts as fine
@@ -3454,11 +3457,15 @@ def test_the_upload_job_accepts_only_its_own_requests_and_reports_every_problem(
     assert report.startswith("Nothing uploaded") and "GitHub Secrets" in report
     # the body YouTube gets: Education, not for kids, synthetic media disclosed, the Short's own title
     meta = {"title": "T", "short_title": "T #Shorts", "description": "D", "short_description": "SD", "tags": ["a"]}
+    monkeypatch.delenv("YT_SYNTHETIC", raising=False)
     body = youtube.video_body(meta, short=True, privacy="public")
     assert body["snippet"]["title"] == "T #Shorts" and body["snippet"]["categoryId"] == "27"
+    monkeypatch.delenv("YT_SYNTHETIC", raising=False)            # the owner's choice: no AI label by default
     assert body["status"] == {"privacyStatus": "public", "selfDeclaredMadeForKids": False, "embeddable": True,
-                              "containsSyntheticMedia": True}
-    assert "containsSyntheticMedia" not in youtube.video_body(meta, False, "public", synthetic=False)["status"]
+                              "containsSyntheticMedia": False}
+    monkeypatch.setenv("YT_SYNTHETIC", "on")
+    assert youtube.video_body(meta, False, "public")["status"]["containsSyntheticMedia"] is True
+    assert "containsSyntheticMedia" not in youtube.video_body(meta, False, "public", omit=True)["status"]
 
 
 def test_the_video_and_its_short_point_to_each_other_once(monkeypatch):
@@ -3543,3 +3550,32 @@ def test_youtube_never_gets_text_it_refuses():
     assert "p \u2039 0.05" in sn["title"] and len(sn["title"]) <= 100
     assert len(sn["description"].encode("utf-8")) <= 5000                        # bytes, not characters
     assert len(sn["tags"]) <= 15 and sum(len(t) + 1 for t in sn["tags"]) <= 500 and "a  b" in sn["tags"]
+
+
+def test_the_ai_label_is_changed_without_touching_the_rest_of_the_status(monkeypatch):
+    import json as _json
+    from blogwriter import youtube
+    state = {"privacyStatus": "public", "embeddable": True, "license": "youtube", "publicStatsViewable": True,
+             "selfDeclaredMadeForKids": False, "madeForKids": False, "uploadStatus": "processed",
+             "containsSyntheticMedia": True}
+    sent = []
+
+    class R:
+        def __init__(self, code, data=None):
+            self.status_code, self._d, self.text = code, data or {}, ""
+
+        def json(self):
+            return self._d
+    monkeypatch.setattr(youtube.requests, "get", lambda *a, **k: R(200, {"items": [{"status": dict(state)}]}))
+
+    def put(url, params=None, headers=None, data=None, timeout=0):
+        body = _json.loads(data)["status"]
+        sent.append(body)
+        state.update(body)
+        return R(200)
+    monkeypatch.setattr(youtube.requests, "put", put)
+    assert youtube.set_label("t", "v1", False) == "off"
+    assert sent[0] == {"privacyStatus": "public", "embeddable": True, "license": "youtube",
+                       "publicStatsViewable": True, "selfDeclaredMadeForKids": False,
+                       "containsSyntheticMedia": False}           # read-only fields are not sent back
+    assert youtube.set_label("t", "v1", False) == "already off" and len(sent) == 1
