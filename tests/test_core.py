@@ -3579,3 +3579,5 @@ def test_the_ai_label_is_changed_without_touching_the_rest_of_the_status(monkeyp
                        "publicStatsViewable": True, "selfDeclaredMadeForKids": False,
                        "containsSyntheticMedia": False}           # read-only fields are not sent back
     assert youtube.set_label("t", "v1", False) == "already off" and len(sent) == 1
+    del state["containsSyntheticMedia"]                         # YouTube may leave the field out: set it anyway
+    assert youtube.set_label("t", "v1", False) == "off" and len(sent) == 2

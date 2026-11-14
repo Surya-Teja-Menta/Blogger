@@ -156,7 +156,7 @@ def set_label(token: str, vid: str, flag: bool, log=print) -> str:
         if r.status_code != 200 or not items:
             return f"not changed ({r.status_code}: video not found)"
         st = items[0]["status"]
-        if bool(st.get("containsSyntheticMedia")) == flag:
+        if "containsSyntheticMedia" in st and bool(st["containsSyntheticMedia"]) == flag:   # absent = not known
             return f"already {'on' if flag else 'off'}"
         body = {k: st[k] for k in STATUS_WRITABLE if k in st}
         body["containsSyntheticMedia"] = flag
