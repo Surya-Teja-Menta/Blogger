@@ -69,3 +69,28 @@ def test_every_caption_style_is_drawn_chosen_for_the_subject_and_not_repeated():
         assert palettes.caption("x", f"t{k}", False, avoid=["pill", "paper"]) not in ("pill", "paper")
     d = design.design(lambda *a, **kw: {}, "Some title", "education", "calm", lambda m: None, {"captions": ["clean", "pill"]})
     assert d["caption"] in palettes.CAPTIONS and d["caption"] not in ("clean", "pill")
+
+
+def test_every_act_gets_a_swell_into_it_and_a_thump_on_it(tmp_path):
+    acts = [{"kind": "photo"}, {"kind": "photo", "chapter": {"title": "Part two"}}, {"kind": "photo"},
+            {"kind": "photo", "chapter": {"title": "Part three"}}]
+    got = sfx.cues(acts, [0, 300, 600, 900], 30)
+    assert got["swells"] == [10.0, 30.0] and got["hits"] == [10.05, 30.05]
+    assert sfx.cues([{"chapter": {"title": "first"}}], [0], 30)["swells"] == []          # nothing swells into the very start
+    n = sfx.render(str(tmp_path / "s.wav"), 35, got, 65.0)
+    assert n == 2
+    tone = sfx.swell(130.0)
+    spec = np.abs(np.fft.rfft(tone)) ** 2
+    f = np.fft.rfftfreq(len(tone), 1 / sound.SR)
+    assert 10 * np.log10(spec[f > 4000].sum() / spec.sum()) < -35 and abs(tone[-1]) < 1e-3   # tones only; it fades to silence on the act
+
+
+def test_photos_and_clips_are_graded_into_one_look_chosen_per_video():
+    modes = [palettes.photo_grade(f"title {k}") for k in range(300)]
+    counts = {m: modes.count(m) for m in ("duotone", "tint", "natural")}
+    assert sum(counts.values()) == 300 and all(60 <= n <= 150 for n in counts.values()), counts      # all three are used
+    assert palettes.photo_grade("same") == palettes.photo_grade("same")
+    d = design.design(lambda *a, **kw: {}, "A title", "story", "", lambda m: None)
+    assert d["grade"] in ("duotone", "tint", "natural")
+    fx = open(os.path.join(SRC, "fx.jsx"), encoding="utf-8").read()
+    assert fx.count("<GradeDefs/>") == 3 and fx.count("gradeCss()") == 3          # photo card, clip and Ken Burns photo

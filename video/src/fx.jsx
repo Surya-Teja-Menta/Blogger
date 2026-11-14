@@ -322,6 +322,36 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
   );
 };
 
+// Every photo and clip of a video is graded into one look (after the cinematic skill's prep_assets): "duotone" maps the
+// picture's lights and shadows onto two colours of the design, "tint" lays that over the photo so colours show through,
+// "natural" leaves it as shot. The mode is the design's (blogwriter/palettes.photo_grade).
+const rgb01 = (hex) => [16, 8, 0].map((sh) => ((parseInt(hex.slice(1), 16) >> sh) & 255) / 255);
+const mixc = (a, b, t) => a.map((v, k) => v + (b[k] - v) * t);
+const GRADE_ID = "photoGrade";
+const G = "0.2764 0.9298 0.0939 0";       // 1.3 x luminance (Rec. 709), the offset follows
+export const GradeDefs = () => {
+  const mode = C.grade || "natural";
+  if (mode === "natural" || C.look) return null;
+  const shadow = C.light ? mixc(rgb01(C.text), rgb01(C.accent), 0.2) : rgb01(C.bg);          // ink on paper / the page itself
+  const light = C.light ? rgb01(C.bg) : mixc(rgb01(C.text), rgb01(C.accent), 0.3);
+  const k = mode === "duotone" ? 1 : 0.55;
+  return (
+    <svg width="0" height="0" style={{position: "absolute"}}>
+      <defs>
+        <filter id={GRADE_ID} colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" in="SourceGraphic" result="grey"
+                         values={`${G} -0.15  ${G} -0.15  ${G} -0.15  0 0 0 1 0`}/>   {/* luminance with a contrast curve */}
+          <feComponentTransfer in="grey" result="duo">
+            {["R", "G", "B"].map((c, j) => React.createElement(`feFunc${c}`, {key: c, type: "table", tableValues: `${shadow[j]} ${light[j]}`}))}
+          </feComponentTransfer>
+          <feComposite in="duo" in2="SourceGraphic" operator="arithmetic" k1="0" k2={k} k3={1 - k} k4="0"/>
+        </filter>
+      </defs>
+    </svg>
+  );
+};
+const gradeCss = () => ((C.grade || "natural") === "natural" || C.look ? "" : `url(#${GRADE_ID}) `);
+
 // A photo that keeps moving: push-in and drift, graded to sit under text.
 export const KenBurns = ({src, dir = 1, grade = 0.62, start = 1.06, end = 1.22}) => {
   const frame = useCurrentFrame();
@@ -329,9 +359,10 @@ export const KenBurns = ({src, dir = 1, grade = 0.62, start = 1.06, end = 1.22})
   const t = frame / Math.max(1, durationInFrames);
   return (
     <AbsoluteFill style={{overflow: "hidden", background: C.bg}}>
+      <GradeDefs/>
       <Img src={staticFile(src)} style={{width: "100%", height: "100%", objectFit: "cover",
         transform: `scale(${interpolate(t, [0, 1], [start, end])}) translate(${dir * t * 3}%, ${-t * 1.5}%)`,
-        filter: `brightness(${C.light ? grade + 0.25 : grade}) contrast(1.1) saturate(${C.light ? 0.9 : 0.85})`}}/>
+        filter: `${gradeCss()}brightness(${C.light ? grade + 0.25 : grade}) contrast(1.1) saturate(${C.light ? 0.9 : 0.85})`}}/>
     </AbsoluteFill>
   );
 };
@@ -344,10 +375,11 @@ export const Plate = ({s, i = 0, grade = 0.62}) => {
     const rate = Math.max(0.5, Math.min(1, (s.clipSeconds || 10) / (durationInFrames / fps)));
     return (
       <AbsoluteFill style={{overflow: "hidden", background: C.bg}}>
+        <GradeDefs/>
         <OffthreadVideo src={staticFile(s.video)} muted playbackRate={rate}
                         style={{width: "100%", height: "100%", objectFit: "cover",
                                 transform: `scale(${interpolate(frame / Math.max(1, durationInFrames), [0, 1], [1.04, 1.12])})`,
-                                filter: `brightness(${grade + 0.08}) contrast(1.1) saturate(0.9)`}}/>
+                                filter: `${gradeCss()}brightness(${grade + 0.08}) contrast(1.1) saturate(0.9)`}}/>
       </AbsoluteFill>
     );
   }
@@ -365,8 +397,9 @@ export const PhotoCard = ({src, w, h, p = 1, tilt = -14, delay = 0, style = {}})
                    transform: `rotateY(${tilt * (1 - 0.3 * p) + 3 * Math.sin(frame / 60)}deg) rotateX(${4 - 2 * Math.sin(frame / 80)}deg) `
                               + `translateY(${(1 - p) * 120}px) scale(${0.85 + 0.15 * p})`,
                    opacity: clamp(p * 1.3), boxShadow: `0 50px 100px ${alpha("#000000", 0.5)}, 0 0 0 1.5px ${alpha("#ffffff", 0.15)}`}}>
+        <GradeDefs/>
         <Img src={staticFile(src)} style={{width: "100%", height: "100%", objectFit: "cover",
-                                           transform: `scale(${1.08 + frame / 2500})`, filter: "contrast(1.08) saturate(1.05)"}}/>
+                                           transform: `scale(${1.08 + frame / 2500})`, filter: `${gradeCss()}contrast(1.08) saturate(1.05)`}}/>
         <div style={{position: "absolute", top: 0, bottom: 0, width: "40%", left: `${-50 + sweep * 200}%`,
                      background: "linear-gradient(100deg, transparent, rgba(255,255,255,.22), transparent)"}}/>
       </div>

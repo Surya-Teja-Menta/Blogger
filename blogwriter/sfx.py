@@ -32,14 +32,28 @@ def tick() -> np.ndarray:
     return y / (np.abs(y).max() + 1e-9)
 
 
+def swell(root_hz: float) -> np.ndarray:
+    """A rising tone into a new act: 1.4 s, an octave glide with its fifth, growing towards the act's first frame (the
+    skill's `riser` was noise and a tone; noise is hiss here, so it is tones only)."""
+    t = np.arange(int(1.4 * sound.SR)) / sound.SR
+    f = root_hz * 2 * 2 ** (t / 1.4)
+    phase = 2 * np.pi * np.cumsum(f) / sound.SR
+    y = (np.sin(phase) + 0.3 * np.sin(1.5 * phase)) * (t / 1.4) ** 2.2 * np.minimum(1, (1.4 - t) / 0.03)
+    return y / (np.abs(y).max() + 1e-9)
+
+
 def cues(scenes: List[dict], starts: List[int], fps: int = 30) -> Dict[str, list]:
-    """When the sounds fall, in seconds: {"pops": five lists (one per note of SCALE), "ticks": [...], "hits": [...]}.
-    From each shot's timed diagram elements and motion graphic: the frame (`at`, counted from the shot's start) each
-    piece appears on."""
+    """When the sounds fall, in seconds: {"pops": five lists (one per note of SCALE), "ticks": [...], "hits": [...],
+    "swells": [...]}. From each shot's timed diagram elements and motion graphic: the frame (`at`, counted from the
+    shot's start) each piece appears on; and a swell into, and a thump on, the first frame of every act."""
     pops: List[List[float]] = [[] for _ in SCALE]
     ticks: List[float] = []
     hits: List[float] = []
+    swells: List[float] = []
     for s, st in zip(scenes, starts):
+        if s.get("chapter") and st > 0:
+            swells.append(st / fps)
+            hits.append(st / fps + 0.05)
         found = []                                  # (frame, kind)
         g = s.get("graphic") or {}
         for part in ([g["center"]] if g.get("center") else []) + list(g.get("nodes") or []):
@@ -61,7 +75,7 @@ def cues(scenes: List[dict], starts: List[int], fps: int = 30) -> Dict[str, list
                 note += 1
             else:
                 (ticks if kind == "tick" else hits).append(when)
-    return {"pops": pops, "ticks": ticks, "hits": hits}
+    return {"pops": pops, "ticks": ticks, "hits": hits, "swells": swells}
 
 
 def render(path: str, seconds: float, found: Dict[str, list], root_hz: float) -> int:
@@ -85,5 +99,8 @@ def render(path: str, seconds: float, found: Dict[str, list], root_hz: float) ->
     wave = tick()
     for j, when in enumerate(found["ticks"]):
         put(wave, when, 0.5 if j % 2 else -0.5)
+    rise = swell(root_hz * 2)
+    for when in found.get("swells", []):
+        put(rise * 0.7, when - 1.4, 0.0)                  # it ends on the act's first frame
     sound._write(path, out)
     return n

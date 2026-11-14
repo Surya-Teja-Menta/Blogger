@@ -344,6 +344,7 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
     d = restyle(d, (raw.get("fx") if isinstance(raw, dict) and d["source"] == "designed" else d["fx"]), title, style,
                 mood, liked, history)
     d["caption"] = palettes.caption(f"{title} {style} {mood}", title, d["light"], history.get("captions", ()))
+    d["grade"] = palettes.photo_grade(title)
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
     log(f"[design] motion: {layers}; "

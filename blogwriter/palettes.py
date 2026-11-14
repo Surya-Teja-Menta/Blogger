@@ -192,6 +192,14 @@ def caption(context: str, seed: str, light: bool, avoid: Sequence[str] = ()) -> 
     return _pool({k: v for k, v in CAPTIONS.items() if not (light and k == "glow")}, context, "cap" + seed, (), avoid, 4)
 
 
+def photo_grade(seed: str) -> str:
+    """How a video's photos and footage are graded into one look (after the cinematic skill's prep_assets, which
+    grades every image into one palette): "duotone" (shadows and lights in the design's colours), "tint" (the duotone
+    over the photo, so colours show through) or "natural" (as shot). Chosen by the title."""
+    n = int(hashlib.sha256(("grade" + seed).encode()).hexdigest(), 16) % 10
+    return "duotone" if n < 3 else "tint" if n < 7 else "natural"
+
+
 # ---- memory: what the last videos used, so two in a row never share a look --------------------------------------
 HISTORY_KEY = "design_history.json"
 KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2}
