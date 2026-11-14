@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -1097,7 +1097,8 @@ def music_gain_for(clips: List[str], voice_at: List[float], tempos: Optional[Lis
 
 
 def master(clips: List[str], starts: List[int], kinds: List[str], total: int, assets: dict, dest: str,
-           log: Callable[[str], None], tempos: Optional[List[float]] = None) -> None:
+           log: Callable[[str], None], tempos: Optional[List[float]] = None, sfx_cues: Optional[dict] = None,
+           root_hz: float = 65.0) -> None:
     """The finished soundtrack of one language: narration (cleaned up), music ducked under it, a whoosh on
     every transition and a hit under every figure, mastered to YouTube loudness. The music's level is measured in the
     pauses and lowered until it is well under the voice (music_gain_for)."""
@@ -1108,8 +1109,17 @@ def master(clips: List[str], starts: List[int], kinds: List[str], total: int, as
     inputs = sum((["-i", c] for c in clips), []) + ["-i", assets["music"], "-i", assets["whoosh"], "-i", assets["hit"]]
     pre = dest + ".pre.wav"
     gain = music_gain_for(clips, voice_at, tempos, inputs, pre, log, total / FPS)
-    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos, final=False, music_gain=gain)
+    sfx_wav = ""
+    if sfx_cues and sound.sfx_level() > 0:           # a soft sound under every picture that appears (sfx.py)
+        sfx_wav = dest + ".sfx.wav"
+        n = sfx.render(sfx_wav, total / FPS, sfx_cues, root_hz)
+        inputs += ["-i", sfx_wav]
+        hit_at = hit_at + sfx_cues["hits"]
+        log(f"[audio] {n} pop/tick sounds and {len(sfx_cues['hits'])} thump(s) under the pictures")
+    graph, _ = sound.mix_filter(voice_at, whoosh_at, hit_at, tempos, final=False, music_gain=gain, sfx_track=bool(sfx_wav))
     ffmpeg([*inputs, "-filter_complex", graph, "-map", "[out]", "-t", f"{total / FPS:.3f}", "-ac", "2", pre])
+    if sfx_wav:
+        os.remove(sfx_wav)
     try:        # two passes: measure the mix, then set it to -14 LUFS by one fixed gain (no pumping between sentences)
         r = subprocess.run([ffmpeg_exe(), "-hide_banner", "-nostats", "-i", pre, "-af",
                             "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
@@ -2240,7 +2250,8 @@ class VideoMaker:
         # twice still sounds different), the key and mode, tempo, instrument and the arrangement all follow from them
         music_seed = f"{title}|{time.time_ns()}"
         music_mood = f"{brief.get('sound', '')} {brief.get('sound', '')} {brief['mood']} {brief['tone']} {title}"
-        sound.hit(assets["hit"], composer.hz(composer.feel(music_mood, music_seed)["root"] - 24))
+        root_hz = composer.hz(composer.feel(music_mood, music_seed)["root"] - 24)      # the video's low key note
+        sound.hit(assets["hit"], root_hz)
 
         # long video: the pictures follow the English narration. A dubbed line that runs longer is sped up (at
         # most MAX_TEMPO, pitch kept), and only what still does not fit lengthens the shot, so the English video
@@ -2301,7 +2312,8 @@ class VideoMaker:
             track = os.path.join(out, f"audio_track_{lang}.mp3") if lang != "en" else os.path.join(job, "long_en.mp3")
             self.log(f"[video] mastering the {LANGS[lang]} soundtrack")
             master([clip(lang, "long", i) or silence() for i in range(n_long)], starts, kinds, total, assets, track,
-                   self.log, [tempo.get((lang, i), 1.0) for i in range(n_long)])
+                   self.log, [tempo.get((lang, i), 1.0) for i in range(n_long)],
+                   sfx.cues(long_scenes, starts, FPS), root_hz)
             if lang != "en":
                 files[f"audio_track_{lang}.mp3"] = "audio"
         files["long_video_en.mp4"] = "video"
@@ -2366,7 +2378,8 @@ class VideoMaker:
             short_music = os.path.join(job, f"short_music_{lang}.wav")
             sound.music(tot / FPS + 1, short_music, seed=music_seed, mood=music_mood,
                         sections=[(a / FPS, (a + f) / FPS, k) for a, f, k in zip(st, fr, sk)])
-            master([clip(lang, "short", b) for b in order], st, sk, tot, {**assets, "music": short_music}, track, self.log)
+            master([clip(lang, "short", b) for b in order], st, sk, tot, {**assets, "music": short_music}, track, self.log,
+                   sfx_cues=sfx.cues(short_scenes, st, FPS), root_hz=root_hz)
             self.log(f"[video] rendering the {LANGS[lang]} Short ({tot / FPS:.0f}s)")
             render("Short", path, track, os.path.join(out, f"short_{lang}.mp4"), self.log)
             files[f"short_{lang}.mp4"] = "short"

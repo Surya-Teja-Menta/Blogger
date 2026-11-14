@@ -108,6 +108,14 @@ def whoosh_level() -> float:
         return 0.12
 
 
+def sfx_level() -> float:
+    """The volume of the little sounds under pictures (sfx.py; repository variable SFX_LEVEL, 0 = none)."""
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("SFX_LEVEL") or 0.17)))
+    except ValueError:
+        return 0.17
+
+
 # Every voice line loses everything above ~10.5 kHz before the mix. The cloned voice is 24 kHz, and its leftover hiss
 # sits at 11-12 kHz, just under that rate's ceiling: on the "Types of data" video (2026-11-13) the hissy quiz lines
 # were 12 dB louder there than clean lines, while 6-11 kHz (all that voicecheck.hiss_ratio measures) was the same, so
@@ -121,8 +129,8 @@ VOICE_TOP_CUT = ("firequalizer=gain='if(lt(f,10200),0,-90)':delay=0.02:zero_phas
 
 def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float],
                tempos: Optional[List[float]] = None, final: bool = True, music_gain: float = 1.0,
-               stems: bool = False) -> Tuple[str, int]:
-    """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit] -> [out]. The voice is cleaned up,
+               stems: bool = False, sfx_track: bool = False) -> Tuple[str, int]:
+    """ffmpeg filtergraph for inputs [voice clips..., music, whoosh, hit(, sfx track)] -> [out]. The voice is cleaned up,
     the music ducks under it, the effects are placed, and the whole is mastered to -14 LUFS (YouTube).
     No "|" anywhere: on Windows the npx shim would read it as a pipe."""
     v = len(voice_at)
@@ -150,6 +158,9 @@ def mix_filter(voice_at: List[float], whoosh_at: List[float], hit_at: List[float
         for k, t in enumerate(times):
             parts.append(f"[{name}{k}r]adelay=delays={max(0, int(t * 1000))}:all=1[{name}{k}]")
             sfx.append(f"[{name}{k}]")
+    if sfx_track:                   # the pops and ticks, already one track (sfx.render): one input, one volume
+        parts.append(f"[{v + 3}:a]aresample=48000,volume={sfx_level()}[sfxt]")
+        sfx.append("[sfxt]")
     parts.append(f"[voice][bed]{''.join(sfx)}amix=inputs={2 + len(sfx)}:normalize=0,"
                  + ("loudnorm=I=-14:TP=-1.5:LRA=11," if final else "") + "aresample=48000[out]")
     return ";".join(parts), 3

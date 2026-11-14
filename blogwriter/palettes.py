@@ -68,6 +68,17 @@ BACKDROPS: Dict[str, str] = {
 }
 
 
+# the caption styles (video/src/captions.jsx) and what each suits
+CAPTIONS: Dict[str, str] = {
+    "pill": "general neutral simple everything",
+    "highlighter": "energy news bold sports fast quick tips lesson learning explainer",
+    "clean": "documentary film story serious history formal essay",
+    "paper": "history education notes lesson writing archive news records",
+    "redbar": "news crime conflict breaking alert warning risk failure attack",
+    "glow": "tech ai future code cyber space night data network",
+}
+
+
 def rank(options: Dict[str, str], context: str, seed: str, top: int) -> List[str]:
     """The `top` options that best fit the context (how many of their words it contains, whole words and stems),
     ties and the rest broken by the seed, so the same title always gets the same list."""
@@ -175,9 +186,15 @@ def backdrops(context: str, seed: str, skip: Sequence[str], liked: Sequence[str]
                  [n for n in liked if n not in skip], avoid, 5)
 
 
+def caption(context: str, seed: str, light: bool, avoid: Sequence[str] = ()) -> str:
+    """The caption style for a video: ranked by its subject, not one of the last two videos' styles; the neon glow only
+    on a dark design."""
+    return _pool({k: v for k, v in CAPTIONS.items() if not (light and k == "glow")}, context, "cap" + seed, (), avoid, 4)
+
+
 # ---- memory: what the last videos used, so two in a row never share a look --------------------------------------
 HISTORY_KEY = "design_history.json"
-KEEP = {"worlds": 8, "backs": 5, "looks": 3}
+KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2}
 
 
 def load_history(settings) -> dict:
@@ -197,6 +214,7 @@ def save_history(settings, history: dict, theme: dict) -> None:
     from . import storage
     # a video in a film look has no world or backdrop of the libraries; every video adds to "looks" ("" = none), so
     # the last entries say whether the last videos had one
-    new = {"worlds": theme.get("world"), "backs": theme.get("back"), "looks": (theme.get("look") or {}).get("slug", "")}
+    new = {"worlds": theme.get("world"), "backs": theme.get("back"), "looks": (theme.get("look") or {}).get("slug", ""),
+           "captions": theme.get("caption")}
     out = {k: ([*history.get(k, []), new[k]] if (new[k] or k == "looks") else history.get(k, []))[-n:] for k, n in KEEP.items()}
     storage.put_text(settings, HISTORY_KEY, json.dumps(out), "application/json")

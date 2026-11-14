@@ -18,6 +18,7 @@ import {SUBSCRIBE_FRAMES, Subscribe} from "./subscribe";
 import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 import {LookDefs, LookOverlay, LookStyle} from "./looks";
 import {LayoutAudit} from "./audit";
+import {captionStyle} from "./captions";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -49,19 +50,17 @@ const Caption = ({captions, vertical, aside = 0}) => {
   const spoken = clamp((frame - c.from) / Math.max(1, c.to - c.from)) * total;
   const pop = clamp((frame - c.from) / 5);
   let acc = 0;
+  const look = captionStyle(C.caption, vertical);       // one of six styles, chosen for this video (captions.jsx)
   return (
     <div style={{position: "absolute", left: 50, right: 50 + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
                  textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
-      <span data-caption="1" style={{display: "inline-block", padding: "14px 26px", borderRadius: 24, background: alpha(C.light ? "#ffffff" : "#000000", 0.55),
-                    backdropFilter: "blur(10px)", fontFamily: FONT.body, fontWeight: 800, fontSize: vertical ? 62 : 40,
-                    lineHeight: 1.35, color: C.text}}>
+      <span data-caption="1" style={{display: "inline-block", fontSize: vertical ? 62 : 40, lineHeight: 1.35, ...look.box}}>
         {words.map((w, k) => {
           const start = acc;
           acc += w.length + 1;
           const on = spoken >= start && spoken < acc;
-          return <span key={k} style={{color: on ? C.accent : C.text, display: "inline-block",
-                                       // the gap grows with the font, so the lit word's pop never closes it
-                                       transform: `scale(${on ? 1.06 : 1})`, marginRight: "0.45em"}}>{w}</span>;
+          return <span key={k} style={{display: "inline-block", marginRight: "0.45em",     // the gap grows with the font,
+                                       ...look.word(on)}}>{w}</span>;                  // so a lit word's pop never closes it
         })}
       </span>
     </div>

@@ -327,8 +327,10 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
             picked = None
     if picked:
         d = looks.theme_for(picked[0], picked[1], _finish, check_fx, title)
+        d["caption"] = palettes.caption(f"{title} {style} {mood}", title, d["light"], history.get("captions", ()))
         log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
-            f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}")
+            f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}, "
+            f"{d['caption']} captions")
         return d
     liked = palettes.shortlist(complete_json, title, style, mood, log)
     raw = {}
@@ -341,11 +343,12 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
     d = d or generate(title)
     d = restyle(d, (raw.get("fx") if isinstance(raw, dict) and d["source"] == "designed" else d["fx"]), title, style,
                 mood, liked, history)
+    d["caption"] = palettes.caption(f"{title} {style} {mood}", title, d["light"], history.get("captions", ()))
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
     log(f"[design] motion: {layers}; "
         f"words {fx['text']['enter']}; arrivals {fx['motion']['ease']} {fx['motion']['frames']:g}f from "
         f"{fx['motion']['from']}; cuts {'/'.join(c['shape'] for c in fx['transitions'])}; cards {fx['cards']['fill']}")
     log(f"[design] {d['source']}: {d['display']}/{d['body']}, {d['back']}, {d['pace']}, {d['title']}/{d['kicker']}, "
-        f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']} ({d['world']})")
+        f"{'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']} ({d['world']}), {d['caption']} captions")
     return d

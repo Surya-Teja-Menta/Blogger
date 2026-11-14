@@ -76,7 +76,7 @@ def test_the_history_remembers_the_last_videos_and_no_two_film_looks_run_togethe
     monkeypatch.setattr(storage, "get_text", lambda s, key, **k: store.get(key, ""))
     monkeypatch.setattr(storage, "put_text", lambda s, key, text, mime="", **k: store.update({key: text}) or True)
     h = palettes.load_history(None)
-    assert h == {"worlds": [], "backs": [], "looks": []}
+    assert h == {"worlds": [], "backs": [], "looks": [], "captions": []}
     for k in range(12):
         palettes.save_history(None, h, {"world": f"w{k}", "back": f"b{k}"})
         h = palettes.load_history(None)
