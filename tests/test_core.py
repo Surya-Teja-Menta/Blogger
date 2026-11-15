@@ -1250,12 +1250,12 @@ def test_every_video_gets_its_own_readable_design():
             "display": "Fraunces", "body": "Inter", "upper": False, "background": "waves",
             "cuts": ["iris", "sweep", "nope"], "pace": "calm"}
     d = design.check(good)
-    assert d and d["named_cuts"] == ["iris", "sweep"] and d["cuts"] == d["fx"]["transitions"] and not d["light"] and d["speed"] < 1 and d["weight"] == 900
+    assert d and d["named_cuts"] == ["iris", "sweep"] and d["cuts"] == d["fx"]["transitions"] and not d["light"] and d["speed"] < 1 and d["weight"] == 700
     faint = design.check({**good, "palette": {**good["palette"], "text": "#20263a", "accent": "#3a2a10"}})
     assert design.contrast(faint["text"], faint["bg"]) >= 7 and design.contrast(faint["accent"], faint["bg"]) >= 3
     assert design.check({**good, "palette": {**good["palette"], "panel": "#ffffff"}}) is None    # cards vanish
-    assert design.check({**good, "body": "RobotoSlab"})["body"] == "RobotoSlab"
-    assert design.check({**good, "body": "BebasNeue"}) is None                                   # one weight only
+    assert design.check({**good, "body": "Lora"})["body"] == "Lora"
+    assert design.check({**good, "body": "BebasNeue"}) is None                                   # not a luxury face (and one weight only)
     assert design.check({**good, "display": "Comic Sans"}) is None and design.check("no") is None
     looks = set()
     for k in range(40):                     # the fallback is new every time and always passes the same checks
@@ -1407,8 +1407,8 @@ def test_nothing_waits_long_for_its_spoken_word():
     assert max(k["words"]) <= 6 + 16 + 5 * 3 + 3
     pal = {"bg": "#f7fafc", "panel": "#ffffff", "line": "#d0d7de", "text": "#111827", "muted": "#4b5563",
            "accent": "#d92d20", "hot": "#b54708", "cool": "#1570ef", "violet": "#6941c6"}
-    d = design.check({"palette": pal, "display": "Inter", "body": "Inter", "background": "grid", "cuts": ["iris", "wipe"]})
-    assert d["light"] and d["back"] == "dots"
+    d = design.check({"palette": pal, "display": "Inter", "body": "Inter", "background": "stars", "cuts": ["iris", "wipe"]})
+    assert d["light"] and d["back"] == "aurora"
 
 
 def test_unfinished_formulas_are_dropped():
@@ -1453,7 +1453,7 @@ def test_motion_language_is_clamped_and_never_a_preset():
                           "transitions": [{"shape": "circle", "angle": 400, "blur": 3}], "camera": 50,
                           "text": {"enter": "mask"}, "cards": {"radius": 1000, "fill": "outline"}}, "t")
     L = fx["layers"][0]
-    assert L["shape"] in design.SHAPES and L["count"] == 80 and L["size"] == 0.7 and L["drift"] == "orbit"
+    assert L["shape"] in design.SHAPES and L["count"] == 24 and L["size"] == 0.7 and L["drift"] == "orbit"
     assert L["opacity"] == 0.02 and L["color"] in design.FX_COLOURS and L["blur"] == 60
     assert fx["transitions"][0]["shape"] == "circle" and fx["transitions"][0]["angle"] == 60 and len(fx["transitions"]) >= 2
     assert fx["camera"] == 2 and fx["text"]["enter"] == "mask" and fx["cards"] == {**fx["cards"], "radius": 48, "fill": "outline"}
@@ -1548,7 +1548,7 @@ def test_each_video_draws_its_own_arrival_curve_and_stagger():
     picks = {design.check_fx(None, seed)["motion"]["ease"] for seed in "abcdefghijklmnop"}
     assert len(picks) >= 4 and picks <= set(design.EASES)                  # varies from video to video
     m = design.check_fx({"motion": {"ease": "outElastic", "frames": 3, "bounce": 7, "from": "sideways"}}, "x")["motion"]
-    assert m["ease"] == "outElastic" and m["frames"] >= 18 and m["bounce"] == 1 and m["from"] in design.FROMS
+    assert m["ease"] in design.EASES and m["frames"] == 8 and m["bounce"] == 1 and m["from"] in design.FROMS
 
 
 def test_surface_shots_are_checked_and_carry_their_labels():

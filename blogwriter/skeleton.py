@@ -18,14 +18,14 @@ import json
 import random
 from typing import Dict, List, Optional
 
+# (capAlign and logo are gone: the badge is always top left and the captions always centred, the owner's rule; the
+# shapes, dots and band decorations read as a template)
 # every option is drawn by video/src/skeleton.jsx, scenes.jsx, graphics.jsx or Video.jsx (tests/test_skeleton.py checks)
 OPTIONS: Dict[str, List[str]] = {
-    "decor": ["shapes", "rules", "brackets", "dots", "band", "frame", "none"],
+    "decor": ["rules", "brackets", "frame", "none"],
     "kicker": ["all", "parts", "none"],
     "outro": ["side", "flip", "center", "ribbon"],
     "flow": ["line", "stair", "zigzag", "rise"],
-    "capAlign": ["center", "left"],
-    "logo": ["tl", "tr"],
     "progress": ["top", "bottom"],
     "hub": ["ring", "fan", "fanr"],
     "spot": ["left", "right"],

@@ -35,10 +35,13 @@ FONTS: Dict[str, tuple] = {
     "ShareTechMono": ((400,), "mono"), "VT323": ((400,), "mono"), "CourierPrime": ((400, 700), "mono"),
     "CormorantGaramond": ((400, 600, 700), "look"), "Limelight": ((400,), "look"), "Bungee": ((400,), "look"),
 }
-OPEN_FONTS = [f for f, (_, role) in FONTS.items() if role in ("display", "both", "body")]   # what a free design picks
-BACKGROUNDS = tuple(palettes.BACKDROPS)         # 16 animated backdrops: 8 in fx.jsx, 8 in backdrops.jsx
+# what a free design picks: a luxury house's type (refined serifs for headlines, a quiet sans for text), not the loud faces
+DISPLAY_FONTS = ("PlayfairDisplay", "CormorantGaramond", "Fraunces", "InstrumentSerif", "DMSerifDisplay", "LibreBaskerville", "Montserrat")
+BODY_FONTS = ("Inter", "Manrope", "DMSans", "Lora", "Outfit", "WorkSans")
+OPEN_FONTS = list(DISPLAY_FONTS + BODY_FONTS)
+BACKGROUNDS = tuple(palettes.BACKDROPS)         # the soft animated backdrops (fx.jsx, backdrops.jsx)
 CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
-DARK_ONLY = ("grid", "orbs", "stars", "bokeh")      # backdrops drawn for dark backgrounds
+DARK_ONLY = ("stars", "bokeh")      # backdrops drawn for dark backgrounds
 PACES = {"calm": (0.6, 22, 3.5), "steady": (1.0, 16, 2.5), "brisk": (1.5, 12, 1.6)}   # speed, damping, stagger
 COLOURS = ("bg", "panel", "line", "text", "muted", "accent", "hot", "cool", "violet")
 
@@ -132,8 +135,7 @@ FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
 ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type")
 CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade", "blinds", "shutter", "flash", "dip", "whip", "leak")
 # how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
-EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart", "outBack", "outElastic",
-         "spring", "snap")
+EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart")      # smooth: no bounce, no wobble
 FROMS = ("first", "last", "center", "edges", "random")
 
 
@@ -155,17 +157,17 @@ def check_fx(raw, seed: str, light: bool = False) -> dict:
     layers = []
     for L in (raw.get("layers") or [])[:3]:
         if isinstance(L, dict):
-            layers.append({"shape": pick(L.get("shape"), SHAPES), "count": int(num(L.get("count"), 1, 80, rnd.randint(4, 40))),
+            layers.append({"shape": pick(L.get("shape"), SHAPES), "count": int(num(L.get("count"), 1, 24, rnd.randint(4, 18))),
                            "size": num(L.get("size"), 0.004, 0.7, rnd.uniform(0.005, 0.3)),
                            "speed": num(L.get("speed"), 0, 3, rnd.uniform(0.2, 1.5)), "drift": pick(L.get("drift"), DRIFTS),
-                           "opacity": num(L.get("opacity"), 0.02, 0.5, rnd.uniform(0.05, 0.3)),
+                           "opacity": num(L.get("opacity"), 0.02, 0.2, rnd.uniform(0.05, 0.16)),
                            "color": pick(L.get("color"), FX_COLOURS), "blur": num(L.get("blur"), 0, 60, 0),
                            "stroke": bool(L.get("stroke"))})
     while len(layers) < 1 + (rnd.random() < 0.6):          # at least one layer, often two
         big = rnd.random() < 0.35
-        layers.append({"shape": "blob" if big else rnd.choice(SHAPES), "count": rnd.randint(2, 5) if big else rnd.randint(6, 60),
+        layers.append({"shape": "blob" if big else rnd.choice(SHAPES), "count": rnd.randint(2, 4) if big else rnd.randint(5, 18),
                        "size": rnd.uniform(0.25, 0.6) if big else rnd.uniform(0.004, 0.08), "speed": rnd.uniform(0.1, 1.6),
-                       "drift": rnd.choice(DRIFTS), "opacity": rnd.uniform(0.08, 0.3) if big else rnd.uniform(0.06, 0.35),
+                       "drift": rnd.choice(DRIFTS), "opacity": rnd.uniform(0.08, 0.18) if big else rnd.uniform(0.05, 0.16),
                        "color": rnd.choice(FX_COLOURS[:4]), "blur": rnd.uniform(20, 50) if big else rnd.choice((0, 0, 2, 6)),
                        "stroke": rnd.random() < 0.4})
     g = raw.get("gradient") if isinstance(raw.get("gradient"), dict) else {}
@@ -183,9 +185,8 @@ def check_fx(raw, seed: str, light: bool = False) -> dict:
     tex = raw.get("texture") if isinstance(raw.get("texture"), dict) else {}
     mo = raw.get("motion") if isinstance(raw.get("motion"), dict) else {}
     curve = pick(mo.get("ease"), EASES)
-    springy = curve in ("outElastic", "spring")            # a wobble needs time to settle
     motion = {"ease": curve, "bounce": num(mo.get("bounce"), 0, 1, rnd.uniform(0.15, 0.7)),
-              "frames": num(mo.get("frames"), 18 if springy else 8, 30, rnd.uniform(18 if springy else 10, 26)),
+              "frames": num(mo.get("frames"), 8, 30, rnd.uniform(10, 26)),
               "from": pick(mo.get("from"), FROMS), "gap": num(mo.get("gap"), 0.5, 6, rnd.uniform(0.8, 3.5))}
     return {"seed": seed[:24], "layers": layers, "motion": motion,
             "gradient": {"x": num(g.get("x"), 0, 100, rnd.uniform(10, 90)), "y": num(g.get("y"), 0, 100, rnd.uniform(0, 70)),
@@ -195,8 +196,8 @@ def check_fx(raw, seed: str, light: bool = False) -> dict:
             "cards": {"radius": num(cards.get("radius"), 0, 48, rnd.uniform(4, 36)),
                       "fill": pick(cards.get("fill"), ("glass", "solid", "outline")),
                       "shadow": num(cards.get("shadow"), 0, 1.5, rnd.uniform(0.3, 1.2))},
-            "texture": {"grain": num(tex.get("grain"), 0, 0.2, rnd.uniform(0, 0.12)),
-                        "vignette": num(tex.get("vignette"), 0, 0.6, rnd.uniform(0, 0.45)) * (0.3 if light else 1)},
+            "texture": {"grain": num(tex.get("grain"), 0.03, 0.12, rnd.uniform(0.04, 0.09)),
+                        "vignette": num(tex.get("vignette"), 0.2, 0.6, rnd.uniform(0.25, 0.5)) * (0.3 if light else 1)},
             "bigWord": bool(raw.get("bigWord")) if "bigWord" in raw else rnd.random() < 0.5}
 
 
@@ -206,7 +207,7 @@ def _finish(palette: dict, display: str, body: str, upper: bool, back: str, cuts
     fx = fx or check_fx(None, palette["bg"] + display, luminance(palette["bg"]) > 0.4)
     return {**palette, "fx": fx, "cuts": fx["transitions"], "named_cuts": cuts, "title": title if title in ("left", "center") else "left",
             "kicker": kicker if kicker in ("pill", "rule") else "pill", "light": luminance(palette["bg"]) > 0.4, "display": display, "body": body,
-            "weight": _weight(display, 900), "upper": upper, "back": back, "pace": pace,
+            "weight": _weight(display, 700), "upper": upper, "back": back, "pace": pace,
             "speed": speed, "damping": damping, "stagger": stagger, "source": source}
 
 
@@ -231,7 +232,7 @@ def check(raw) -> Optional[dict]:
     if back not in BACKGROUNDS or len(cuts) < 2:
         return None
     if luminance(bg) > 0.4 and back in DARK_ONLY:     # a glowing grid or bold orbs wash a light design out
-        back = "dots"
+        back = "aurora"
     return _finish(pal, display, body, bool(raw.get("upper")), back, cuts, pace, "designed",
                    raw.get("title"), raw.get("kicker"), check_fx(raw.get("fx"), pal["bg"] + display + pal["accent"], luminance(pal["bg"]) > 0.4))
 
@@ -267,13 +268,11 @@ def generate(seed: str) -> dict:
            "accent": colour(acc, 0.9, lit, 3.2), "hot": colour(acc + harmony[1], 0.8, lit, 2.4),
            "cool": colour(acc + harmony[2], 0.75, lit, 2.4),
            "violet": colour(hue + 0.02, 0.7, lit + (0.08 if not light else -0.06), 2.4)}
-    displays = [f for f, (_, role) in FONTS.items() if role in ("display", "both")]
-    bodies = [f for f, (_, role) in FONTS.items() if role in ("body", "both")]
-    display = rnd.choice(displays)
-    upper = display in ("BebasNeue", "Anton", "Oswald", "BarlowCondensed") or rnd.random() < 0.3
-    back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("dots", "waves", "rays")])
-    return _finish(pal, display, rnd.choice([b for b in bodies if b != display]), upper, back,
-                   rnd.sample(CUTS, 4), rnd.choice(list(PACES)), "generated",
+    display = rnd.choice(DISPLAY_FONTS)
+    upper = display == "Montserrat" or rnd.random() < 0.25
+    back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("waves", "rays")])
+    return _finish(pal, display, rnd.choice(BODY_FONTS), upper, back,
+                   rnd.sample(CUTS, 4), rnd.choice(("calm", "steady")), "generated",
                    rnd.choice(("left", "center")), rnd.choice(("pill", "rule")), check_fx(None, seed, light))
 
 

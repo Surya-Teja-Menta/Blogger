@@ -10,76 +10,48 @@ import hashlib
 import random
 from typing import Dict, List, Sequence
 
-# name: (background, accent, hot, cool, violet, words it suits). The last three colours are the other chart colours.
+# name: (background, accent, hot, cool, violet, words it suits). The accent is a metal (gold, champagne, copper, platinum,
+# rose gold); the other three chart colours are muted jewels (ruby, sapphire, amethyst, emerald, topaz). No neon, no
+# cyan on black: the channel is a luxury brand, and every video keeps that feel while its colours still differ.
 WORLDS: Dict[str, tuple] = {
     # dark
-    "ocean": ("#06141f", "#2ee6d6", "#ffb454", "#4aa3ff", "#9b8cff", "science water sea data research calm learning"),
-    "forest": ("#08150f", "#8be28b", "#f2c14e", "#4fd1c5", "#c792ea", "nature health climate biology growth calm"),
-    "ember": ("#140b08", "#ff7a2f", "#ffd166", "#5ec8d8", "#c77dff", "history war energy power fire industry"),
-    "plum": ("#120a1c", "#e879f9", "#ffb86b", "#5eead4", "#a78bfa", "creative ai art design culture imagination"),
-    "midnight-gold": ("#0a0f1f", "#f5c542", "#ff6b81", "#5aa9ff", "#b39ddb", "finance money market economy business formal"),
-    "graphite-lime": ("#101214", "#b6f23a", "#ff5c8a", "#38bdf8", "#a78bfa", "code software developer tech system engineering"),
-    "wine": ("#1a0a10", "#ff6b8b", "#ffc857", "#6ee7b7", "#c4b5fd", "society people human story relationship emotion"),
-    "petrol": ("#07191c", "#5eead4", "#fbbf24", "#60a5fa", "#f0abfc", "network cloud infrastructure data pipeline"),
-    "indigo-night": ("#0b0b2a", "#7c8cff", "#ff7eb6", "#3ee0ff", "#c4a1ff", "space math physics universe theory abstract"),
-    "copper": ("#17110d", "#e0a15f", "#e5675a", "#7cc4b8", "#b8a1e3", "craft history culture heritage geography trade"),
-    "emerald": ("#05140e", "#34e89e", "#f7d046", "#3fb9ff", "#d6a3ff", "statistics probability analysis measure sample"),
-    "slate-rose": ("#12151c", "#ff8fab", "#ffd27d", "#7dd3fc", "#c3b1ff", "design product user interface brand"),
-    "arctic": ("#08121a", "#8ee3ff", "#ffcf70", "#7aa2ff", "#c9a7ff", "security privacy reliability calm precision"),
-    "olive": ("#11140a", "#c8e65a", "#ff9f5a", "#6dd5c3", "#d0a2f7", "agriculture food earth survival resource"),
-    "noir": ("#130708", "#ff3b5c", "#ffb02e", "#4cc9f0", "#b388ff", "crime conflict risk failure attack danger breach"),
-    "neon": ("#080818", "#00f5d4", "#ff3cac", "#4361ee", "#b517ff", "cyber future ai model neural machine learning"),
-    "dusk": ("#1a0f2e", "#ff9e64", "#ff5d8f", "#4cc9f0", "#b794f6", "evening story narrative film media music"),
-    "deep-teal": ("#031a1a", "#3dd9b8", "#ff8a65", "#5aa0ff", "#c39bff", "ocean medicine biology cell protein"),
+    "obsidian-gold": ("#0c0b0a", "#d4af6a", "#c4545c", "#5e8fc9", "#a086c8", "finance money market economy business formal strategy law premium"),
+    "midnight-champagne": ("#0a1020", "#e3c88f", "#d9776b", "#6aa5d6", "#a99bd6", "tech software system design architecture cloud network infrastructure data engineering"),
+    "emerald-brass": ("#07140f", "#c9a24f", "#cf6b5f", "#4fa88a", "#9d86c2", "statistics probability analysis measure sample nature health growth biology"),
+    "claret-cream": ("#16090c", "#ecd9b5", "#d4786c", "#6c9ad0", "#b08fc9", "history war conflict story society politics culture drama"),
+    "espresso-copper": ("#130d09", "#d09a62", "#c9605a", "#6fa9a0", "#a98bc4", "craft heritage trade geography food culture economy"),
+    "ink-platinum": ("#0d1117", "#d3dae6", "#d98a6a", "#6fa0d8", "#a592d6", "security privacy reliability science research precision math physics"),
+    "aubergine-rose": ("#150c1b", "#e3a995", "#d4647a", "#7fa6d8", "#b69ae0", "creative ai art design brand imagination language model"),
+    "sapphire-gold": ("#07122a", "#e0b95a", "#d9685c", "#67a3dc", "#9f8bd0", "space universe theory abstract learning education lesson"),
+    "forest-gold": ("#0a130d", "#cfae6e", "#c9655a", "#5aa7a0", "#a58cc8", "climate environment earth agriculture energy resource"),
+    "charcoal-bronze": ("#141414", "#c58f4e", "#cf6a5a", "#5c9ac6", "#a68ac4", "engineering industry power machine hardware code developer"),
     # light
-    "paper-cobalt": ("#f6f4ee", "#2748d8", "#e5484d", "#0e9f8e", "#7b4fd0", "education learning lesson basics introduction guide"),
-    "cream-forest": ("#f4f1e6", "#1f7a4d", "#d9822b", "#2b7fb8", "#8b5fbf", "nature health sustainability farm garden"),
-    "mint-ink": ("#eefaf5", "#0f8a73", "#e4572e", "#2f6fdd", "#8a4fff", "health biology wellness data science"),
-    "lilac": ("#f5f0ff", "#6d3fe0", "#e0457b", "#1e90c9", "#b15cd6", "creative ai art model language generative"),
-    "sand-teal": ("#f7f1e8", "#0b7a86", "#d65a31", "#3b6fb6", "#8e5ea2", "history culture geography trade travel"),
-    "sky": ("#eef6ff", "#1a62d6", "#ef5b5b", "#00a3a3", "#6b4ed8", "tech cloud software system network calm"),
-    "blush": ("#fff1f2", "#c2255c", "#d9480f", "#1c7ed6", "#7048e8", "people human society relationship story"),
-    "lemon": ("#fffbe6", "#a16207", "#dc2626", "#0369a1", "#7e22ce", "playful fun game puzzle quiz mystery curious"),
-    "fog": ("#f1f3f5", "#0d9488", "#e11d48", "#2563eb", "#7c3aed", "data statistics analysis report metrics neutral"),
-    "peach-navy": ("#fff4ea", "#1e3a8a", "#ea580c", "#0f766e", "#9333ea", "business finance market formal strategy"),
-    "sage": ("#eef3ea", "#3f7d3a", "#c2410c", "#1d4ed8", "#86198f", "environment earth food growth farming"),
-    "ice": ("#eaf4f8", "#0284c7", "#db2777", "#059669", "#6d28d9", "science physics energy water research"),
-    "linen-red": ("#f8f4ef", "#b42318", "#b54708", "#175cd3", "#6941c6", "news politics law policy debate geopolitics"),
+    "ivory-gold": ("#f7f2e8", "#9a7420", "#b23a48", "#2b5f8f", "#6b4a99", "education learning lesson basics introduction guide"),
+    "parchment-green": ("#f3eddc", "#1f5c46", "#a8452f", "#2a5f8a", "#6e4b8e", "nature health sustainability farm garden environment biology"),
+    "alabaster-navy": ("#f6f5f1", "#1b2f55", "#a8873a", "#8a3b45", "#5d4a8a", "business finance market formal strategy law policy"),
+    "stone-bordeaux": ("#f1ede6", "#7a1f33", "#a07a2a", "#2d5a82", "#5f4a86", "news politics history culture debate society story"),
+    "linen-ink": ("#f5f3ee", "#26324a", "#b0842f", "#9a3b3b", "#4f6b5a", "data statistics analysis report metrics neutral science"),
+    "champagne-espresso": ("#f6ede0", "#5a3a24", "#b3862e", "#2f5d7c", "#774a87", "craft food culture travel geography heritage trade"),
 }
 
-# the animated backdrops (video/src/fx.jsx and backdrops.jsx) and what each suits
+# the animated backdrops (video/src/fx.jsx and backdrops.jsx) and what each suits: only the soft, slow ones (the neon grid,
+# the circuit, hex cells, stripes, bold orbs, dot fields and ripples read as a tech template, not as a brand)
 BACKDROPS: Dict[str, str] = {
     "aurora": "calm creative ai space science soft",
-    "orbs": "playful creative brand bold",
-    "grid": "tech retro code data computing network future",
-    "contour": "geography map terrain climate geopolitics nature earth",
     "paper": "education history notes lesson light",
     "rays": "energy hope sun power intro launch",
-    "dots": "data statistics analysis pixels measure sample",
+    "contour": "geography map terrain climate geopolitics nature earth",
     "waves": "sea signal finance flow audio calm market",
     "stars": "space night universe physics mystery cosmos",
-    "circuit": "electronics hardware chip computing network system infrastructure",
-    "hexgrid": "chemistry molecule network blockchain cell material security",
     "bokeh": "city night human life story culture society",
-    "ripples": "physics wave sound water impact spread event news cause",
-    "stripes": "sports speed energy bold news motion race",
     "flow": "wind fluid streaming traffic weather learning flow",
-    "mesh": "abstract modern brand design product startup interface",
+    "mesh": "abstract modern brand design product startup interface data statistics system",
 }
 
 
-# the caption styles (video/src/captions.jsx) and what each suits
+# the caption styles (video/src/captions.jsx): the glass pill only; the owner liked it and disliked the others
 CAPTIONS: Dict[str, str] = {
     "pill": "general neutral simple everything",
-    "highlighter": "energy news bold sports fast quick tips lesson learning explainer",
-    "clean": "documentary film story serious history formal essay",
-    "paper": "history education notes lesson writing archive news records",
-    "redbar": "news crime conflict breaking alert warning risk failure attack",
-    "glow": "tech ai future code cyber space night data network",
-    "outline": "sport game music youth social viral challenge fun meme comedy fast energy",
-    "stamp": "myth fact proof verdict rule law legal rights history truth debunk claim",
-    "underline": "essay learn guide how explained concept idea basics math statistics theory",
-    "label": "code system design data engineering database software network protocol architecture machine",
 }
 
 
@@ -133,8 +105,8 @@ def world(name: str, seed: str) -> dict:
             "accent": accent, "hot": hot, "cool": cool, "violet": violet}
 
 
-SHORTLIST = """You are the art director of an explainer YouTube channel. Choose the colours and the moving backdrop of ONE
-video so they suit its subject and feeling. Videos on one subject must not all look alike, so name your three best
+SHORTLIST = """You are the art director of a luxury-brand explainer channel (deep, rich, restrained: metals and jewel tones,
+never neon). Choose the colours and the moving backdrop of ONE video so they suit its subject and feeling. Videos on one subject must not all look alike, so name your three best
 colour worlds and three best backdrops, best first.
 
 Video: {title}

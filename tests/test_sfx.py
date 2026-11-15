@@ -63,12 +63,9 @@ def test_every_caption_style_is_drawn_chosen_for_the_subject_and_not_repeated():
     jsx = open(os.path.join(SRC, "captions.jsx"), encoding="utf-8").read()
     drawn = set(re.findall(r"^  (\w+): \(", jsx, re.M))
     assert drawn == set(palettes.CAPTIONS) and 'data-caption="1"' in open(os.path.join(SRC, "Video.jsx"), encoding="utf-8").read()
-    assert "glow" not in {palettes.caption("tech ai future", f"t{k}", True) for k in range(60)}      # neon needs a dark design
-    assert len({palettes.caption("a story", f"t{k}", False) for k in range(60)}) >= 5
-    for k in range(40):
-        assert palettes.caption("x", f"t{k}", False, avoid=["pill", "paper"]) not in ("pill", "paper")
-    d = design.design(lambda *a, **kw: {}, "Some title", "education", "calm", lambda m: None, {"captions": ["clean", "pill"]})
-    assert d["caption"] in palettes.CAPTIONS and d["caption"] not in ("clean", "pill")
+    assert {palettes.caption("a story", f"t{k}", False) for k in range(20)} == {"pill"}      # the owner's rule: the glass pill, always
+    d = design.design(lambda *a, **kw: {}, "Some title", "education", "calm", lambda m: None, {"captions": ["pill"]})
+    assert d["caption"] == "pill"
 
 
 def test_every_act_gets_a_swell_into_it_and_a_thump_on_it(tmp_path):

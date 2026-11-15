@@ -19,7 +19,7 @@ def test_every_colour_world_is_readable_and_the_accents_spread_over_the_wheel():
         assert design.contrast(pal["panel"], pal["bg"]) <= 2.2, name
         h = colorsys.rgb_to_hls(*palettes._rgb(pal["accent"]))[0]
         hues.add(int(h * 12))
-    assert len(hues) >= 9          # the orange-red every video used to have is one of twelve slices of the wheel
+    assert len(hues) >= 4          # a luxury house: golds, a green, a red, a blue and a platinum, not one orange-red
 
 
 def test_a_video_gets_colours_and_a_backdrop_that_suit_its_subject_but_not_always_the_same_ones():
@@ -32,9 +32,9 @@ def test_a_video_gets_colours_and_a_backdrop_that_suit_its_subject_but_not_alway
         d = design.design(lambda *a, **k: {}, f"Space {k}: stars and night sky", "education", "", lambda m: None)
         assert d["back"] in design.BACKGROUNDS
         assert not (d["light"] and d["back"] in design.DARK_ONLY) and not (not d["light"] and d["back"] == "paper")
-    # the subject ranks the choices: space videos are offered the starfield, circuits for hardware
+    # the subject ranks the choices: space videos are offered the starfield, maps the contour lines
     assert "stars" in palettes.rank(palettes.BACKDROPS, "the universe and night sky", "x", 3)
-    assert "circuit" in palettes.rank(palettes.BACKDROPS, "chip hardware electronics", "x", 3)
+    assert "contour" in palettes.rank(palettes.BACKDROPS, "map terrain geography", "x", 3)
 
 
 def test_every_backdrop_and_every_shape_is_drawn():
@@ -54,20 +54,20 @@ def test_the_models_shortlist_decides_and_the_last_videos_are_not_repeated(monke
 
     def model(prompt, **kw):
         asked.append(prompt)
-        return {"worlds": ["plum", "ocean", "nonsense", "neon"], "backdrops": ["circuit", "mesh", "bogus"]}
+        return {"worlds": ["aubergine-rose", "obsidian-gold", "nonsense", "ink-platinum"], "backdrops": ["waves", "mesh", "bogus"]}
     worlds, backs = palettes.shortlist(model, "T", "education", "calm")
-    assert worlds == ["plum", "ocean", "neon"] and backs == ["circuit", "mesh"] and "ember" in asked[0]
+    assert worlds == ["aubergine-rose", "obsidian-gold", "ink-platinum"] and backs == ["waves", "mesh"] and "claret-cream" in asked[0]
     assert palettes.shortlist(lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")), "T", "e", "") == ([], [])
     # a model that always names the same three still varies from title to title, and skips what was just used
     picks = [palettes.pick("x", f"title {k}", worlds)["world"] for k in range(120)]
-    assert {"plum", "ocean", "neon"} <= set(picks)                       # its three are used, with two keyword matches
+    assert {"aubergine-rose", "obsidian-gold", "ink-platinum"} <= set(picks)                       # its three are used, with two keyword matches
     assert sum(w in worlds for w in picks) >= 0.45 * len(picks)         # ...and are the most common picks
     for k in range(30):
-        assert palettes.pick("x", f"title {k}", worlds, avoid=["plum"])["world"] != "plum"
-        assert palettes.backdrops("x", f"t{k}", (), backs, ["circuit"]) != "circuit"
-    assert palettes.pick("x", "t", ["plum"], avoid=["plum"])["world"] in palettes.WORLDS   # all used: still a world
-    d = design.design(model, "A title", "education", "calm", lambda m: None, {"worlds": ["plum"], "backs": ["circuit"]})
-    assert d["world"] != "plum" and d["back"] != "circuit"      # the recent ones are avoided
+        assert palettes.pick("x", f"title {k}", worlds, avoid=["aubergine-rose"])["world"] != "aubergine-rose"
+        assert palettes.backdrops("x", f"t{k}", (), backs, ["waves"]) != "waves"
+    assert palettes.pick("x", "t", ["aubergine-rose"], avoid=["aubergine-rose"])["world"] in palettes.WORLDS   # all used: still a world
+    d = design.design(model, "A title", "education", "calm", lambda m: None, {"worlds": ["aubergine-rose"], "backs": ["waves"]})
+    assert d["world"] != "aubergine-rose" and d["back"] != "waves"      # the recent ones are avoided
 
 
 def test_the_history_remembers_the_last_videos_and_no_two_film_looks_run_together(monkeypatch):
