@@ -122,7 +122,7 @@ def more_types() -> tuple:
     return vizlib.GRAPHIC_TYPES
 
 
-def prompt(scenes: List[dict], only: Optional[set] = None) -> str:
+def prompt(scenes: List[dict], only: Optional[set] = None, no_kinetic: bool = False) -> str:
     from . import vizlib
     seed = " ".join(str(s.get("headline", "")) for s in scenes)
     fits = []                    # each shot's own best fits among the library graphics, by what that shot says
@@ -141,7 +141,8 @@ def prompt(scenes: List[dict], only: Optional[set] = None) -> str:
         text = text.replace("For as many shots as possible (aim for at least 3 in 4)",
                             "For EVERY shot listed (these are lessons: each idea needs a picture, not only words)") \
             .replace("- Leave out a shot that no graphic fits.",
-                     "- Every shot must get a graphic; use flow, hub, spotlight, versus or stack before kinetic.")
+                     "- Every shot must get a graphic; use flow, hub, spotlight, versus or stack before kinetic"
+                     + (", and NEVER kinetic: these shots are already only type." if no_kinetic else "."))
     return text
 
 
@@ -216,8 +217,10 @@ def check(raw, scene: dict, verified: Callable[[str, str], bool]) -> Optional[di
     return out
 
 
-def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log: Callable[[str], None]) -> int:
-    """Put the checked graphics on their scenes; a graphic like the previous shot's is dropped."""
+def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log: Callable[[str], None],
+           no_kinetic: bool = False) -> int:
+    """Put the checked graphics on their scenes; a graphic like the previous shot's is dropped. no_kinetic: animated
+    type is not accepted (the second pass for a plan that is mostly type)."""
     picks = {}
     for raw in reply if isinstance(reply, list) else []:
         k = raw.get("scene") if isinstance(raw, dict) else None
@@ -227,9 +230,12 @@ def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log:
                 picks[k] = g
             else:
                 log(f"[graphics] shot {k}: unusable {str(raw)[:120]}")
-    last, used = None, set()
+    last = None
+    used = {s["graphic"]["type"] for s in scenes if s.get("graphic") and s["graphic"]["type"] in more_types()}   # earlier passes
     for k, s in enumerate(scenes):
         g = picks.get(k)
+        if g and no_kinetic and g["type"] == "kinetic":
+            g = None
         if g and g["type"] in more_types() and g["type"] in used:       # a library graphic once per video
             g = None
         if g and g["type"] != last:

@@ -1223,6 +1223,7 @@ def subscribe_at(starts: List[int], kinds: List[str], total: int) -> Optional[in
     return None
 
 
+VARY_ABOVE = 0.15      # more type-only shots than this share of a plan and the art director is asked again
 HERO_ORDER = ("surface", "graph", "equation", "derive", "plot", "diagram", "bars", "line", "donut", "compare", "kpis", "stat", "map")
 
 
@@ -2284,6 +2285,7 @@ class VideoMaker:
                        for i, s in enumerate(scenes)]
         # every diagram is rendered, looked at, corrected and kept only if it is good
         self.polish_diagrams(scenes, long_scenes, spoken, theme, job)
+        self.vary(scenes, long_scenes, spoken)          # a plan that is mostly type gets pictures before it is measured
         # the English captions are part of the picture: short lines, timed to the spoken words
         long_captions = []
         for i in range(n_long):
@@ -2715,17 +2717,41 @@ class VideoMaker:
                 self.log(f"[layout] {composition} {t['name']}: {layout.describe(found[i][0])} -> {did or 'nothing left to simplify'}")
             todo = bad
 
-    def art_direct(self, scenes: List[dict], only: Optional[set] = None) -> None:
+    def art_direct(self, scenes: List[dict], only: Optional[set] = None, no_kinetic: bool = False) -> None:
         """Motion graphics for the shots without a strong picture; any failure leaves the templates in place.
-        only: just these shots, each of which must get a graphic (the second pass for lessons)."""
+        only: just these shots, each of which must get a graphic (the second pass for lessons).
+        no_kinetic: animated type is ruled out (the pass for a plan that is mostly type, see vary)."""
         try:
-            reply = self.llm.complete_json(graphics.prompt(scenes, only), max_tokens=4000, temperature=0.6)
+            reply = self.llm.complete_json(graphics.prompt(scenes, only, no_kinetic), max_tokens=4000, temperature=0.6)
         except LLMError as exc:
             self.log(f"[graphics] no art direction: {str(exc)[:120]}")
             return
-        n = graphics.assign(scenes, reply, _verified, self.log)
+        n = graphics.assign(scenes, reply, _verified, self.log, no_kinetic)
         kinds = ", ".join(s["graphic"]["type"] for s in scenes if s.get("graphic"))
         self.log(f"[graphics] {n} motion graphic(s): {kinds}")
+
+    def vary(self, scenes: List[dict], long_scenes: List[dict], spoken: dict) -> int:
+        """A plan that is mostly animated type is an animated slideshow (variety.py). When more than VARY_ABOVE of the
+        shots are type only, the art director is asked again for just those shots, with animated type ruled out; a shot
+        that gets no new picture keeps what it had. Returns how many shots got a picture."""
+        redo = [i for i, s in enumerate(long_scenes) if i > 0 and variety.words_only(s) and scenes[i]["kind"] in graphics.ELIGIBLE
+                and not scenes[i].get("video")]               # (the opening hook stays as it is)
+        if not redo or len(redo) / len(long_scenes) <= VARY_ABOVE:
+            return 0
+        self.log(f"[variety] {round(100 * len(redo) / len(long_scenes))}% of the shots are type only: the art director is "
+                 f"asked again for them")
+        before = {i: scenes[i].pop("graphic", None) for i in redo}
+        self.art_direct(scenes, only=set(redo), no_kinetic=True)
+        got = 0
+        for i in redo:
+            if scenes[i].get("graphic"):
+                got += 1
+                long_scenes[i]["graphic"] = graphics.timed(scenes[i]["graphic"], scenes[i].get("headline", ""),
+                                                           spoken.get(("en", "long", i), []), long_scenes[i]["frames"], FPS, LEAD)
+            elif before[i]:
+                scenes[i]["graphic"] = before[i]            # nothing better came back: the shot is as it was
+        self.log(f"[variety] {got} of {len(redo)} type-only shot(s) got a picture")
+        return got
 
     def deliver(self, run_dir: str, out: str, files: Dict[str, str], plan: dict, email: bool,
                 verdict: Optional[dict] = None, meta: Optional[dict] = None, notes_at: str = "") -> None:

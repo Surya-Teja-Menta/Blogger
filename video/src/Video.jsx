@@ -52,7 +52,8 @@ const Caption = ({captions, vertical, aside = 0}) => {
   let acc = 0;
   const look = captionStyle(C.caption, vertical);       // one of six styles, chosen for this video (captions.jsx)
   return (
-    <div style={{position: "absolute", left: 50, right: 50 + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
+    // a Short's captions keep clear of the app's buttons on the right (the like/share column is about 96 px wide)
+    <div style={{position: "absolute", left: vertical ? 60 : 50, right: (vertical ? 100 : 50) + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
                  textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
       <span data-caption="1" style={{display: "inline-block", fontSize: vertical ? 62 : 40, lineHeight: 1.35, ...look.box}}>
         {words.map((w, k) => {
