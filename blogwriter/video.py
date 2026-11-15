@@ -168,8 +168,11 @@ VOICE = r"""
   About every third or fourth line carries a playful jab: at the obvious-but-wrong intuition, at jargon, at the
   subject's scary reputation, at everyday absurdities. Never at the viewer, never mean, never about real people or
   groups, and a joke never replaces the explanation: the line still teaches.
-- WORDS: simple everyday words a 12-year-old knows, short sentences. A technical term only once the idea is already
-  clear, and explained in the same sentence ("this is called the standard error: how much the average wobbles").
+- WORDS: very simple everyday words, the way you talk to a friend; a 10-year-old must follow every line. Short sentences,
+  one idea each. Never textbook or essay language ("moreover", "crucial", "utilise", "this phenomenon occurs when"):
+  say "so", "a lot", "use", "this happens when". A definition is "think of it like ...", never "X is a measure of ...".
+  A technical term only once the idea is already clear, and explained in the same sentence ("this is called the standard
+  error: how much the average wobbles").
 - REAL LIFE: show every idea first in a real-life situation the viewer has lived, then generalise it. Use these, and
   keep the first one running through the whole video, coming back to it as the ideas grow: [examples].
 - HISTORY: viewers care what an idea does for them, not who found it in which year. Do not walk through
@@ -2002,7 +2005,7 @@ class VideoMaker:
             plan = self.introduce(plan, brief, title, facts)
         if style == "education":                            # the lesson voice: sarcasm a viewer actually hears
             plan = self.punch_up(plan, brief)
-        plan = self.plain_pass(plan)                        # ... in words a normal person says
+        plan = self.plain_pass(plan, title)                 # ... in words a normal person says
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:MAX_SCENES]:
             if not isinstance(sc, dict):
@@ -2503,28 +2506,50 @@ class VideoMaker:
         self.log(f"[video] comedy pass: {changed} of {len(lines)} lines punched up")
         return plan
 
-    def plain_pass(self, plan: dict) -> dict:
-        """Every narration line rewritten in plain spoken English (the owner: the words were bookish, "the AI way").
-        A line keeps its numbers and stays within its length, or it is left as it was."""
+    def plain_pass(self, plan: dict, title: str = "") -> dict:
+        """Every narration line rewritten in plain spoken English (the owner: "so bookish, very simple vocabulary").
+        Round one rewrites all lines; round two takes the lines that still read hard (a long word or a textbook sentence,
+        plainwords.hard_words and grade) and names the hard words. A line keeps its numbers and stays within its length,
+        or it is left as it was."""
         rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
-        lines = [str(sc.get("narration", "")) for sc in rows]
-        changed = 0
-        for start in range(0, len(lines), 40):
-            batch = lines[start:start + 40]
-            try:
-                reply = self.design_json(plainwords.PLAIN.format(n=len(batch), lines=json.dumps(batch, ensure_ascii=False)))
-            except LLMError:
-                continue
-            new = reply.get("lines") if isinstance(reply, dict) else None
-            if not isinstance(new, list) or len(new) != len(batch):
-                continue
-            for k, (old, line) in enumerate(zip(batch, new)):
-                line = " ".join(str(line or "").split())
-                same_numbers = sorted(re.findall(r"\d[\d,.]*", line)) == sorted(re.findall(r"\d[\d,.]*", old))
-                if line and line != old and same_numbers and len(line.split()) <= (28 if start + k == 0 else 60):
-                    rows[start + k]["narration"] = line
-                    changed += 1
-        self.log(f"[video] plain pass: {changed} of {len(lines)} lines put into plainer words")
+        keep = f"{title} " + " ".join(str(sc.get("headline", "")) for sc in rows)       # the topic's own words may stay
+        before = plainwords.grade(" ".join(str(sc.get("narration", "")) for sc in rows))
+
+        def rewrite(prompt: str, idx: List[int], payload: list) -> int:
+            changed = 0
+            for start in range(0, len(idx), 40):
+                part, items = idx[start:start + 40], payload[start:start + 40]
+                try:
+                    reply = self.design_json(prompt.format(n=len(part), lines=json.dumps(items, ensure_ascii=False)))
+                except LLMError:
+                    continue
+                new = reply.get("lines") if isinstance(reply, dict) else None
+                if not isinstance(new, list) or len(new) != len(part):
+                    continue
+                for j, line in zip(part, new):
+                    old = str(rows[j].get("narration", ""))
+                    line = " ".join(str(line or "").split())
+                    same_numbers = sorted(re.findall(r"\d[\d,.]*", line)) == sorted(re.findall(r"\d[\d,.]*", old))
+                    if line and line != old and same_numbers and len(line.split()) <= (28 if j == 0 else 60):
+                        rows[j]["narration"] = line
+                        changed += 1
+            return changed
+
+        every = list(range(len(rows)))
+        changed = rewrite(plainwords.PLAIN, every, [str(sc.get("narration", "")) for sc in rows])
+        for _ in range(2):          # round two (and a last try): the lines that still read hard
+            hard = [j for j in every if len(plainwords.hard_words(str(rows[j].get("narration", "")), keep)) >= 2
+                    or (len(str(rows[j].get("narration", "")).split()) >= 14
+                        and plainwords.grade(str(rows[j].get("narration", ""))) > 9)]        # (a short line's grade is noise)
+            if not hard:
+                break
+            changed += rewrite(plainwords.SIMPLER, hard, [
+                {"line": str(rows[j].get("narration", "")),
+                 "hard_words": plainwords.hard_words(str(rows[j].get("narration", "")), keep)} for j in hard])
+        after = plainwords.grade(" ".join(str(sc.get("narration", "")) for sc in rows))
+        left = sum(len(plainwords.hard_words(str(sc.get("narration", "")), keep)) for sc in rows)
+        self.log(f"[video] plain pass: {changed} lines rewritten; reading level grade {before} -> {after}; "
+                 f"{left} hard words left in {len(rows)} lines")
         return plan
 
     def introduce(self, plan: dict, brief: dict, title: str, facts: list) -> dict:

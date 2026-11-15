@@ -1640,7 +1640,7 @@ def test_the_writer_asks_for_pictures_and_lessons_get_the_voice():
     brief = video.check_brief({"minutes": 10, "examples": "pizza delivery times; cricket scores", "acts": [{"title": "A"}]},
                               "education")
     rules, _ = video.shape_prompt(brief, "education", "Central Limit Theorem", "(none)")
-    assert "pizza delivery times; cricket scores" in rules and "sarcastic" in rules and "12-year-old" in rules
+    assert "pizza delivery times; cricket scores" in rules and "sarcastic" in rules and "10-year-old" in rules
     news, _ = video.shape_prompt(video.check_brief({}, "news"), "news", "t", "(none)")
     assert "sarcastic" not in news and video.check_brief({}, "education")["examples"]
 

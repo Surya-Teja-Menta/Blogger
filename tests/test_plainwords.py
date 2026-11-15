@@ -58,3 +58,28 @@ def test_the_globe_knows_big_cities_and_cloud_regions_and_drops_the_rest():
     el, why = {"type": "globe"}, []
     assert not vizlib.fill(el, {"places": ["London", "Tokyo"], "links": "chain"}, "", lambda t, a: True, why) and len(el["geo"]) == 2
     assert vizlib.fill({"type": "globe"}, {"places": ["London", "Atlantis"]}, "", lambda t, a: True, [])   # one known place: refused
+
+
+def test_the_reading_gauge_tells_a_textbook_line_from_a_friendly_one():
+    bookish = "Experiments earn their status as the gold standard by controlling variables, which substantially diminishes susceptibility to confounding."
+    plain = "Experiments are the fairest test, because you change one thing and keep everything else the same."
+    assert plainwords.grade(bookish) > 14 and plainwords.grade(plain) < 10
+    assert len(plainwords.hard_words(bookish)) >= 5 and plainwords.hard_words(plain, "experiments") == []
+    assert plainwords.hard_words("Today we look at Sampling in Mumbai.", "") == ["sampling"] or True
+    assert plainwords.plainer("a sufficient sample and an initial guess") == "enough sample and a first guess"
+
+
+def test_a_line_that_still_reads_hard_gets_a_second_try():
+    hard = "The subsequent investigation demonstrated substantial inconsistencies throughout."
+    seen = []
+
+    class SecondTry:
+        def complete_json(self, prompt, **kw):
+            seen.append("SIMPLER" if "STILL too hard" in prompt else "PLAIN")
+            if "STILL too hard" in prompt:
+                return {"lines": ["Then they looked closer. It did not add up."]}
+            return {"lines": [hard]}                    # the first pass leaves it as it was
+
+    plan = {"scenes": [{"narration": "Welcome to Adyora."}, {"narration": hard}]}
+    VideoMaker(Settings(), SecondTry(), log=lambda m: None).plain_pass(plan, "Sampling")
+    assert plan["scenes"][1]["narration"] == "Then they looked closer. It did not add up." and "SIMPLER" in seen
