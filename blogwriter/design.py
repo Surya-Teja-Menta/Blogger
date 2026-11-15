@@ -71,7 +71,8 @@ Decide:
   (e.g. a starfield of tiny dots drifting up; a few huge blurred blobs; thin lines sliding right like data);
   "gradient": {{"x": 0-100, "y": 0-100, "color": ..., "strength": 0-0.4}} (a light source);
   "text": {{"enter": rise, blur, scale, slide, drop, mask, flip, spread or tilt}} (how words appear);
-  "transitions": 2 to 4 of {{"shape": circle, diamond, split, bars, corner, diagonal or fade, "angle": -60 to 60,
+  "transitions": 2 to 4 of {{"shape": circle, diamond, split, bars, corner, diagonal, fade, blinds (upright slats), shutter (flat slats), flash (a white flash),
+  dip (through black), whip (a fast slide, smeared; the angle's sign is its direction) or leak (a warm light leak), "angle": -60 to 60,
   "blur": 0-30, "scale": 0-0.4, "spin": -20 to 20}};
   "motion": {{"ease": how every piece arrives, one of outExpo (fast then still), outQuart, outQuint, outCirc,
   outSine (soft), inOutSine (calm, documentary), inOutQuart, outBack (overshoots and settles), outElastic (springy
@@ -129,7 +130,7 @@ SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob",
 DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
 ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type")
-CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade")
+CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade", "blinds", "shutter", "flash", "dip", "whip", "leak")
 # how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
 EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart", "outBack", "outElastic",
          "spring", "snap")

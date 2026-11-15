@@ -141,11 +141,40 @@ const clipFor = (shape, p, angle) => {
   return `polygon(${-30 + dx}% -10%, ${w + dx}% -10%, ${w - dx}% 110%, ${-30 - dx}% 110%)`;
 };
 
+// slats that widen until they meet (blinds: upright, shutter: across), from openfilm's and remocn's transition libraries
+const slats = (p, deg) => {
+  const w = ease(p) * 100;
+  const m = `repeating-linear-gradient(${deg}deg, #000 0, #000 ${w}px, transparent ${w}px, transparent 100px)`;
+  return {WebkitMaskImage: m, maskImage: m};
+};
+// the dip shapes: the old shot is washed out by a colour, the new one comes up out of it
+const WASH = {flash: "#ffffff", dip: "#000000", leak: "#ff9a3c"};
+
 export const genCut = (cut) => ({
   props: {},
   component: ({children, presentationDirection, presentationProgress: p}) => {
     const enter = presentationDirection === "entering";
     const blur = cut.blur || 0, scale = cut.scale || 0;
+    const dir = (cut.angle || 0) < 0 ? -1 : 1;
+    if (cut.shape === "whip") {          // both shots slide the same way, smeared by their speed
+      const q = ease(p), x = enter ? (1 - q) * 100 * dir : -q * 100 * dir, smear = Math.sin(Math.PI * q) * (10 + blur);
+      return <AbsoluteFill style={{transform: `translateX(${x}%)`, filter: `blur(${smear}px)`}}>{children}</AbsoluteFill>;
+    }
+    if (WASH[cut.shape]) {
+      const tent = 1 - Math.abs(2 * p - 1);       // 0 -> 1 -> 0 over the cut
+      if (!enter) return <AbsoluteFill>{children}</AbsoluteFill>;
+      const sweep = cut.shape === "leak" ? `radial-gradient(circle at ${-20 + 140 * p}% 50%, ${alpha(WASH.leak, 0.95)}, transparent 62%)` : WASH[cut.shape];
+      return (
+        <AbsoluteFill>
+          <AbsoluteFill style={{opacity: p < 0.5 && cut.shape !== "leak" ? 0 : ease(p)}}>{children}</AbsoluteFill>
+          <AbsoluteFill style={{background: sweep, opacity: cut.shape === "leak" ? tent : Math.min(1, tent * 1.6), pointerEvents: "none"}}/>
+        </AbsoluteFill>
+      );
+    }
+    if (cut.shape === "blinds" || cut.shape === "shutter") {
+      return enter ? <AbsoluteFill style={slats(p, cut.shape === "blinds" ? 90 : 0)}>{children}</AbsoluteFill>
+                   : <AbsoluteFill>{children}</AbsoluteFill>;
+    }
     if (enter) {
       return (
         <AbsoluteFill style={{clipPath: cut.shape === "fade" ? undefined : clipFor(cut.shape, p, cut.angle || 0),

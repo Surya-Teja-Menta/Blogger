@@ -90,3 +90,9 @@ def test_the_history_remembers_the_last_videos_and_no_two_film_looks_run_togethe
     monkeypatch.setenv("FILM_LOOK", "auto")
     pick = lambda *a, **k: {"look": "chalkboard", "accent": "pink", "why": "x"}
     assert "look" not in design.design(pick, "Topic", "education", "", lambda m: None, {"looks": ["chalkboard", "", ""]})
+
+
+def test_every_cut_shape_is_drawn():
+    gen = open(os.path.join(os.path.dirname(__file__), "..", "video", "src", "gen.jsx"), encoding="utf-8").read()
+    for shape in design.CLIPS:                       # "diagonal" is the fall-through branch of clipFor
+        assert shape == "diagonal" or f'"{shape}"' in gen or f"{shape}:" in gen, shape

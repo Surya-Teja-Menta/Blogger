@@ -1,4 +1,4 @@
-// Six caption styles; blogwriter/palettes.py picks one per video (theme.caption), so the captions are not the same box
+// Ten caption styles; blogwriter/palettes.py picks one per video (theme.caption), so the captions are not the same box
 // on every video. Each is {box, word(on)}: the style of the caption line and of one word, lit while it is spoken.
 // All are drawn from the theme's colours and keep the same font size and position (Video.jsx), so the layout audit
 // and the safe areas do not change.
@@ -59,6 +59,40 @@ export const CAPTION_STYLES = {
       word: (on) => ({color: on ? C.accent : undefined, transform: `scale(${on ? 1.08 : 1})`}),
     };
   },
+  // after remocn's caption set: fat capitals with a thick outline, the spoken word filled in the accent
+  outline: () => {
+    const halo = C.light ? "#ffffff" : "#000000";
+    return {
+      box: {padding: "4px 12px", fontFamily: FONT.display, fontWeight: C.weight, textTransform: "uppercase", letterSpacing: 1,
+            color: C.light ? "#111111" : "#ffffff", WebkitTextStroke: `9px ${halo}`, paintOrder: "stroke fill"},
+      word: (on) => ({color: on ? C.accent : undefined}),
+    };
+  },
+  // the spoken word is stamped: a tilted frame round it
+  stamp: () => {
+    const base = C.light ? "#111111" : "#ffffff", halo = C.light ? "#ffffff" : "#000000";
+    return {
+      box: {padding: "6px 14px", fontFamily: FONT.body, fontWeight: 800, color: base,
+            textShadow: `0 2px 2px ${alpha(halo, 0.85)}, 0 0 16px ${alpha(halo, 0.8)}`},
+      word: (on) => (on ? {color: C.accent, border: `4px solid ${C.accent}`, borderRadius: 6, padding: "0 0.14em", transform: "rotate(-3deg)",
+                           textShadow: "none", background: alpha(halo, 0.35)} : {}),
+    };
+  },
+  // plain subtitle, the spoken word carries a thick accent underline
+  underline: () => {
+    const base = C.light ? "#111111" : "#ffffff", halo = C.light ? "#ffffff" : "#000000";
+    return {
+      box: {padding: "4px 10px", fontFamily: FONT.body, fontWeight: 700, color: base,
+            textShadow: `0 2px 2px ${alpha(halo, 0.85)}, 0 0 16px ${alpha(halo, 0.8)}, 0 0 4px ${alpha(halo, 0.9)}`},
+      word: (on) => (on ? {boxShadow: `0 7px 0 -1px ${C.accent}`} : {}),
+    };
+  },
+  // a label-maker strip: mono type on a dark tape, the spoken word flips to light
+  label: () => ({
+    box: {padding: "8px 20px", background: "#141414", color: "#f4f4f4", fontFamily: FONT.mono, fontWeight: 700, letterSpacing: 1,
+          borderRadius: 3, border: "2px solid #3a3a3a", boxShadow: "0 6px 16px rgba(0,0,0,0.4)"},
+    word: (on) => (on ? {background: "#f4f4f4", color: "#141414", padding: "0 0.14em"} : {}),
+  }),
 };
 
 export const captionStyle = (name, vertical) => (CAPTION_STYLES[name] || CAPTION_STYLES.pill)(vertical);

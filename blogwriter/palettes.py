@@ -76,6 +76,10 @@ CAPTIONS: Dict[str, str] = {
     "paper": "history education notes lesson writing archive news records",
     "redbar": "news crime conflict breaking alert warning risk failure attack",
     "glow": "tech ai future code cyber space night data network",
+    "outline": "sport game music youth social viral challenge fun meme comedy fast energy",
+    "stamp": "myth fact proof verdict rule law legal rights history truth debunk claim",
+    "underline": "essay learn guide how explained concept idea basics math statistics theory",
+    "label": "code system design data engineering database software network protocol architecture machine",
 }
 
 
