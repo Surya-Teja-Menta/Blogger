@@ -8,6 +8,7 @@ import {C, FONT, alpha} from "./theme";
 import {GenLayers, wordEnter} from "./gen";
 import {Surface} from "./looks";
 import {BACKS} from "./backdrops";
+import {cameraStyle, rackBlur, useCam} from "./camera";
 import {HandText} from "./hand";
 
 export const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
@@ -153,32 +154,38 @@ export const Title = ({s, vertical, top, size, maxWidth}) => {
 
 // frosted card used by charts, lists and figures
 const card = () => (C.fx || {}).cards || {};
-export const Glass = ({children, style = {}, p = 1, glow}) => (
-  <div style={{background: card().fill === "outline" ? "transparent" : card().fill === "solid" ? C.panel
-                 : C.light ? alpha("#ffffff", 0.82) : alpha(C.panel, 0.55), backdropFilter: "blur(18px)",
-               border: `${card().fill === "outline" ? 2.5 : 1.5}px solid ${card().fill === "outline" ? alpha(C.accent, 0.6)
-                 : C.light ? alpha(C.line, 0.9) : alpha("#ffffff", 0.09)}`, borderRadius: card().radius ?? 28,
-               boxShadow: `0 30px 80px ${alpha("#000000", (C.light ? 0.12 : 0.45) * (card().shadow ?? 1))}${glow ? `, 0 0 60px ${alpha(glow, 0.18)}` : ""}`,
-               opacity: clamp(p * 1.3), transform: `translateY(${(1 - p) * 60}px) scale(${0.94 + 0.06 * p})`, ...style}}>
-    {children}
-  </div>
-);
+export const Glass = ({children, style = {}, p = 1, glow}) => {
+  const frame = useCurrentFrame();
+  // a thin light that travels round a glass card's edge, like a lit border on a modern interface (not on outline, solid or film-look cards)
+  const beam = card().fill !== "outline" && card().fill !== "solid" && !C.look && !C.clean;
+  return (
+    <div style={{position: "relative",
+                 background: card().fill === "outline" ? "transparent" : card().fill === "solid" ? C.panel
+                   : C.light ? alpha("#ffffff", 0.82) : alpha(C.panel, 0.55), backdropFilter: "blur(18px)",
+                 border: `${card().fill === "outline" ? 2.5 : 1.5}px solid ${card().fill === "outline" ? alpha(C.accent, 0.6)
+                   : C.light ? alpha(C.line, 0.9) : alpha("#ffffff", 0.09)}`, borderRadius: card().radius ?? 28,
+                 boxShadow: `0 30px 80px ${alpha("#000000", (C.light ? 0.12 : 0.45) * (card().shadow ?? 1))}${glow ? `, 0 0 60px ${alpha(glow, 0.18)}` : ""}`,
+                 opacity: clamp(p * 1.3), transform: `translateY(${(1 - p) * 60}px) scale(${0.94 + 0.06 * p})`, ...style}}>
+      {beam && <div data-audit="skip" style={{position: "absolute", inset: 0, borderRadius: card().radius ?? 28, padding: 2, pointerEvents: "none",
+                                              background: `conic-gradient(from ${(frame * 2.4) % 360}deg, transparent 0 70%, ${alpha(C.accent, 0.95)} 90%, transparent 100%)`,
+                                              WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)", WebkitMaskComposite: "xor",
+                                              maskComposite: "exclude", opacity: 0.6 * clamp(p)}}/>}
+      {children}
+    </div>
+  );
+};
 
 // The scene's content moves in 3D like a camera held by an operator: a slow push across the shot plus an organic
 // sway (simplex noise, @remotion/noise), never a mechanical back-and-forth. Nothing is ever perfectly still.
 export const Camera = ({children, i = 0, amount: base = 1}) => {
   const amount = base * (((C.fx || {}).camera) ?? 1);
   const frame = useCurrentFrame();
-  const {durationInFrames} = useVideoConfig();
-  const t = frame / Math.max(1, durationInFrames);
-  const dir = i % 2 ? 1 : -1;
+  const {durationInFrames, width, height} = useVideoConfig();
   // flat (no 3D tilt): a tilted layer is redrawn in perspective every frame, so text edges shimmer and soften on a
-  // big screen; a slow push and a small drift keep the shot alive while every letter stays crisp
-  const sway = (key, period) => noise2D(`${key}-${i}`, frame / period, 0);
-  const tx = dir * t * 16 * amount + sway("tx", 160) * 6 * amount, ty = sway("ty", 180) * 4 * amount;
+  // big screen; the move of the shot (camera.jsx) is a small 2D one, so every letter stays crisp
   return (
     <AbsoluteFill>
-      <AbsoluteFill style={{transform: `translate(${tx}px, ${ty}px) scale(${1 + 0.04 * t * amount})`}}>
+      <AbsoluteFill style={cameraStyle({cam: useCam(), frame, duration: durationInFrames, i, amount, width, height})}>
         {children}
       </AbsoluteFill>
     </AbsoluteFill>
@@ -209,7 +216,8 @@ export const Particles = ({n = 40, seed = "p", color}) => {
 export const Backdrop = ({word = "", hue, i = 0}) => {
   if (C.clean) return null;           // a thumbnail cut-out: the visual alone, on a transparent frame
   if (C.look) return <Surface i={i}/>;   // a film look draws on its own surface (looks.jsx)
-  const frame = useCurrentFrame() * (C.speed || 1);     // the design's pace sets how fast the backdrop drifts
+  const localFrame = useCurrentFrame(), cam = useCam();
+  const frame = localFrame * (C.speed || 1);     // the design's pace sets how fast the backdrop drifts
   const {width, height} = useVideoConfig();
   const h = hue || C.accent;
   const big = word && (
@@ -308,7 +316,9 @@ export const Backdrop = ({word = "", hue, i = 0}) => {
   if (C.fx && C.fx.layers && C.fx.layers.length) {
     return (
       <AbsoluteFill style={{background: C.bg, overflow: "hidden"}}>
-        {layer /* the chosen backdrop (it was computed but never drawn once every design had generated layers) */}
+        {/* the chosen backdrop (it was computed but never drawn once every design had generated layers); a rack-focus
+            shot starts it out of focus and pulls it sharp */}
+        <AbsoluteFill style={{filter: rackBlur(cam, localFrame) ? `blur(${rackBlur(cam, localFrame)}px)` : undefined}}>{layer}</AbsoluteFill>
         <GenLayers i={i}/>
         {(C.fx.bigWord ?? true) && big}
       </AbsoluteFill>

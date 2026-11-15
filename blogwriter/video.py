@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, camera, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -2296,6 +2296,7 @@ class VideoMaker:
             for ca, cz, line in word_lines(spoken.get(("en", "long", i), []), 0, 42):
                 long_captions.append({"from": starts[i] + LEAD + round(ca * FPS),
                                       "to": starts[i] + LEAD + round(cz * FPS), "text": line})
+        self.log(f"[camera] {camera.plan(long_scenes, plan['title'])}")      # a move for every shot (camera.py)
         # every shot is measured as drawn, captions included: nothing may run into anything else
         self.audit_layout(scenes, long_scenes, spoken, theme, job, long_captions, starts)
         self.log(variety.report(long_scenes))        # how samey is the finished plan? (it changes nothing)
@@ -2376,6 +2377,7 @@ class VideoMaker:
                 for ca, cz, line in word_lines(words, 0, 30):
                     captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
                                      "text": line})
+            camera.plan(short_scenes, plan["title"] + "short")
             self.audit_short(short_scenes, captions, st, [spoken[(lang, "short", b)] for b in order], theme, job, lang)
             path = os.path.join(job, f"short_{lang}.json")
             with open(path, "w", encoding="utf-8") as f:

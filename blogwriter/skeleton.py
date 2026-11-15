@@ -12,7 +12,8 @@ videos differ in their skeleton as well as their skin.
   progress the thin progress line, at the top or the bottom
   hub, spot, versus, stack, quote, list: how those shots are arranged (ring or fan, centre at the left or right, a
            diagonal or straight split, stacked cards, the quote's layout, the list's columns)
-  title    the headline at the left, the centre or the right"""
+  title    the headline at the left, the centre or the right
+  hud      the instrument layer: a viewfinder, telemetry, a focus reticle, or none"""
 import hashlib
 import json
 import random
@@ -35,9 +36,10 @@ OPTIONS: Dict[str, List[str]] = {
     "list": ["stack", "stagger", "cols"],
     "title": ["left", "center", "right"],
     "hook": ["center", "left", "stacked"],
+    "hud": ["viewfinder", "telemetry", "reticle", "none"],
 }
 # how often each kicker choice is drawn: a label on every shot is the template tell, so it is the rarest
-WEIGHTS = {"kicker": {"all": 1, "parts": 3, "none": 2}}
+WEIGHTS = {"kicker": {"all": 1, "parts": 3, "none": 2}, "hud": {"viewfinder": 3, "telemetry": 2, "reticle": 2, "none": 1}}
 
 
 def choose(seed: str, last: Optional[dict] = None) -> dict:

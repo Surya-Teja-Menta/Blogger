@@ -16,13 +16,15 @@
 //   list     the list as a column, staggered, or in two columns
 //   title    the headline at the left, the centre or the right
 //   hook     the words of a big-type shot: centred, at the left, or one to a line
+//   hud      a thin instrument layer in the accent over the whole video: a camera viewfinder (corner brackets, a timecode),
+//            telemetry (a scrolling ruler, the shot count), a focus reticle that locks on at the punch-ins, or none
 import React from "react";
 import {AbsoluteFill, random, useCurrentFrame, useVideoConfig} from "remotion";
-import {C, SERIES, alpha} from "./theme";
+import {C, FONT, SERIES, alpha} from "./theme";
 import {Shape} from "./gen";
 
 const DEFAULT = {decor: "shapes", kicker: "all", outro: "side", flow: "line", capAlign: "center", logo: "tl", progress: "top",
-  hub: "ring", spot: "left", versus: "diag", stack: "center", quote: "left", list: "stack", title: "left", hook: "center"};
+  hub: "ring", spot: "left", versus: "diag", stack: "center", quote: "left", list: "stack", title: "left", hook: "center", hud: "none"};
 export const layoutOf = () => ({...DEFAULT, ...(C.layout || {})});
 
 // does this shot show its label? (a shot with `partStart` opens a new part of the lesson)
@@ -122,4 +124,74 @@ export const Decor = ({i = 0, vertical = false}) => {
       })}
     </AbsoluteFill>
   );
+};
+
+// ---- hud: the instrument layer ----------------------------------------------------------------------------------------
+// Drawn over every shot and under the badge and captions; the layout audit skips it (it is chrome, not content).
+const pad2 = (n) => String(Math.floor(n)).padStart(2, "0");
+
+export const Hud = ({scenes, starts, vertical}) => {
+  const frame = useCurrentFrame();
+  const {width, height, fps} = useVideoConfig();
+  const mode = layoutOf().hud;
+  if (mode === "none") return null;
+  const inset = vertical ? 24 : 28, arm = vertical ? 64 : 92, col = alpha(C.accent, 0.75);
+  const here = Math.max(0, starts.filter((st) => st <= frame).length - 1);
+  const mono = {position: "absolute", right: inset + 18, top: vertical ? 132 : 60, fontFamily: FONT.mono, fontSize: vertical ? 24 : 30,
+                letterSpacing: 2, color: alpha(C.text, 0.72), textAlign: "right", lineHeight: 1.5};
+  const draw = ease((frame - 2) / 22);
+  let body = null;
+  if (mode === "viewfinder") {
+    const mid = [[width / 2, inset], [width / 2, height - inset], [inset, height / 2], [width - inset, height / 2]];
+    body = (
+      <>
+        <svg width={width} height={height} style={{position: "absolute"}}>
+          {[[0, 0, 1, 1], [1, 0, -1, 1], [0, 1, 1, -1], [1, 1, -1, -1]].map(([cx, cy, dx, dy], k) => {
+            const x = cx ? width - inset : inset, y = cy ? height - inset : inset;
+            return <path key={k} d={`M${x},${y + dy * arm * draw} L${x},${y} L${x + dx * arm * draw},${y}`} fill="none" stroke={col}
+                         strokeWidth={4} strokeLinecap="square"/>;
+          })}
+          {mid.map(([x, y], k) => <path key={k} d={k < 2 ? `M${x - 9},${y} L${x + 9},${y}` : `M${x},${y - 9} L${x},${y + 9}`}
+                                        stroke={alpha(C.accent, 0.4)} strokeWidth={2} opacity={draw}/>)}
+        </svg>
+        <div style={mono}>
+          <div>{`${pad2(frame / fps / 60)}:${pad2((frame / fps) % 60)}:${pad2(frame % fps)}`}</div>
+          <div style={{color: alpha(C.accent, 0.8)}}>{`SHOT ${pad2(here + 1)} / ${pad2(scenes.length)}`}</div>
+        </div>
+      </>
+    );
+  } else if (mode === "telemetry") {
+    const x = width - inset - 8, y0 = height * 0.3, y1 = height * 0.7, off = (frame * 0.7) % 20;
+    body = (
+      <>
+        <svg width={width} height={height} style={{position: "absolute"}} opacity={draw}>
+          <line x1={x} y1={y0} x2={x} y2={y1} stroke={alpha(C.accent, 0.35)} strokeWidth={2}/>
+          {Array.from({length: Math.floor((y1 - y0) / 20)}, (_, k) => {
+            const y = y0 + k * 20 + off, major = (k + Math.floor(frame * 0.7 / 20)) % 5 === 0;
+            return y < y1 ? <line key={k} x1={x - (major ? 22 : 11)} y1={y} x2={x} y2={y} stroke={alpha(C.accent, major ? 0.6 : 0.3)} strokeWidth={2}/> : null;
+          })}
+          <path d={`M${x - 34},${(y0 + y1) / 2} l14,-9 l0,18 z`} fill={alpha(C.accent, 0.8)}/>
+        </svg>
+        <div style={mono}>{`SHOT ${pad2(here + 1)} / ${pad2(scenes.length)}`}</div>
+      </>
+    );
+  } else if (mode === "reticle") {
+    // a focus reticle that snaps onto the subject on each punch-in (camera.py plans the moment)
+    const hits = scenes.map((s, k) => (s.cam && s.cam.punch != null ? {at: starts[k] + s.cam.punch, fx: s.cam.fx, fy: s.cam.fy} : null))
+      .filter((h) => h && frame >= h.at - 4 && frame < h.at + 30);
+    body = hits.map((h, k) => {
+      const t = frame - h.at, snap = ease((t + 4) / 8), fade = 1 - ease((t - 12) / 16), r = (vertical ? 84 : 110) * (1.7 - 0.7 * snap);
+      const cx = h.fx * width, cy = h.fy * height;
+      return (
+        <svg key={k} width={width} height={height} style={{position: "absolute"}} opacity={fade}>
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke={col} strokeWidth={4} strokeDasharray="12 14"/>
+          {[0, 90, 180, 270].map((a) => <line key={a} x1={cx + (r + 8) * Math.cos((a * Math.PI) / 180)} y1={cy + (r + 8) * Math.sin((a * Math.PI) / 180)}
+                                              x2={cx + (r + 26) * Math.cos((a * Math.PI) / 180)} y2={cy + (r + 26) * Math.sin((a * Math.PI) / 180)}
+                                              stroke={alpha(C.accent, 0.9)} strokeWidth={3}/>)}
+          <text x={cx} y={cy + r + 54} fill={alpha(C.accent, 0.9)} fontSize={vertical ? 26 : 32} fontFamily={FONT.mono} letterSpacing={5} textAnchor="middle">LOCK</text>
+        </svg>
+      );
+    });
+  }
+  return <AbsoluteFill data-audit="skip" style={{pointerEvents: "none"}}>{body}</AbsoluteFill>;
 };

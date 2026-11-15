@@ -19,7 +19,8 @@ import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 import {LookDefs, LookOverlay, LookStyle} from "./looks";
 import {LayoutAudit} from "./audit";
 import {captionStyle} from "./captions";
-import {kickerPolicy, layoutOf} from "./skeleton";
+import {Hud, kickerPolicy, layoutOf} from "./skeleton";
+import {CamContext} from "./camera";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -125,12 +126,15 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
               {i > 0 && <TransitionSeries.Transition presentation={cut(C.cuts[i % C.cuts.length], width, height)}
                                                      timing={springTiming({config: {damping: 200}, durationInFrames: TRANSITION})}/>}
               <TransitionSeries.Sequence durationInFrames={s.frames}>
-                {s.chapter ? (
-                  <>
-                    <Sequence from={STING - 6}>{scene(shot)}</Sequence>
-                    <ChapterSting kicker={s.chapter.kicker} title={s.chapter.title} vertical={vertical}/>
-                  </>
-                ) : scene(s)}
+                {/* the shot's camera move (camera.jsx); a punch-in moves with the cues of an act's first shot */}
+                <CamContext.Provider value={s.cam && s.chapter ? {...s.cam, punch: late(s.cam.punch)} : s.cam || null}>
+                  {s.chapter ? (
+                    <>
+                      <Sequence from={STING - 6}>{scene(shot)}</Sequence>
+                      <ChapterSting kicker={s.chapter.kicker} title={s.chapter.title} vertical={vertical}/>
+                    </>
+                  ) : scene(s)}
+                </CamContext.Provider>
               </TransitionSeries.Sequence>
             </React.Fragment>
           );
@@ -140,6 +144,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       {!clean && <Texture/>}
       <LookOverlay/>
       <Letterbox spans={bars} vertical={vertical}/>
+      {!clean && <Hud scenes={scenes} starts={starts} vertical={vertical}/>}
       {!clean && <Badge channel={channel} vertical={vertical}/>}
       {/* while the subscribe card is up, the captions step aside so the two never overlap */}
       <Caption captions={captions} vertical={vertical} aside={subscribe && !clean && !vertical
