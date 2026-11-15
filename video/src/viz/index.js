@@ -8,5 +8,6 @@ import {DATA} from "./data";
 import {AI} from "./ai";
 import {OPS} from "./ops";
 import {PATTERNS} from "./patterns";
+import {GLOBE} from "./globe";
 
-export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS};
+export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE};

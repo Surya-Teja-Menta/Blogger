@@ -29,6 +29,8 @@ FONTS: Dict[str, tuple] = {
     "ArchivoBlack": ((400,), "display"), "AbrilFatface": ((400,), "display"),
     "Merriweather": ((400, 700, 900), "both"), "Nunito": ((400, 700, 900), "body"),
     "DMSans": ((400, 600, 800), "body"),
+    "Cinzel": ((400, 600, 700), "display"), "BodoniModa": ((400, 600, 700), "display"), "Marcellus": ((400,), "display"),
+    "Prata": ((400,), "display"), "LibreCaslonDisplay": ((400,), "display"), "Jost": ((400, 600, 800), "both"),
     # used only by the film looks (looks.py): handwriting, technical and period faces
     "Kalam": ((400, 700), "hand"), "ArchitectsDaughter": ((400,), "hand"), "Caveat": ((400, 700), "hand"),
     "PatrickHand": ((400,), "hand"), "SpecialElite": ((400,), "hand"), "IBMPlexMono": ((400, 600), "mono"),
@@ -36,8 +38,9 @@ FONTS: Dict[str, tuple] = {
     "CormorantGaramond": ((400, 600, 700), "look"), "Limelight": ((400,), "look"), "Bungee": ((400,), "look"),
 }
 # what a free design picks: a luxury house's type (refined serifs for headlines, a quiet sans for text), not the loud faces
-DISPLAY_FONTS = ("PlayfairDisplay", "CormorantGaramond", "Fraunces", "InstrumentSerif", "DMSerifDisplay", "LibreBaskerville", "Montserrat")
-BODY_FONTS = ("Inter", "Manrope", "DMSans", "Lora", "Outfit", "WorkSans")
+DISPLAY_FONTS = ("PlayfairDisplay", "CormorantGaramond", "Cinzel", "BodoniModa", "Marcellus", "Prata", "LibreCaslonDisplay", "Fraunces",
+                 "InstrumentSerif", "DMSerifDisplay", "LibreBaskerville", "Montserrat")
+BODY_FONTS = ("Inter", "Manrope", "DMSans", "Lora", "Outfit", "WorkSans", "Jost")
 OPEN_FONTS = list(DISPLAY_FONTS + BODY_FONTS)
 BACKGROUNDS = tuple(palettes.BACKDROPS)         # the soft animated backdrops (fx.jsx, backdrops.jsx)
 CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
@@ -269,7 +272,7 @@ def generate(seed: str) -> dict:
            "cool": colour(acc + harmony[2], 0.75, lit, 2.4),
            "violet": colour(hue + 0.02, 0.7, lit + (0.08 if not light else -0.06), 2.4)}
     display = rnd.choice(DISPLAY_FONTS)
-    upper = display == "Montserrat" or rnd.random() < 0.25
+    upper = display in ("Montserrat", "Cinzel") or rnd.random() < 0.25
     back = rnd.choice([b for b in BACKGROUNDS if light == (b == "paper") or b in ("waves", "rays")])
     return _finish(pal, display, rnd.choice(BODY_FONTS), upper, back,
                    rnd.sample(CUTS, 4), rnd.choice(("calm", "steady")), "generated",

@@ -46,6 +46,9 @@ BACKDROPS: Dict[str, str] = {
     "bokeh": "city night human life story culture society",
     "flow": "wind fluid streaming traffic weather learning flow",
     "mesh": "abstract modern brand design product startup interface data statistics system",
+    # drawn by a shader (video/src/silk.jsx): the richest ones, the brand's signature
+    "silk": "luxury premium elegant brand rich calm story education lesson learning explained statistics system finance business culture",
+    "marble": "luxury premium elegant brand formal law finance history power strategy politics economy classic",
 }
 
 

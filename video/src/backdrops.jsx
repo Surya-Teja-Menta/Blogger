@@ -4,6 +4,7 @@
 import React from "react";
 import {AbsoluteFill, random, useVideoConfig} from "remotion";
 import {C, alpha} from "./theme";
+import {Marble, Silk} from "./silk";
 
 const R = (tag, k = 0) => random(`bd${tag}${k}`);
 
@@ -161,4 +162,4 @@ const Mesh = ({frame}) => {
                                            `linear-gradient(135deg, ${C.bg}, ${C.panel})`].join(", ")}}/>;
 };
 
-export const BACKS = {stars: Stars, circuit: Circuit, hexgrid: HexGrid, bokeh: Bokeh, ripples: Ripples, stripes: Stripes, flow: FlowField, mesh: Mesh};
+export const BACKS = {stars: Stars, circuit: Circuit, hexgrid: HexGrid, bokeh: Bokeh, ripples: Ripples, stripes: Stripes, flow: FlowField, mesh: Mesh, silk: Silk, marble: Marble};

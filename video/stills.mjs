@@ -10,7 +10,7 @@ import {openBrowser, renderStill, selectComposition} from "@remotion/renderer";
 const jobs = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const serveUrl = await bundle({entryPoint: path.resolve("src/index.jsx"), rootDir: process.cwd(),
                                publicDir: path.resolve("public")});
-const browser = await openBrowser("chrome");
+const browser = await openBrowser("chrome", {chromiumOptions: {gl: "swangle"}});      // software WebGL for the shader backdrops
 let failed = 0;
 for (const j of jobs) {
   try {
@@ -23,10 +23,12 @@ for (const j of jobs) {
     await renderStill({serveUrl, composition, output: j.out, frame: j.frame, imageFormat: png ? "png" : "jpeg",
                        inputProps,
                        ...(png ? {} : {jpegQuality: 90}), scale: j.scale || 0.5, puppeteerInstance: browser,
-                       timeoutInMilliseconds: 120000, ...(j.audit ? {logLevel: "verbose"} : {}),
-                       onBrowserLog: j.audit ? (l) => {
-                         if (String(l.text).startsWith("LAYOUT_AUDIT ")) found = String(l.text).slice(13);
-                       } : undefined});
+                       timeoutInMilliseconds: 120000, logLevel: "verbose",
+                       onBrowserLog: (l) => {
+                         const text = String(l.text);
+                         if (j.audit && text.startsWith("LAYOUT_AUDIT ")) found = text.slice(13);
+                         if (text.startsWith("WEBGL ")) console.log(`webgl ${text.slice(6)}`);        // does this machine draw shaders?
+                       }});
     if (j.audit) {
       for (let k = 0; k < 20 && !found; k++) await new Promise((r) => setTimeout(r, 100));     // the log can trail the picture
       console.log(`audit ${j.out} ${found || "{}"}`);

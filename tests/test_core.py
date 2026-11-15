@@ -1686,7 +1686,8 @@ def test_short_scripts_are_lengthened_line_by_line_and_the_outro_names_the_chann
         def complete_json(self, prompt, **kw):
             if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 lines = json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])
-                return {"lines": [line + " and here is why that matters to you" for line in lines]}
+                longer = "The video is too short" in prompt                 # only the lengthening pass changes the lines
+                return {"lines": [line + " and here is why that matters to you" if longer else line for line in lines]}
             return {"title": "T", "thumb_text": "x", "description": "D", "tags": [], "outro": "",
                     "scenes": [{"kind": "hook", "narration": "Why does light win?"},
                                {"kind": "photo", "narration": "Light is fast."},
@@ -1754,6 +1755,8 @@ def test_long_lessons_are_written_part_by_part_from_an_outline():
                 return {"short": [{"scene": 1, "narration": "Watch the ball roll."}]}
             if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            if "first four lines" in prompt:                      # the introduction writer: nothing usable, the script stays
+                return {}
             raise AssertionError("unexpected prompt")
 
     brief = check_brief({"style": "education", "minutes": 10, "acts": [{"title": "The bowl", "job": "x"}]}, "education")
@@ -1788,6 +1791,8 @@ def test_a_thin_outline_still_gives_a_full_length_lesson():
                 return {"short": []}
             if prompt.startswith(("These are the narration lines", "You are the comedy writer")):
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            if "first four lines" in prompt:                      # the introduction writer: nothing usable, the script stays
+                return {}
             raise AssertionError("unexpected prompt")
 
     brief = check_brief({"minutes": 10, "acts": [{"title": "One"}]}, "education")
@@ -1816,6 +1821,8 @@ def test_a_long_video_is_always_written_part_by_part_even_without_a_usable_outli
             if prompt.startswith(("These are the shots of a video", "You are the comedy writer", "These are the narration")):
                 return {"short": []} if "shots of a video" in prompt else \
                     {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            if "first four lines" in prompt:                      # the introduction writer: nothing usable, the script stays
+                return {}
             raise AssertionError("one request for a long video must never happen")
 
     brief = check_brief({"minutes": 10, "acts": [{"title": "Setup", "job": "the jar of sweets"},

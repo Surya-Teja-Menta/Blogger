@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, skeleton, variety, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -881,7 +881,7 @@ def remotion(args: List[str], log: Callable[[str], None], timeout: int = 3600) -
         raise RuntimeError("Node.js (npx) is not installed")
     extra = [] if args[0] == "ffmpeg" else ["--log=error"]
     if args[0] in ("render", "still"):
-        extra.append("--timeout=120000")
+        extra += ["--timeout=120000", "--gl=swangle"]          # software WebGL: the shader backdrops draw on a machine without a graphics card
     for attempt in range(2):             # the headless browser occasionally fails to start; once more then
         r = subprocess.run([npx, "remotion", *args, *extra], cwd=VIDEO_APP, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
@@ -1998,8 +1998,11 @@ class VideoMaker:
                 plan = again
         if spoken_words(plan) < words_needed * 0.9:        # still short: the same shots, each explained more
             plan = self.expand(plan, words_needed)
+        if style in ("education", "concept"):               # the owner: a video must not start straight at the point
+            plan = self.introduce(plan, brief, title, facts)
         if style == "education":                            # the lesson voice: sarcasm a viewer actually hears
             plan = self.punch_up(plan, brief)
+        plan = self.plain_pass(plan)                        # ... in words a normal person says
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:MAX_SCENES]:
             if not isinstance(sc, dict):
@@ -2013,8 +2016,8 @@ class VideoMaker:
                 self.log("[video] quiz shot left out (QUIZZES=off)")
                 continue
             # a fact's number must be in the research; a worked example's numbers must be on screen in the shot
-            narration = uncredit(strip_persona(strip_unsupported_numbers(speakable(str(sc.get("narration", "")).strip()),
-                                                                         f"{allowed} {maths_shown(scene)}")))
+            narration = plainwords.plainer(uncredit(strip_persona(strip_unsupported_numbers(
+                speakable(str(sc.get("narration", "")).strip()), f"{allowed} {maths_shown(scene)}"))))
             if not narration:
                 continue
             used = [int(n) for n in sc.get("facts", []) if str(n).isdigit() and 0 < int(n) <= len(facts)]
@@ -2496,6 +2499,57 @@ class VideoMaker:
         for sc, line in zip(rows, out):
             sc["narration"] = line
         self.log(f"[video] comedy pass: {changed} of {len(lines)} lines punched up")
+        return plan
+
+    def plain_pass(self, plan: dict) -> dict:
+        """Every narration line rewritten in plain spoken English (the owner: the words were bookish, "the AI way").
+        A line keeps its numbers and stays within its length, or it is left as it was."""
+        rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
+        lines = [str(sc.get("narration", "")) for sc in rows]
+        changed = 0
+        for start in range(0, len(lines), 40):
+            batch = lines[start:start + 40]
+            try:
+                reply = self.design_json(plainwords.PLAIN.format(n=len(batch), lines=json.dumps(batch, ensure_ascii=False)))
+            except LLMError:
+                continue
+            new = reply.get("lines") if isinstance(reply, dict) else None
+            if not isinstance(new, list) or len(new) != len(batch):
+                continue
+            for k, (old, line) in enumerate(zip(batch, new)):
+                line = " ".join(str(line or "").split())
+                same_numbers = sorted(re.findall(r"\d[\d,.]*", line)) == sorted(re.findall(r"\d[\d,.]*", old))
+                if line and line != old and same_numbers and len(line.split()) <= (28 if start + k == 0 else 60):
+                    rows[start + k]["narration"] = line
+                    changed += 1
+        self.log(f"[video] plain pass: {changed} of {len(lines)} lines put into plainer words")
+        return plan
+
+    def introduce(self, plan: dict, brief: dict, title: str, facts: list) -> dict:
+        """A lesson that does not welcome the viewer in its first two lines gets four introduction shots in front
+        (welcome, what it is, why it matters, the road), written for this topic."""
+        rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
+        if not rows or plainwords.has_welcome([str(sc.get("narration", "")) for sc in rows]):
+            return plan
+        try:
+            reply = self.design_json(plainwords.INTRO.format(
+                title=title, channel=brief.get("channel") or self.s.channel_name,
+                facts="\n".join(f"- {str(f.get('claim', f))[:160]}" for f in (facts or [])[:6]) or "-"))
+        except LLMError:
+            reply = None
+        lines = reply.get("lines") if isinstance(reply, dict) else None
+        heads = (reply.get("headlines") if isinstance(reply, dict) else None) or []
+        if not isinstance(lines, list) or len(lines) != 4 or not all(isinstance(x, str) and 3 <= len(x.split()) <= 40 for x in lines) \
+                or not plainwords.has_welcome([str(x) for x in lines]):
+            self.log("[video] no welcome in the script and no usable introduction written; the script stays as it is")
+            return plan
+        kinds = ("hook", "diagram", "photo", "diagram")
+        intro = [{"kind": kinds[k], "headline": " ".join(str((heads + [""] * 4)[k]).split()[:5]), "narration": " ".join(lines[k].split()),
+                  "act": ""} for k in range(4)]
+        if rows[0].get("kind") == "hook":                    # the old first shot is no longer the opening
+            rows[0]["kind"] = "photo"
+        plan["scenes"] = intro + [sc for sc in plan.get("scenes") or []]
+        self.log("[video] the script had no welcome: four introduction shots written")
         return plan
 
     def expand(self, plan: dict, words_needed: int) -> dict:

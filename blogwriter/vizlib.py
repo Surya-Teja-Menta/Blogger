@@ -1,4 +1,4 @@
-"""The visual-technique library: 168 animated diagram parts (video/src/viz/*.jsx draws them) the diagram designer
+"""The visual-technique library: 169 animated diagram parts (video/src/viz/*.jsx draws them) the diagram designer
 can drop into a shot, beside the eleven older parts in diagram.py. Each technique is a moving picture of one kind
 of idea: charts (waffle, sankey, ridgeline...), system design (hash rings, Raft elections, caches, queues, sequence
 diagrams...), machine learning, deep learning, LLMs and GenAI architecture (attention, KV cache, RLHF, RAG...), Kubernetes
@@ -14,7 +14,7 @@ import random
 import re
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import graphics
+from . import graphics, places
 
 # field kinds: ("text", words) ("texts", words, lo, hi) ("num", lo, hi, default) ("int", lo, hi, default)
 # ("choice", options, default) ("bool", default) ("nums", lo, hi) ("icon",) ("list", lo, hi, {sub}) ("ref", field)
@@ -187,6 +187,11 @@ _t("log", "system", "an append-only log: entries added at the end with offsets, 
    "their own pace", {"entries": ("texts", 2, 4, 10), "readers": ("texts", 2, 1, 3)},
    {"entries": ["signup", "login", "order", "pay", "ship"], "readers": ["search", "analytics"]},
    "log append offset kafka stream event sourcing replay", (50, 50))
+_t("globe", "system", "a slowly turning dot-matrix globe with pins on real places and arcs of traffic between them: users and "
+   "servers spread over the world, CDN edges and cloud regions, delay growing with distance, where something happens",
+   {"places": ("texts", 2, 2, 6), "links": ("choice", ("star", "chain"), "star")},
+   {"places": ["Mumbai", "London", "New York", "Singapore"], "links": "star"},
+   "globe world global cdn region latency geo distance replication datacenter edge international countries cities trade", (50, 55))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},
@@ -826,6 +831,11 @@ def _special(el: dict, why: List[str]) -> bool:
         el["lo"], el["hi"] = min(el["values"]), max(el["values"])
         if el["hi"] <= el["lo"]:
             el["hi"] = el["lo"] + 1
+    if t == "globe":
+        el["geo"] = places.resolve(el["places"])
+        if len(el["geo"]) < 2:
+            why.append("globe needs at least 2 places it knows (big cities or cloud regions such as us-east)")
+            return True
     if t == "quorum":
         el["writes"], el["reads"] = min(el["writes"], el["n"]), min(el["reads"], el["n"])
     if t == "confusion":
