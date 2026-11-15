@@ -564,17 +564,22 @@ export const MapScene = ({s, i, vertical}) => {
 export const ListScene = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
+  // the skeleton: a column, a staggered column or (wide frames, four items or more) two columns
+  const mode = vertical ? "stack" : layoutOf().list;
+  const cols = mode === "cols" && (s.items || []).length >= 4, stagger = mode === "stagger";
   return (
     <AbsoluteFill>
       {media(s) ? <><Plate s={s} i={i} grade={0.22}/><AbsoluteFill style={{background: alpha(C.bg, 0.45)}}/></> : <Backdrop word={s.kicker} i={i}/>}
       <Head s={s} vertical={vertical}/>
       <Camera i={i} amount={0.5}>
-        <div style={{position: "absolute", ...pad(vertical), top: vertical ? 680 : 420}}>
+        <div style={{position: "absolute", ...pad(vertical), top: vertical ? 680 : (s.items || []).length >= 4 ? 340 : 420,
+                     ...(cols ? {display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 36, alignItems: "start"} : {})}}>
           {(s.items || []).map((it, k) => {
             const p = pop(frame - 12 - k * 10);
             return (
               <Glass key={k} p={p} style={{display: "flex", alignItems: "center", gap: 36, padding: vertical ? "26px 36px" : "22px 40px",
-                                           marginBottom: vertical ? 26 : 22, transform: `translateX(${(1 - p) * -120}px)`}}>
+                                           marginBottom: vertical ? 26 : 22, transform: `translateX(${(1 - p) * -120}px)`,
+                                           marginLeft: stagger && k % 2 ? 180 : 0, marginRight: stagger && !(k % 2) ? 180 : 0}}>
                 <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: vertical ? 84 : 72, color: C.accent, width: vertical ? 120 : 110}}>
                   {String(k + 1).padStart(2, "0")}
                 </div>
@@ -595,15 +600,21 @@ export const QuoteScene = ({s, i, vertical}) => {
   const words = (s.quote || "").split(/\s+/).filter(Boolean);
   const shown = clamp((frame - 6) / Math.max(1, durationInFrames * 0.75 - 6)) * words.length;
   const p = useEnter(0);
+  // the skeleton: the quote at the left under its mark, centred, or beside a big mark (a Short has no side column)
+  const mode = vertical && layoutOf().quote === "split" ? "center" : layoutOf().quote;
+  const centred = mode === "center", split = mode === "split";
   return (
     <AbsoluteFill>
       <Backdrop i={i}/>
       <Camera i={i}>
         <div style={{position: "absolute", left: vertical ? 70 : 220, right: vertical ? 70 : 220, top: vertical ? 300 : 0,
-                     bottom: vertical ? undefined : 0, display: "flex", flexDirection: "column", justifyContent: "center"}}>
-          <div data-audit="skip" style={{fontFamily: "Georgia, serif", fontSize: 340, lineHeight: 0.55, color: C.accent, opacity: p,
-                       transform: `translateY(${(1 - p) * 40}px) scale(${0.6 + 0.4 * p})`, transformOrigin: "left",
-                       textShadow: `0 0 60px ${alpha(C.accent, 0.4)}`}}>&ldquo;</div>
+                     bottom: vertical ? undefined : 0, display: "flex", flexDirection: split ? "row" : "column", justifyContent: "center",
+                     alignItems: split ? "center" : centred ? "center" : undefined, textAlign: centred ? "center" : undefined,
+                     gap: split ? 60 : 0}}>
+          <div data-audit="skip" style={{fontFamily: "Georgia, serif", fontSize: split ? 440 : 340, lineHeight: split ? 1 : 0.55, color: C.accent, opacity: p,
+                       transform: `translateY(${(1 - p) * 40}px) scale(${0.6 + 0.4 * p})`, transformOrigin: centred ? "center" : "left",
+                       paddingTop: split ? 150 : 0, textShadow: `0 0 60px ${alpha(C.accent, 0.4)}`}}>&ldquo;</div>
+          <div style={split ? {flex: 1} : undefined}>
           <div style={{fontFamily: FONT.body, fontWeight: 700, fontSize: vertical ? 56 : 64, lineHeight: 1.3, color: C.text}}>
             {words.map((w, k) => {
               const on = clamp(shown - k + 1);
@@ -611,9 +622,11 @@ export const QuoteScene = ({s, i, vertical}) => {
                                            transform: `translateY(${(1 - on) * 8}px)`}}>{w}</span>;
             })}
           </div>
-          <div style={{display: "flex", alignItems: "center", gap: 20, marginTop: 44, opacity: clamp(shown / Math.max(1, words.length) * 3 - 1)}}>
+          <div style={{display: "flex", alignItems: "center", gap: 20, marginTop: 44, justifyContent: centred ? "center" : undefined,
+                       opacity: clamp(shown / Math.max(1, words.length) * 3 - 1)}}>
             <div style={{width: 80, height: 4, background: C.accent}}/>
             <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: vertical ? 56 : 52, color: C.accent}}>{s.speaker}</div>
+          </div>
           </div>
         </div>
       </Camera>

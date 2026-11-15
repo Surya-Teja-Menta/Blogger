@@ -157,7 +157,10 @@ const Hub = ({s, i, vertical}) => {
   const g = s.graphic, nodes = g.nodes, n = nodes.length;
   // the ring of players fits the band between the headline's real bottom edge (a long headline wraps to two lines) and
   // the captions: the top label never reaches the headline, the lowest one never reaches the captions
-  const cx = width / 2;
+  // how the players are arranged is part of the video's skeleton (skeleton.jsx): a ring round the centre, or a fan
+  // beside a centre at the left or the right (wide frames, up to four players: their names stand beside them)
+  const mode = vertical || n > 4 ? "ring" : layoutOf().hub, fan = mode === "fan" || mode === "fanr", dir = mode === "fanr" ? -1 : 1;
+  const cx = fan ? width * (dir > 0 ? 0.27 : 0.73) : width / 2;
   const bandTop = titleBottom(s, vertical, {maxWidth: vertical ? 940 : 1500}) + 16, bandEnd = vertical ? 1400 : 955;
   const labelRoom = vertical ? 420 : 340;                             // a disc, its gap and its label (up to two lines), both ends
   const rx = vertical ? 360 : 640;
@@ -167,18 +170,18 @@ const Hub = ({s, i, vertical}) => {
   // no node straight below the centre, where the centre's own label sits
   const below = nodes.some((_, k) => Math.abs(((-90 + (360 * k) / n) % 360 + 360) % 360 - 90) < 25);
   const start = -Math.PI / 2 + (below ? Math.PI / n : 0);
-  const pos = nodes.map((_, k) => {
-    const a = start + (2 * Math.PI * k) / n + turn;
-    return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)];
-  });
+  const angle = (k) => (fan ? ((-70 + (n === 1 ? 70 : (140 * k) / (n - 1))) * Math.PI) / 180 : start + (2 * Math.PI * k) / n + turn);
+  const reach = fan ? width * 0.4 : rx;
+  const pos = nodes.map((_, k) => [cx + dir * reach * Math.cos(angle(k)), cy + ry * Math.sin(angle(k))]);
   // a node above the centre carries its label on top, so the label never runs into the centre disc
-  const up = nodes.map((_, k) => Math.sin(start + (2 * Math.PI * k) / n) < -0.5);
+  const up = nodes.map((_, k) => !fan && Math.sin(angle(k)) < -0.5);
   const half = (vertical ? 150 : 120) / 2;
   const centerAt = g.center.at;
   // the centre first, then each player with its spoke back to the centre
   const focus = [{at: centerAt, box: around([cx, cy + 40], vertical ? 420 : 420, vertical ? 420 : 380)},
                  ...nodes.map((nd, k) => {
-                   const b = around([pos[k][0], pos[k][1] + (up[k] ? -40 : 40)], vertical ? 360 : 300, vertical ? 300 : 220);
+                   const b = fan ? around([pos[k][0] + dir * 150, pos[k][1]], 520, 200)
+                     : around([pos[k][0], pos[k][1] + (up[k] ? -40 : 40)], vertical ? 360 : 300, vertical ? 300 : 220);
                    // the centre's disc and its label stay inside the camera's frame too (the zoom would push them under the captions)
                    return {at: nd.at, box: [Math.min(b[0], cx), Math.min(b[1], cy), Math.max(b[2], cx), Math.max(b[3], cy + (vertical ? 230 : 215))]};
                  })];
@@ -203,7 +206,11 @@ const Hub = ({s, i, vertical}) => {
         <div key={k} style={{position: "absolute", left: pos[k][0], top: pos[k][1],
                              transform: up[k] ? `translate(-50%, calc(-100% + ${half}px))` : `translate(-50%, -${half}px)`}}>
           <Disc icon={nd.icon} at={nd.at} size={vertical ? 150 : 120} color={SERIES[(k + 1) % SERIES.length]}
-                label={nd.label} labelSize={vertical ? 40 : 34} above={up[k]}/>
+                label={fan ? undefined : nd.label} labelSize={vertical ? 40 : 34} above={up[k]}/>
+          {fan && <div style={{position: "absolute", top: "50%", transform: "translateY(-50%)", whiteSpace: "nowrap",
+                               [dir > 0 ? "left" : "right"]: "100%", margin: dir > 0 ? "0 0 0 24px" : "0 24px 0 0",
+                               fontFamily: FONT.body, fontWeight: 800, fontSize: 36, color: C.text,
+                               opacity: clamp((frame - nd.at - 4) / 10)}}>{nd.label}</div>}
         </div>
       ))}
     </Frame>
@@ -262,6 +269,8 @@ const Kinetic = ({s, i, vertical}) => {
   const longest = Math.max(...words.map((w) => w.length), 4);
   const size = Math.min(vertical ? 150 : 180, ((vertical ? 920 : 1320) / longest) * 1.6);
   const ghost = (words.find((w) => mark.includes(w.toLowerCase().replace(/[^\w]/g, ""))) || words[0] || "").toUpperCase();
+  // the skeleton: the words centred, at the left, or one to a line at the left (up to four words)
+  const hook = layoutOf().hook, stacked = hook === "stacked" && words.length <= 4, hookLeft = hook === "left" || stacked;
   return (
     <AbsoluteFill>
       <Backdrop word="" i={i}/>
@@ -279,8 +288,11 @@ const Kinetic = ({s, i, vertical}) => {
         </div>
       ))}
       <Camera i={i} amount={0.4}>
-        <AbsoluteFill style={{alignItems: "center", justifyContent: "center", padding: vertical ? "0 70px" : "0 300px"}}>
-          <div style={{display: "flex", flexWrap: "wrap", justifyContent: "center", gap: `${size * 0.1}px ${size * 0.28}px`,
+        {/* (AbsoluteFill is a column: alignItems places the words across the frame, justifyContent down it) */}
+        <AbsoluteFill style={{alignItems: hookLeft ? "flex-start" : "center", justifyContent: "center",
+                              padding: vertical ? "0 70px" : hookLeft ? "0 200px" : "0 300px"}}>
+          <div style={{display: "flex", flexWrap: "wrap", justifyContent: hookLeft ? "flex-start" : "center", gap: `${size * 0.1}px ${size * 0.28}px`,
+                       flexDirection: stacked ? "column" : "row", alignItems: stacked ? "flex-start" : undefined,
                        maxWidth: vertical ? 940 : 1320}}>
             {words.map((w, k) => {
               const at = (g.words && g.words[k]) ?? 4 + k * 4;
@@ -311,12 +323,14 @@ const Spotlight = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
   const g = s.graphic;
-  const cx = vertical ? width / 2 : width * 0.32, cy = vertical ? 820 : height * 0.6;
+  const mirror = !vertical && layoutOf().spot === "right";               // the skeleton: centre at the right, words at the left
+  const cx = vertical ? width / 2 : width * (mirror ? 0.68 : 0.32), cy = vertical ? 820 : height * 0.6;
   const R = vertical ? 200 : 230;
   const at = g.center.at;
   const p = pop(frame - at);
   // the tags are read in close; the camera then returns to the whole
-  const tags = vertical ? [70, cy + R * 1.5, width - 70, cy + R * 1.5 + 360] : [width * 0.56, cy - 190, width - 100, cy + 230];
+  const tags = vertical ? [70, cy + R * 1.5, width - 70, cy + R * 1.5 + 360]
+    : mirror ? [100, cy - 190, width * 0.44, cy + 230] : [width * 0.56, cy - 190, width - 100, cy + 230];
   const focus = (g.nodes || []).map((nd) => ({at: nd.at, box: tags}));
   return (
     <Frame s={s} i={i} vertical={vertical} focus={focus}>
@@ -334,6 +348,7 @@ const Spotlight = ({s, i, vertical}) => {
         <Disc icon={g.center.icon} at={at} size={R * 2} color={C.accent}/>
       </div>
       <div style={{position: "absolute", ...(vertical ? {left: 70, right: 70, top: cy + R * 1.5, alignItems: "center"}
+                                                       : mirror ? {left: 120, right: width * 0.58, top: cy - 170}
                                                        : {left: width * 0.58, right: 120, top: cy - 170}),
                    display: "flex", flexDirection: "column", gap: 26}}>
         <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: vertical ? 84 : 80, lineHeight: 1, color: C.text,
@@ -363,6 +378,7 @@ const Versus = ({s, i, vertical}) => {
   const frame = useCurrentFrame();
   const {width, height, fps} = useVideoConfig();
   const [a, b] = s.graphic.nodes;
+  const tilt = layoutOf().versus === "straight" ? 0 : 1;               // the skeleton: a diagonal split or a straight one
   const pa = pop(frame - a.at);
   const pb = pop(frame - b.at);
   const vsAt = Math.max(a.at, b.at) + 4;
@@ -383,14 +399,14 @@ const Versus = ({s, i, vertical}) => {
   return (
     <Frame s={s} i={i} vertical={vertical} focus={focus}>
       <svg width={width} height={height} style={{position: "absolute"}}>
-        <polygon points={vertical ? `0,${height * 0.52} ${width},${height * 0.48} ${width},${height} 0,${height}`
-                                  : `${width * 0.55},0 ${width},0 ${width},${height} ${width * 0.45},${height}`}
+        <polygon points={vertical ? `0,${height * (0.5 + 0.02 * tilt)} ${width},${height * (0.5 - 0.02 * tilt)} ${width},${height} 0,${height}`
+                                  : `${width * (0.5 + 0.05 * tilt)},0 ${width},0 ${width},${height} ${width * (0.5 - 0.05 * tilt)},${height}`}
                  fill={alpha(C.cool, 0.07)} opacity={pb}/>
-        <polygon points={vertical ? `0,0 ${width},0 ${width},${height * 0.48} 0,${height * 0.52}`
-                                  : `0,0 ${width * 0.55},0 ${width * 0.45},${height} 0,${height}`}
+        <polygon points={vertical ? `0,0 ${width},0 ${width},${height * (0.5 - 0.02 * tilt)} 0,${height * (0.5 + 0.02 * tilt)}`
+                                  : `0,0 ${width * (0.5 + 0.05 * tilt)},0 ${width * (0.5 - 0.05 * tilt)},${height} 0,${height}`}
                  fill={alpha(C.accent, 0.06)} opacity={pa}/>
-        <line x1={vertical ? 0 : width * 0.55} y1={vertical ? height * 0.52 : 0} x2={vertical ? width : width * 0.45}
-              y2={vertical ? height * 0.48 : height} stroke={C.text} strokeOpacity={0.25} strokeWidth={3}
+        <line x1={vertical ? 0 : width * (0.5 + 0.05 * tilt)} y1={vertical ? height * (0.5 + 0.02 * tilt) : 0}
+              x2={vertical ? width : width * (0.5 - 0.05 * tilt)} y2={vertical ? height * (0.5 - 0.02 * tilt) : height} stroke={C.text} strokeOpacity={0.25} strokeWidth={3}
               pathLength={1} strokeDasharray={1} strokeDashoffset={1 - ease((frame - vsAt + 10) / 20)}/>
       </svg>
       {side(a, 0, pa)}
@@ -412,14 +428,16 @@ const Stack = ({s, i, vertical}) => {
   const n = nodes.length;
   // the stack stands on the caption line (the captions sit at 74% of a Short and along the bottom of a wide video),
   // and rises no higher than the headline's real bottom edge
-  const stackEnd = vertical ? 1400 : height - 125;
+  const stackEnd = vertical ? 1300 : height - 195;          // (the camera's push and the cards' tilt carry the bottom card lower)
   const stackTop = vertical ? titleBottom(s, true, {maxWidth: 940}) + 24 : 290;
   const gap = 30;                                         // room for the cards' tilt: tilted cards must not touch
   const h = vertical ? Math.max(92, Math.min(170, (stackEnd - stackTop) / n - gap)) : Math.min(130, (stackEnd - stackTop) / n - gap);
+  const place = vertical ? "center" : layoutOf().stack;                // the skeleton: centred, at the left or at the right
   const w = vertical ? 900 : 1100;
+  const x0 = () => (place === "left" ? 120 : place === "right" ? width - w - 120 : (width - w) / 2);
   const base = stackEnd + gap;
   // the camera rises with the stack, framing each new layer with the one it rests on
-  const layer = (k) => [(width - w) / 2, base - (k + 1) * (h + gap), (width + w) / 2, base - k * (h + gap) - gap];
+  const layer = (k) => [x0(k), base - (k + 1) * (h + gap), x0(k) + w, base - k * (h + gap) - gap];
   const focus = nodes.map((nd, k) => {
     const b = layer(k), under = layer(Math.max(0, k - 1));
     return {at: nd.at, box: [b[0], b[1], b[2], under[3]]};
@@ -432,7 +450,7 @@ const Stack = ({s, i, vertical}) => {
         const y = base - (k + 1) * (h + gap);
         const indent = k * (vertical ? 30 : 50);
         return (
-          <div key={k} style={{position: "absolute", left: (width - w) / 2 + indent, width: w - 2 * indent, top: y, height: h,
+          <div key={k} style={{position: "absolute", left: x0(k) + indent, width: w - 2 * indent, top: y, height: h,
                                transform: `translateY(${(1 - p) * -500}px) perspective(1200px) rotateX(${(1 - p) * 40 + 8}deg)`,
                                opacity: clamp(p * 2), borderRadius: 22, display: "flex", alignItems: "center", gap: 30,
                                padding: "0 40px", background: `linear-gradient(90deg, ${alpha(col, 0.32)}, ${alpha(C.panel, 0.9)} 60%)`,

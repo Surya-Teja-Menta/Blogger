@@ -82,14 +82,14 @@ export const Words = ({text = "", highlight = "", size = 110, delay = 0, color, 
 };
 
 // a small tag above a headline: glass pill with a pulsing dot
-export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
+export const Kicker = ({text, delay = 0, size = 28, center = false, right = false}) => {
   const frame = useCurrentFrame();
   const p = useEnter(delay);
   if (!text) return null;
   center = center || C.title === "center";
   if (C.kicker === "rule") {           // a design may prefer a drawn rule and spaced capitals to the glass pill
     return (
-      <div style={{display: "flex", alignItems: "center", gap: size * 0.6, justifyContent: center ? "center" : "flex-start",
+      <div style={{display: "flex", alignItems: "center", gap: size * 0.6, justifyContent: center ? "center" : right ? "flex-end" : "flex-start",
                    marginBottom: size * 0.9, opacity: p}}>
         <div style={{width: size * 2.4 * ease(p), height: 3, background: C.accent, boxShadow: `0 0 12px ${alpha(C.accent, 0.6)}`}}/>
         <div style={{fontFamily: FONT.body, fontWeight: 800, fontSize: size, letterSpacing: size * 0.3, color: C.accent,
@@ -98,7 +98,7 @@ export const Kicker = ({text, delay = 0, size = 28, center = false}) => {
     );
   }
   return (
-    <div style={{display: "flex", justifyContent: center ? "center" : "flex-start", marginBottom: size * 0.9}}>
+    <div style={{display: "flex", justifyContent: center ? "center" : right ? "flex-end" : "flex-start", marginBottom: size * 0.9}}>
       <div style={{display: "inline-flex", alignItems: "center", gap: size * 0.5, padding: `${size * 0.35}px ${size * 0.8}px`,
                    borderRadius: 100, background: alpha(C.panel, 0.6), border: `1.5px solid ${alpha(C.accent, 0.5)}`,
                    backdropFilter: "blur(12px)", opacity: p, transform: `translateX(${(1 - p) * -40}px)`,
@@ -133,18 +133,19 @@ export const titleBottom = (s, vertical, {top, size, maxWidth} = {}) => {
 // the headline block at the top of a shot; the design decides left or centred
 export const Title = ({s, vertical, top, size, maxWidth}) => {
   if (C.clean) return null;
-  const center = C.title === "center";
+  const right = !vertical && (C.layout || {}).title === "right";     // the skeleton: headlines at the right of a wide frame
+  const center = C.title === "center" && !right;
   return (
     <div style={{position: "absolute", left: vertical ? 70 : 120, right: vertical ? 70 : 120, top: top ?? (vertical ? 250 : 112),
-                 display: "flex", flexDirection: "column", alignItems: center ? "center" : "flex-start"}}>
-      <Kicker text={s.kicker} size={vertical ? 32 : 26}/>
+                 display: "flex", flexDirection: "column", alignItems: center ? "center" : right ? "flex-end" : "flex-start"}}>
+      <Kicker text={s.kicker} size={vertical ? 32 : 26} right={right}/>
       {C.look && C.look.hand ? (            // a board look writes its headline by hand, stroke by stroke
         <HandText text={s.headline} highlight={s.highlight} size={(size || (vertical ? 84 : 78)) * 1.05} at={2}
                   font={C.look.hand} color={C.text} accent={C.accent} maxWidth={maxWidth || (vertical ? 940 : 1600)}
-                  align={center ? "center" : "left"}/>
+                  align={center ? "center" : right ? "right" : "left"}/>
       ) : (
         <Words text={s.headline} highlight={s.highlight} size={size || (vertical ? 84 : 78)} delay={2} markAt={s.hcue}
-               maxWidth={maxWidth || (vertical ? 940 : 1600)} align={center ? "center" : "left"}/>
+               maxWidth={maxWidth || (vertical ? 940 : 1600)} align={center ? "center" : right ? "right" : "left"}/>
       )}
     </div>
   );

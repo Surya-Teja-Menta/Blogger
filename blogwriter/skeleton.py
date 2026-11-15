@@ -9,7 +9,10 @@ videos differ in their skeleton as well as their skin.
   flow     how a chain of steps runs
   capAlign where a wide video's captions sit
   logo     the top corner of the channel badge
-  progress the thin progress line, at the top or the bottom"""
+  progress the thin progress line, at the top or the bottom
+  hub, spot, versus, stack, quote, list: how those shots are arranged (ring or fan, centre at the left or right, a
+           diagonal or straight split, stacked cards, the quote's layout, the list's columns)
+  title    the headline at the left, the centre or the right"""
 import hashlib
 import json
 import random
@@ -24,6 +27,14 @@ OPTIONS: Dict[str, List[str]] = {
     "capAlign": ["center", "left"],
     "logo": ["tl", "tr"],
     "progress": ["top", "bottom"],
+    "hub": ["ring", "fan", "fanr"],
+    "spot": ["left", "right"],
+    "versus": ["diag", "straight"],
+    "stack": ["center", "left", "right"],
+    "quote": ["left", "center", "split"],
+    "list": ["stack", "stagger", "cols"],
+    "title": ["left", "center", "right"],
+    "hook": ["center", "left", "stacked"],
 }
 # how often each kicker choice is drawn: a label on every shot is the template tell, so it is the rarest
 WEIGHTS = {"kicker": {"all": 1, "parts": 3, "none": 2}}

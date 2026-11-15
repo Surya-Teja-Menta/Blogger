@@ -19,6 +19,18 @@ def test_every_layout_option_is_drawn():
     for run in skeleton.OPTIONS["flow"]:
         assert run == "line" or f"{run}:" in graphics, run
     assert 'capAlign === "left"' in video and 'logo === "tr"' in video and 'progress === "bottom"' in video
+    for mode in skeleton.OPTIONS["hub"]:
+        assert mode == "ring" or f'"{mode}"' in graphics, mode
+    assert 'spot === "right"' in graphics and 'versus === "straight"' in graphics
+    for place in skeleton.OPTIONS["stack"]:
+        assert place == "center" or f'"{place}"' in graphics, place
+    for mode in skeleton.OPTIONS["quote"]:
+        assert mode == "left" or f'"{mode}"' in scenes, mode
+    for mode in skeleton.OPTIONS["list"]:
+        assert mode == "stack" or f'"{mode}"' in scenes, mode
+    assert 'title === "right"' in read("fx.jsx")
+    for mode in skeleton.OPTIONS["hook"]:
+        assert mode == "center" or f'"{mode}"' in graphics, mode
     assert "kickerPolicy(s0)" in video and "<Decor " in graphics
 
 

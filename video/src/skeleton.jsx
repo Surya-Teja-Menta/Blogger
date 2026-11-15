@@ -8,12 +8,21 @@
 //   capAlign where the captions of a wide video sit: centred or at the left, under the headline
 //   logo     which top corner the channel badge sits in
 //   progress the thin progress line at the top or at the bottom
+//   hub      the players round a centre: a ring, or a fan beside a centre at the left or right
+//   spot     the spotlight's centre at the left or the right
+//   versus   the two sides split on a diagonal or straight
+//   stack    the stacked cards centred, at the left or at the right
+//   quote    the quote under its mark, centred, or beside a big mark
+//   list     the list as a column, staggered, or in two columns
+//   title    the headline at the left, the centre or the right
+//   hook     the words of a big-type shot: centred, at the left, or one to a line
 import React from "react";
 import {AbsoluteFill, random, useCurrentFrame, useVideoConfig} from "remotion";
 import {C, SERIES, alpha} from "./theme";
 import {Shape} from "./gen";
 
-const DEFAULT = {decor: "shapes", kicker: "all", outro: "side", flow: "line", capAlign: "center", logo: "tl", progress: "top"};
+const DEFAULT = {decor: "shapes", kicker: "all", outro: "side", flow: "line", capAlign: "center", logo: "tl", progress: "top",
+  hub: "ring", spot: "left", versus: "diag", stack: "center", quote: "left", list: "stack", title: "left", hook: "center"};
 export const layoutOf = () => ({...DEFAULT, ...(C.layout || {})});
 
 // does this shot show its label? (a shot with `partStart` opens a new part of the lesson)

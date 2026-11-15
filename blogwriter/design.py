@@ -329,6 +329,7 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
         d = looks.theme_for(picked[0], picked[1], _finish, check_fx, title)
         d["caption"] = palettes.caption(f"{title} {style} {mood}", title, d["light"], history.get("captions", ()))
         d["layout"] = skeleton.choose(title, skeleton.last_plan(history))
+        d["title"] = "center" if d["layout"]["title"] == "center" else "left"      # (right is drawn from the layout plan)
         log(f"[design] film look {picked[0]}: {d['display']}/{d['body']}, surface {d['look']['surface']}, "
             f"lines {d['look']['stroke'] or 'clean'}, {'light' if d['light'] else 'dark'} {d['bg']} accent {d['accent']}, "
             f"{d['caption']} captions")
@@ -347,6 +348,7 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
     d["caption"] = palettes.caption(f"{title} {style} {mood}", title, d["light"], history.get("captions", ()))
     d["grade"] = palettes.photo_grade(title)
     d["layout"] = skeleton.choose(title, skeleton.last_plan(history))
+    d["title"] = "center" if d["layout"]["title"] == "center" else "left"          # (right is drawn from the layout plan)
     log(f"[design] layout: {', '.join(f'{k} {v}' for k, v in d['layout'].items())}")
     fx = d["fx"]
     layers = ", ".join(f"{L['count']} {L['shape']}s {L['drift']}" for L in fx["layers"])
