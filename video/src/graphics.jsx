@@ -5,6 +5,7 @@ import React from "react";
 import {AbsoluteFill, spring, useCurrentFrame, useVideoConfig} from "remotion";
 import {icons} from "lucide";
 import {Backdrop, Camera, Kicker, Particles, Title, Words, clamp, countUp, ease, titleBottom} from "./fx";
+import {Decor, layoutOf} from "./skeleton";
 import {Focus, focusPlan, headlineShown, useFocus} from "./direct";
 import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
@@ -113,9 +114,16 @@ const Flow = ({s, i, vertical}) => {
   const nodes = s.graphic.nodes;
   const n = nodes.length;
   const size = vertical ? Math.min(200, 700 / n - 20) : n > 3 ? 210 : 240;
+  // how the chain runs is part of the video's skeleton: a line, a stair down, a zigzag or a rise (skeleton.jsx); every
+  // choice keeps the nodes clear of the headline above and of the captions below
+  const run = layoutOf().flow, along = (k) => (n === 1 ? 0.5 : k / (n - 1));
+  const yLong = {line: () => 0.62, stair: (k) => 0.42 + 0.24 * along(k), rise: (k) => 0.66 - 0.24 * along(k),
+                 zigzag: (k) => (k % 2 ? 0.66 : 0.44)}[run] || (() => 0.62);
+  const xTall = {line: () => 0.5, stair: (k) => 0.28 + 0.3 * along(k), rise: (k) => 0.58 - 0.3 * along(k),
+                 zigzag: (k) => (k % 2 ? 0.5 : 0.3)}[run] || (() => 0.5);
   const pos = nodes.map((_, k) => vertical
-    ? [width / 2, 640 + (k + 0.5) * (720 / n)]          // ends above the Short's captions (74%)
-    : [width * (0.14 + 0.72 * (n === 1 ? 0.5 : k / (n - 1))), height * 0.62]);
+    ? [width * xTall(k), 640 + (k + 0.5) * (720 / n)]          // ends above the Short's captions (74%)
+    : [width * (0.14 + 0.72 * along(k)), height * yLong(k)]);
   // the camera follows the flow: each step with the link that leads into it
   const focus = nodes.map((nd, k) => {
     const b = vertical ? [pos[k][0] - 120, pos[k][1] - size / 2, pos[k][0] + 420, pos[k][1] + size / 2]
@@ -262,24 +270,7 @@ const Kinetic = ({s, i, vertical}) => {
                      color: "transparent", WebkitTextStroke: `3px ${alpha(C.text, 0.08)}`,
                      transform: `translateX(${200 - frame * 1.6}px)`}}>{ghost}</div>
       </AbsoluteFill>
-      <svg width={width} height={height} style={{position: "absolute"}}>
-        {[0, 1, 2, 3].map((k) => {
-          const x = width * [0.15, 0.85, 0.78, 0.2][k], y = height * [0.22, 0.25, 0.8, 0.78][k];
-          const r = [90, 60, 120, 50][k];
-          const p = ease((frame - 4 - k * 5) / 20);
-          return k % 2
-            ? <rect key={k} x={x - r} y={y - r} width={2 * r} height={2 * r} rx={18} fill="none" stroke={SERIES[k]}
-                    strokeWidth={4} opacity={0.5 * p} transform={`rotate(${frame * 0.6 + k * 20} ${x} ${y}) scale(1)`}/>
-            : <circle key={k} cx={x} cy={y} r={r * p} fill="none" stroke={SERIES[k]} strokeWidth={4} opacity={0.5}
-                      strokeDasharray="10 12" strokeDashoffset={frame}/>;
-        })}
-        {[0, 1].map((k) => {
-          const p = ease((frame - 10 - k * 8) / 25);
-          const y = height * (k ? 0.74 : 0.27);
-          return <line key={`l${k}`} x1={k ? width : 0} y1={y} x2={k ? width - width * 0.42 * p : width * 0.42 * p} y2={y}
-                       stroke={k ? C.cool : C.accent} strokeWidth={6} strokeLinecap="round"/>;
-        })}
-      </svg>
+      <Decor i={i} vertical={vertical}/>          {/* this video's decoration of the big-type shots (skeleton.jsx) */}
       {(g.nodes || []).slice(0, 2).map((nd, k) => (
         <div key={k} style={{position: "absolute", left: k ? undefined : (vertical ? 70 : 90), right: k ? (vertical ? 70 : 90) : undefined,
                              top: vertical ? (k ? 1200 : 300) : (k ? 120 : 790),

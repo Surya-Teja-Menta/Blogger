@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, variety, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, palettes, sfx, skeleton, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -2128,6 +2128,7 @@ class VideoMaker:
         plan = self.script(title, facts, sources, brief["style"], brief,
                            report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
         scenes, beats = plan["scenes"], plan["short"]
+        skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
                               f"{brief['mood']} {brief['tone']}", self.log, recent)

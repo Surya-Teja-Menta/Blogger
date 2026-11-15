@@ -11,7 +11,7 @@ const ease = (t) => 1 - Math.pow(1 - clamp(t), 3);
 const colour = (name) => ({accent: C.accent, hot: C.hot, cool: C.cool, violet: C.violet, text: C.text}[name] || C.accent);
 
 // ---- backdrop layers -----------------------------------------------------------------------------------------
-const Shape = ({shape, s, col, stroke, rot}) => {
+export const Shape = ({shape, s, col, stroke, rot}) => {
   const line = stroke ? {border: `${Math.max(1.5, s * 0.04)}px solid ${col}`} : {background: col};
   const box = {position: "absolute", left: -s / 2, top: -s / 2, width: s, height: s, transform: `rotate(${rot}deg)`};
   if (shape === "circle" || shape === "dot") return <div style={{...box, borderRadius: "50%", ...line}}/>;

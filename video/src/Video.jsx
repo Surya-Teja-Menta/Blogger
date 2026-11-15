@@ -19,6 +19,7 @@ import {C, FONT, TRANSITION, alpha, useTheme} from "./theme";
 import {LookDefs, LookOverlay, LookStyle} from "./looks";
 import {LayoutAudit} from "./audit";
 import {captionStyle} from "./captions";
+import {kickerPolicy, layoutOf} from "./skeleton";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -33,8 +34,8 @@ const cut = (name, width, height) => {
 };
 
 const Badge = ({channel, vertical}) => (
-  <div style={{position: "absolute", left: vertical ? 50 : 70, top: vertical ? 120 : 56, display: "flex", alignItems: "center",
-               gap: 14}}>
+  <div style={{position: "absolute", ...(!vertical && layoutOf().logo === "tr" ? {right: 70} : {left: vertical ? 50 : 70}),
+               top: vertical ? 120 : 56, display: "flex", alignItems: "center", gap: 14}}>
     <Img src={staticFile("logo.png")} style={{width: vertical ? 72 : 60, height: vertical ? 72 : 60,
                                              filter: `drop-shadow(0 4px 14px ${alpha("#000000", 0.35)})`}}/>
   </div>
@@ -53,8 +54,10 @@ const Caption = ({captions, vertical, aside = 0}) => {
   const look = captionStyle(C.caption, vertical);       // one of six styles, chosen for this video (captions.jsx)
   return (
     // a Short's captions keep clear of the app's buttons on the right (the like/share column is about 96 px wide)
-    <div style={{position: "absolute", left: vertical ? 60 : 50, right: (vertical ? 100 : 50) + aside, top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
-                 textAlign: "center", transform: `scale(${0.9 + 0.1 * pop})`}}>
+    <div style={{position: "absolute", left: vertical ? 60 : (layoutOf().capAlign === "left" ? 120 : 50), right: (vertical ? 100 : 50) + aside,
+                 top: vertical ? "74%" : undefined, bottom: vertical ? undefined : 34,
+                 textAlign: !vertical && layoutOf().capAlign === "left" ? "left" : "center", transform: `scale(${0.9 + 0.1 * pop})`,
+                 transformOrigin: !vertical && layoutOf().capAlign === "left" ? "left center" : "center"}}>
       <span data-caption="1" style={{display: "inline-block", fontSize: vertical ? 62 : 40, lineHeight: 1.35, ...look.box}}>
         {words.map((w, k) => {
           const start = acc;
@@ -99,7 +102,8 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       <LookDefs/>
       <LookStyle/>
       <TransitionSeries>
-        {scenes.map((s, i) => {
+        {scenes.map((s0, i) => {
+          const s = kickerPolicy(s0);                  // the label above a headline, where this video shows it
           // a shot the art director gave a motion graphic plays that instead of its template
           // a diagram drawn for this sentence beats both
           const Scene = (s.diagram && DiagramScene) || (s.graphic && (GRAPHICS[s.graphic.type] || VIZ_GRAPHICS[s.graphic.type])) || SCENES[s.kind] || SCENES.photo;
@@ -142,7 +146,8 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
         ? 560 * clamp(Math.min((frame - subscribe.at) / 12, (subscribe.at + SUBSCRIBE_FRAMES - frame) / 12)) : 0}/>
       {subscribe && <Subscribe at={subscribe.at} name={subscribe.name || channel} vertical={vertical}/>}
       {audit && <LayoutAudit key={frame}/>}
-      <div style={{position: "absolute", left: 0, top: 0, height: clean ? 0 : 5, background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
+      <div style={{position: "absolute", left: 0, ...(layoutOf().progress === "bottom" ? {bottom: 0} : {top: 0}), height: clean ? 0 : 5,
+                   background: `linear-gradient(90deg, ${C.cool}, ${C.accent})`,
                    width: `${(100 * frame) / Math.max(1, durationInFrames - 1)}%`, boxShadow: `0 0 12px ${C.accent}`}}/>
     </AbsoluteFill>
   );

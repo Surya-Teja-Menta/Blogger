@@ -7,6 +7,7 @@ import {geoCentroid, geoGraticule10, geoInterpolate, geoNaturalEarth1, geoPath} 
 import {feature} from "topojson-client";
 import atlas from "world-atlas/countries-50m.json";
 import {Backdrop, Camera, Glass, Kicker, Particles, PhotoCard, Plate, Shade, Title, Words, clamp, countUp, ease, useEnter} from "./fx";
+import {layoutOf} from "./skeleton";
 import {pop} from "./motion";
 import {C, FONT, SERIES, alpha} from "./theme";
 import {DeriveScene, EquationScene, GraphScene, PlotScene} from "./math";
@@ -634,40 +635,80 @@ export const OutroScene = ({s, i, vertical}) => {
   const p = useEnter(0, 20);
   const button = useEnter(26);
   const press = frame > 64 ? spring({frame: frame - 64, fps: 30, config: {damping: 10}}) : 0;
+  // the end card's layout is part of this video's skeleton (skeleton.jsx): cover at the left, cover at the right, a
+  // centred card without the cover, or a ribbon across the frame (a Short has no ribbon, it centres instead)
+  const mode = layoutOf().outro;
+  const centred = mode === "center" || (vertical && mode === "ribbon");
+  const ribbon = mode === "ribbon" && !vertical;
+  const cover = (
+    <div style={{perspective: 1400}}>
+      <div style={{width: vertical ? 560 : 520, height: vertical ? 600 : 690, borderRadius: 18,
+                   background: `linear-gradient(160deg, ${C.panel}, ${C.bg})`, border: `2px solid ${alpha(C.text, 0.12)}`,
+                   padding: 50, boxSizing: "border-box", position: "relative",
+                   transform: `rotateY(${(mode === "flip" ? 22 : -22) + 8 * Math.sin(frame / 50)}deg) rotateX(6deg) translateY(${(1 - p) * 80}px)`,
+                   boxShadow: `30px 40px 80px ${alpha("#000000", 0.45)}, 0 0 80px ${alpha(C.accent, 0.2)}`, opacity: p}}>
+        <div style={{fontFamily: FONT.body, fontWeight: 800, letterSpacing: 6, fontSize: 22, color: C.accent,
+                     textTransform: "uppercase"}}>{s.card || "Documentary report"}</div>
+        <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: Math.min(70, 760 / Math.max(6, ...String(s.headline || "").split(" ").map((w) => w.length))),
+                     lineHeight: 1.05, color: C.text, marginTop: 30, overflowWrap: "anywhere"}}>{s.headline}</div>
+        <div style={{position: "absolute", left: 50, right: 50, bottom: 50, fontFamily: FONT.body, fontSize: 26, color: C.muted,
+                     borderTop: `2px solid ${alpha(C.text, 0.12)}`, paddingTop: 24}}>{s.label}</div>
+      </div>
+    </div>
+  );
+  const logo = (
+    <div style={{display: "flex", alignItems: "center", gap: 26, opacity: p, justifyContent: vertical || centred ? "center" : "flex-start"}}>
+      <Img src={staticFile("logo.png")} style={{width: centred ? 190 : 150, height: centred ? 190 : 150,
+                                                 transform: `scale(${0.7 + 0.3 * p}) rotate(${(1 - p) * -12}deg)`,
+                                                 filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
+      {s.channel && <Words text={s.channel} size={centred ? 110 : 84} delay={4} maxWidth={760}/>}
+    </div>
+  );
+  const kicker = (
+    <Words text={s.kicker} size={vertical ? 96 : ribbon ? 76 : 110} delay={10} align={vertical || centred ? "center" : "left"}
+           highlight={s.highlight} maxWidth={ribbon ? 640 : 760}/>
+  );
+  const button_ = (
+    <div style={{display: "inline-flex", alignItems: "center", gap: 18, padding: "26px 54px",
+                 borderRadius: 60, background: press > 0.5 ? alpha(C.text, 0.15) : C.hot,
+                 transform: `scale(${1 - 0.08 * Math.sin(Math.PI * clamp(press))})`,
+                 fontFamily: FONT.body, fontWeight: 800, fontSize: 44, color: press > 0.5 ? C.text : "#fff", opacity: button}}>
+      {press > 0.5 ? "SUBSCRIBED" : s.channel ? `SUBSCRIBE TO ${s.channel.toUpperCase()}` : "SUBSCRIBE"}
+    </div>
+  );
+  // a Short's card is top-aligned and compact: its subscribe button ends above the captions at 74%
+  const shell = {alignItems: "center", justifyContent: vertical ? "flex-start" : "center", paddingTop: vertical ? 170 : 0};
+  if (ribbon) {
+    return (
+      <AbsoluteFill style={shell}>
+        <Backdrop word={s.card ? "" : "REPORT"} i={i}/>
+        <div style={{width: "100%", padding: "70px 120px", boxSizing: "border-box", display: "flex", alignItems: "center",
+                     justifyContent: "space-between", gap: 60, background: alpha(C.panel, 0.6),
+                     borderTop: `3px solid ${alpha(C.accent, 0.5)}`, borderBottom: `3px solid ${alpha(C.cool, 0.4)}`,
+                     transform: `scaleX(${p})`}}>
+          {logo}
+          <div style={{flex: 1, textAlign: "center"}}>{kicker}</div>
+          {button_}
+        </div>
+      </AbsoluteFill>
+    );
+  }
+  const info = (
+    <div style={{textAlign: vertical || centred ? "center" : "left", maxWidth: 760}}>
+      <div style={{marginBottom: 30}}>{logo}</div>
+      {kicker}
+      {centred && s.headline && <div style={{fontFamily: FONT.body, fontSize: 34, color: C.muted, marginTop: 24, opacity: p}}>{s.headline}</div>}
+      <div style={{marginTop: 50}}>{button_}</div>
+    </div>
+  );
   return (
-    // a Short's outro is top-aligned and compact: its subscribe button ends above the captions at 74%
-    <AbsoluteFill style={{alignItems: "center", justifyContent: vertical ? "flex-start" : "center", paddingTop: vertical ? 170 : 0}}>
+    <AbsoluteFill style={shell}>
       <Backdrop word={s.card ? "" : "REPORT"} i={i}/>
-      <div style={{display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: vertical ? 50 : 120}}>
-        <div style={{perspective: 1400}}>
-          <div style={{width: vertical ? 560 : 520, height: vertical ? 600 : 690, borderRadius: 18,
-                       background: `linear-gradient(160deg, ${C.panel}, ${C.bg})`, border: `2px solid ${alpha(C.text, 0.12)}`,
-                       padding: 50, boxSizing: "border-box", position: "relative",
-                       transform: `rotateY(${-22 + 8 * Math.sin(frame / 50)}deg) rotateX(6deg) translateY(${(1 - p) * 80}px)`,
-                       boxShadow: `30px 40px 80px ${alpha("#000000", 0.45)}, 0 0 80px ${alpha(C.accent, 0.2)}`, opacity: p}}>
-            <div style={{fontFamily: FONT.body, fontWeight: 800, letterSpacing: 6, fontSize: 22, color: C.accent,
-                         textTransform: "uppercase"}}>{s.card || "Documentary report"}</div>
-            <div style={{fontFamily: FONT.display, fontWeight: C.weight, fontSize: Math.min(70, 760 / Math.max(6, ...String(s.headline || "").split(" ").map((w) => w.length))),
-                         lineHeight: 1.05, color: C.text, marginTop: 30, overflowWrap: "anywhere"}}>{s.headline}</div>
-            <div style={{position: "absolute", left: 50, right: 50, bottom: 50, fontFamily: FONT.body, fontSize: 26, color: C.muted,
-                         borderTop: `2px solid ${alpha(C.text, 0.12)}`, paddingTop: 24}}>{s.label}</div>
-          </div>
-        </div>
-        <div style={{textAlign: vertical ? "center" : "left", maxWidth: 760}}>
-          <div style={{display: "flex", alignItems: "center", gap: 26, marginBottom: 30, opacity: p,
-                       justifyContent: vertical ? "center" : "flex-start"}}>
-            <Img src={staticFile("logo.png")} style={{width: 150, height: 150, transform: `scale(${0.7 + 0.3 * p}) rotate(${(1 - p) * -12}deg)`,
-                                                     filter: `drop-shadow(0 10px 40px ${alpha(C.accent, 0.35)})`}}/>
-            {s.channel && <Words text={s.channel} size={84} delay={4} maxWidth={560}/>}
-          </div>
-          <Words text={s.kicker} size={vertical ? 96 : 110} delay={10} align={vertical ? "center" : "left"} highlight={s.highlight} maxWidth={760}/>
-          <div style={{display: "inline-flex", alignItems: "center", gap: 18, marginTop: 50, padding: "26px 54px",
-                       borderRadius: 60, background: press > 0.5 ? alpha(C.text, 0.15) : C.hot,
-                       transform: `scale(${1 - 0.08 * Math.sin(Math.PI * clamp(press))})`,
-                       fontFamily: FONT.body, fontWeight: 800, fontSize: 44, color: press > 0.5 ? C.text : "#fff", opacity: button}}>
-            {press > 0.5 ? "SUBSCRIBED" : s.channel ? `SUBSCRIBE TO ${s.channel.toUpperCase()}` : "SUBSCRIBE"}
-          </div>
-        </div>
+      <div style={{display: "flex", alignItems: "center",
+                   flexDirection: vertical ? (mode === "flip" ? "column-reverse" : "column") : (mode === "flip" ? "row-reverse" : "row"),
+                   gap: vertical ? 50 : 120}}>
+        {!centred && cover}
+        {info}
       </div>
     </AbsoluteFill>
   );
