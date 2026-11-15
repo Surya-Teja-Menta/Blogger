@@ -1172,7 +1172,7 @@ def render_parts(total: int) -> List[tuple]:
 def part_args(first: int, last: int, dest: str) -> List[str]:
     """The Remotion command for one part, run in the video app with the job folder in public/job."""
     return ["render", "src/index.jsx", "Long", dest, "--props=public/job/long.json", f"--frames={first}-{last}",
-            *QUALITY, f"--scale={LONG_SCALE}", "--log=error", "--timeout=120000"]
+            *QUALITY, f"--scale={LONG_SCALE}", "--log=error", "--timeout=120000", "--gl=swangle"]      # software WebGL: the shader backdrops
 
 
 def join_parts(parts: List[str], soundtrack: str, dest: str, log: Callable[[str], None] = print) -> None:
