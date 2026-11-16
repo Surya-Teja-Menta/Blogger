@@ -32,7 +32,7 @@ def mask(src: str, dst: str) -> None:
 
 
 def main() -> int:
-    s = Settings()
+    s = Settings.from_env()
     c = storage._client(s)
     keys = [o for o in c.list_objects_v2(Bucket=s.s3_bucket, Prefix="videos/").get("Contents", []) if o["Key"].endswith("long_video_en.mp4")]
     if not keys:
