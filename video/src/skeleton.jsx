@@ -16,8 +16,8 @@
 //   list     the list as a column, staggered, or in two columns
 //   title    the headline at the left, the centre or the right
 //   hook     the words of a big-type shot: centred, at the left, or one to a line
-//   hud      a thin instrument layer in the accent over the whole video: a camera viewfinder (corner brackets, a timecode),
-//            telemetry (a scrolling ruler, the shot count), a focus reticle that locks on at the punch-ins, or none
+//   hud      a thin instrument layer in the accent over the whole video: a camera viewfinder (corner brackets),
+//            telemetry (a scrolling ruler), a focus reticle that locks on at the punch-ins, or none
 import React from "react";
 import {AbsoluteFill, random, useCurrentFrame, useVideoConfig} from "remotion";
 import {C, FONT, SERIES, alpha} from "./theme";
@@ -128,7 +128,6 @@ export const Decor = ({i = 0, vertical = false}) => {
 
 // ---- hud: the instrument layer ----------------------------------------------------------------------------------------
 // Drawn over every shot and under the badge and captions; the layout audit skips it (it is chrome, not content).
-const pad2 = (n) => String(Math.floor(n)).padStart(2, "0");
 
 export const Hud = ({scenes, starts, vertical}) => {
   const frame = useCurrentFrame();
@@ -136,9 +135,6 @@ export const Hud = ({scenes, starts, vertical}) => {
   const mode = layoutOf().hud;
   if (mode === "none") return null;
   const inset = vertical ? 24 : 28, arm = vertical ? 64 : 92, col = alpha(C.accent, 0.75);
-  const here = Math.max(0, starts.filter((st) => st <= frame).length - 1);
-  const mono = {position: "absolute", right: inset + 18, top: vertical ? 132 : 60, fontFamily: FONT.mono, fontSize: vertical ? 24 : 30,
-                letterSpacing: 2, color: alpha(C.text, 0.72), textAlign: "right", lineHeight: 1.5};
   const draw = ease((frame - 2) / 22);
   let body = null;
   if (mode === "viewfinder") {
@@ -154,10 +150,6 @@ export const Hud = ({scenes, starts, vertical}) => {
           {mid.map(([x, y], k) => <path key={k} d={k < 2 ? `M${x - 9},${y} L${x + 9},${y}` : `M${x},${y - 9} L${x},${y + 9}`}
                                         stroke={alpha(C.accent, 0.4)} strokeWidth={2} opacity={draw}/>)}
         </svg>
-        <div style={mono}>
-          <div>{`${pad2(frame / fps / 60)}:${pad2((frame / fps) % 60)}:${pad2(frame % fps)}`}</div>
-          <div style={{color: alpha(C.accent, 0.8)}}>{`SHOT ${pad2(here + 1)} / ${pad2(scenes.length)}`}</div>
-        </div>
       </>
     );
   } else if (mode === "telemetry") {
@@ -172,7 +164,6 @@ export const Hud = ({scenes, starts, vertical}) => {
           })}
           <path d={`M${x - 34},${(y0 + y1) / 2} l14,-9 l0,18 z`} fill={alpha(C.accent, 0.8)}/>
         </svg>
-        <div style={mono}>{`SHOT ${pad2(here + 1)} / ${pad2(scenes.length)}`}</div>
       </>
     );
   } else if (mode === "reticle") {
@@ -188,7 +179,6 @@ export const Hud = ({scenes, starts, vertical}) => {
           {[0, 90, 180, 270].map((a) => <line key={a} x1={cx + (r + 8) * Math.cos((a * Math.PI) / 180)} y1={cy + (r + 8) * Math.sin((a * Math.PI) / 180)}
                                               x2={cx + (r + 26) * Math.cos((a * Math.PI) / 180)} y2={cy + (r + 26) * Math.sin((a * Math.PI) / 180)}
                                               stroke={alpha(C.accent, 0.9)} strokeWidth={3}/>)}
-          <text x={cx} y={cy + r + 54} fill={alpha(C.accent, 0.9)} fontSize={vertical ? 26 : 32} fontFamily={FONT.mono} letterSpacing={5} textAnchor="middle">LOCK</text>
         </svg>
       );
     });
