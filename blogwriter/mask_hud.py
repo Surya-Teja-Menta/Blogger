@@ -1,6 +1,6 @@
 """One-off repair: blur the HUD readout (the "SHOT 06 / 74" text and the ruler on the right edge) out of the newest stored
 video, in place. Downloads long_video_en.mp4 and short_en.mp4 of the newest videos/ folder, covers those two small
-areas with ffmpeg's delogo (the area is filled from its surroundings), keeps the original beside it as *.orig.mp4 and
+areas with a blurred copy of the background beside them, keeps the original beside it as *.orig.mp4 and
 uploads the repaired file under the same key, so the emailed link keeps working. Run by .github/workflows/mask-hud.yml."""
 import os
 import subprocess
@@ -12,8 +12,8 @@ from . import storage
 
 # boxes (x, y, w, h) in the composition's own pixels: Long is 2560 wide, Short 1080 wide (video/src/skeleton.jsx put the
 # readout at right: inset+18, top 60 (Long) / 132 (Short); the ruler at width - inset - 8, from 30% to 70% of the height)
-LONG = [(2150, 50, 380, 70), (2470, 420, 70, 610)]
-SHORT = [(760, 122, 290, 60), (1010, 570, 60, 780)]
+LONG = [(2140, 44, 400, 82), (2440, 410, 100, 630)]
+SHORT = [(750, 116, 310, 72), (985, 560, 85, 800)]
 
 
 def size(path: str):
@@ -26,7 +26,7 @@ def mask(src: str, dst: str) -> None:
     w, h = size(src)
     boxes, base = (LONG, 2560) if w > h else (SHORT, 1080)
     k = w / base
-    chain = ",".join(f"delogo=x={round(x * k)}:y={round(y * k)}:w={round(bw * k)}:h={round(bh * k)}" for x, y, bw, bh in boxes)
+    chain = ",".join("delogo=x=%d:y=%d:w=%d:h=%d" % tuple(round(v * k) for v in box) for box in boxes)      # filled from the surroundings
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-vf", chain, "-c:v", "libx264", "-preset", "fast", "-crf", "14",
                     "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", dst], check=True)
 
