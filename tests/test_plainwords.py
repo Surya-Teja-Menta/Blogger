@@ -8,7 +8,8 @@ def test_bookish_words_are_swapped_and_capitals_kept():
     assert plainwords.plainer("Moreover, we utilize a robust test.") == "Also, we use a solid test."
     assert plainwords.plainer("It is worth noting that groups matter, and it's worth noting that size does too.") == \
         "Groups matter, and size does too."
-    assert plainwords.plainer("Experiments are the gold standard.") == "Experiments are the best test we have."
+    assert plainwords.plainer("Britain left the gold standard in 1931.") == "Britain left the gold standard in 1931."   # a monetary term: left to the model
+    assert plainwords.plainer("It ensures consistency, and it enables reads.") == "It ensures consistency, and it enables reads."
     assert plainwords.plainer("A plain line stays.") == "A plain line stays."
 
 
