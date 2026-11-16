@@ -314,10 +314,10 @@ Return JSON:
 words; beat 2 says what it is; beat 3 the one thing that makes it work or matter; beat 4 the takeaway; about 65 words
 in all."""
 
-OUTRO = ("That's the short version. The full report has {facts} verified facts, and every source is linked. "
-         "It's in the description. And if you want one story like this, researched properly, every day, subscribe "
+OUTRO = ("That's the short version. The full report is in the description, "
+         "with every source linked. And if you want one story like this, researched properly, every day, subscribe "
          "to {channel}.")
-OUTRO_SOURCES = ("Every one of the {facts} facts in this video was checked, and every source is linked in the "
+OUTRO_SOURCES = ("Every fact in this video was checked, and every source is linked in the "
                  "description. If you want more like this, explained properly, subscribe to {channel}.")
 SHORT_OUTRO = "Full story, with every source, on {channel}."
 # DESCRIPTION_REPORT off (the default): the description carries no links, so nothing may point there
@@ -2067,7 +2067,7 @@ class VideoMaker:
                        "channel": self.s.channel_name,
                        "headline": str(plan.get("thumb_text") or title)[:40],
                        "highlight": ("report" if report else "sources") if linked else "subscribe",
-                       "label": f"{len(facts)} verified facts · {len(sources)} sources", "number": "", "items": [],
+                       "label": "Subscribe for the next one", "number": "", "items": [],
                        "events": [], "countries": [], "quote": "", "speaker": "", "source": "", "subjects": []})
         if plan.get("short") is None:      # a long video's Short is picked from its finished shots
             plan["short"] = self.pick_short(scenes[:-1], allowed)

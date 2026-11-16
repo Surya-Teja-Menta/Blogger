@@ -20,6 +20,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
+      - run: sudo apt-get install -y ffmpeg
       - name: Mask
         env:
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}

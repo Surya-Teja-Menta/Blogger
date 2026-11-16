@@ -1114,7 +1114,7 @@ def test_video_script_keeps_only_verified_numbers_and_adds_the_closing_scene():
     assert [b["scene"] for b in plan["short"]] == [0, len(plan["scenes"]) - 1]   # bad index dropped, ending added
     sold = VideoMaker(Settings(description_report=True), FakeLLM(), log=lambda m: None).script("T", facts, sources,
                                                                                                report=True)
-    assert "1 verified facts" in sold["scenes"][-1]["narration"] and sold["scenes"][-1]["kicker"] == "Full report below"
+    assert "every source linked" in sold["scenes"][-1]["narration"] and "verified facts" not in sold["scenes"][-1]["narration"] and sold["scenes"][-1]["kicker"] == "Full report below"
 
 
 def test_posting_guide_lists_the_sources_and_only_the_languages_made():
