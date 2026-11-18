@@ -24,6 +24,9 @@ on:
         type: choice
         options: [fast, standard, deep]
         default: standard
+      notes:
+        description: "Optional notes for this video, e.g. make it retro / also cover caching / keep it under 8 minutes (public repo: no private details)"
+        default: ""
       publish:
         description: "Also write the report, list it on Gumroad and post it to the blogs (off = only the video is made and emailed)"
         type: boolean
@@ -64,5 +67,6 @@ jobs:
       mode: ${{ matrix.job.mode }}
       level: ${{ matrix.job.level }}
       publish: ${{ matrix.job.publish }}
+      notes: ${{ inputs.notes }}
       video: true
     secrets: inherit

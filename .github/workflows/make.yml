@@ -12,6 +12,7 @@ on:
       mode: {type: string, default: standard}        # research depth: fast, standard, deep
       level: {type: string, default: intermediate}
       publish: {type: boolean, default: false}       # list the report on Gumroad and post to the blogs
+      notes: {type: string, default: ""}             # the owner's notes for this video (blogwriter/notes.py)
       video: {type: boolean, default: true}
       queue_id: {type: string, default: ""}          # set when the topic came from the queue
       course: {type: string, default: ""}            # set for a course lesson: the course's slug ...
@@ -115,6 +116,7 @@ jobs:
           RUN_LEVEL: ${{ inputs.level }}
           RUN_PUBLISH: ${{ inputs.publish }}
           RUN_VIDEO: ${{ inputs.video }}
+          VIDEO_NOTES: ${{ inputs.notes }}
           RUN_LESSON: ${{ inputs.course != '' && format('{0}:{1}', inputs.course, inputs.lesson_id) || '' }}
           ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_FARM: "1"           # a long video is rendered by the parallel "render" jobs below

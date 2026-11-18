@@ -9,7 +9,7 @@ import random
 import re
 from typing import Callable, Dict, List, Optional
 
-from . import palettes, skeleton
+from . import notes, palettes, skeleton
 
 # font key (as imported in video/src/theme.js) -> (weights available, role)
 FONTS: Dict[str, tuple] = {
@@ -281,7 +281,7 @@ def generate(seed: str) -> dict:
 
 def prompt(title: str, style: str, mood: str) -> str:
     return PROMPT.format(title=title, style=style, mood=mood or "-", fonts=", ".join(OPEN_FONTS),
-                         backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS), shapes=", ".join(SHAPES))
+                         backs=", ".join(BACKGROUNDS), cuts=", ".join(CUTS), shapes=", ".join(SHAPES)) + notes.block("the look")
 
 
 def restyle(d: dict, raw_fx, title: str, style: str, mood: str, liked=((), ()), recent=None) -> dict:
@@ -323,7 +323,7 @@ def design(complete_json: Callable, title: str, style: str, mood: str, log: Call
     picked = None
     if forced in looks.LOOKS:
         picked = (forced, next(iter(looks.LOOKS[forced]["accents"].values())))
-    elif film_look_wanted(title, forced, history.get("looks", [])[-1:]):
+    elif film_look_wanted(title, forced or ("auto" if notes.owner_notes() else ""), history.get("looks", [])[-1:]):   # notes: always ask the model
         picked = looks.choose(complete_json, title, style, mood, log)
         if picked and picked[0] in history.get("looks", []):          # the same style as one of the last videos
             log(f"[look] {picked[0]} was used recently: a design of its own")

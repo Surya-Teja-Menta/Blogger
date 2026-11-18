@@ -31,7 +31,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, camera, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, camera, notes, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -1728,6 +1728,7 @@ def shape_prompt(brief: dict, style: str, title: str, facts: str, lesson: Option
     if style in ("education", "concept", "story"):          # whatever style "auto" lands on for a subject
         text += REAL_WORLD + technique_text(title, facts)
     text += lesson_text(lesson)
+    text += notes.block()                                  # the owner's notes for this video
     shots = f"{max(14, round(minutes * 7))} to {max(20, round(minutes * 10))}"
     return text.replace("{", "{{").replace("}", "}}"), shots
 
@@ -1819,7 +1820,7 @@ class VideoMaker:
                      "and when) unless the subject itself is historical: viewers want the idea and why it matters")
         try:
             raw = self.llm.complete_json(BRIEF_PROMPT.format(title=title, style=style, facts=short, style_rule=rule,
-                                                             styles=", ".join(VIDEO_STYLES)),
+                                                             styles=", ".join(VIDEO_STYLES)) + notes.block(),
                                          max_tokens=1500, temperature=0.9)
         except LLMError as exc:
             self.log(f"[video] no plan from the model ({exc}); writing without one")
@@ -2137,7 +2138,7 @@ class VideoMaker:
         skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
-                              f"{brief['mood']} {brief['tone']}", self.log, recent)
+                              f"{brief['mood']} {brief['tone']} {notes.owner_notes()}".strip(), self.log, recent)
         palettes.save_history(self.s, recent, theme)
         self.log(f"[video] {len(scenes)} scenes ({', '.join(s['kind'] for s in scenes)}), Short of {len(beats)} beats")
         self.art_direct(scenes)

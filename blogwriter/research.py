@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
+from . import notes
 from .config import Mode
 from .llm import LLMClient, LLMError
 from .news import Article, similar
@@ -285,7 +286,7 @@ class Researcher:
                   f"For each research angle write {per_angle} short web-search query/queries (3-8 words, plain keywords, "
                   f"include the key names/places/companies from the story). Do NOT put a year in any query unless the "
                   f"story itself names that year - we want current coverage.\nAngles:\n{lines}\n\n"
-                  'Return JSON: {"<angle name>": ["query", ...], ...}')
+                  'Return JSON: {"<angle name>": ["query", ...], ...}') + notes.block("the research")
         try:
             data = self.llm.complete_json(prompt, max_tokens=min(3500, 250 + 110 * len(angles) * per_angle))
             out = {}
