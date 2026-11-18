@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 import subprocess
 import sys
 import time
@@ -1183,6 +1184,25 @@ def join_parts(parts: List[str], soundtrack: str, dest: str, log: Callable[[str]
         f.write("".join(f"file '{os.path.abspath(p)}'\n" for p in parts))
     final_encode(listing, soundtrack, dest, (RESOLUTION * 16 // 9) * RESOLUTION, log, concat=True)
     os.remove(listing)
+
+
+def upload_state(settings: Settings, job: str, folder: str, log: Callable[[str], None]) -> bool:
+    """The video's working folder (long.json, every shot's narration clip, the music, the pictures) zipped into the storage
+    bucket next to the finished video (videos/<run>/state.zip), so patch.py can fix one thing later without making the whole
+    video again. Never raises: a missing state only means that video cannot be patched."""
+    if not settings.storage_configured:
+        return False
+    try:
+        from .storage import _client
+        tmp = tempfile.mkdtemp(prefix="state_")
+        archive = shutil.make_archive(os.path.join(tmp, "state"), "zip", job)
+        _client(settings).upload_file(archive, settings.s3_bucket, f"{folder}/state.zip", ExtraArgs={"ContentType": "application/zip"})
+        log(f"[state] saved {os.path.getsize(archive) / 1e6:.0f} MB to {folder}/state.zip (for fixing this video later)")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return True
+    except Exception as exc:
+        log(f"[state] not saved: {type(exc).__name__}: {str(exc)[:160]}")
+        return False
 
 
 def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]:
@@ -2405,6 +2425,10 @@ class VideoMaker:
                  "notes_key": notes_key(run_dir, meta), "sources": sources, "email": email, "total": total, "t0": t0, "lesson": lesson}
         with open(os.path.join(out, "finish.json"), "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
+        with open(os.path.join(job, "patch.json"), "w", encoding="utf-8") as f:       # what patch.py needs to fix this video later
+            json.dump({"starts": starts, "total": total, "root_hz": root_hz,
+                       "tempos": [tempo.get(("en", i), 1.0) for i in range(n_long)]}, f)
+        upload_state(self.s, job, f"videos/{os.path.basename(os.path.normpath(run_dir))}", self.log)
         parts = render_parts(total)
         if os.environ.get("RENDER_FARM") and len(parts) > 1:
             plan_file = {"total": total, "parts": [{"frames": f"{a}-{b}", "args": part_args(a, b, f"parts/part{k:02d}.mp4")}

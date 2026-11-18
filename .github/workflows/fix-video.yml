@@ -1,0 +1,87 @@
+name: Fix a video
+
+# Change one thing in a finished video and get the whole video back in minutes (not hours): Actions -> Fix a video -> Run
+# workflow. Only the shots you change are spoken and drawn again; the rest is cut from the finished video. Works on videos
+# made after this feature was added (they save their working folder next to the video). See blogwriter/patch.py.
+#   edits: JSON, e.g.  [{"shot": 12, "narration": "The corrected sentence."}]
+#                      [{"at": "3:12", "replace": {"colour": "color"}}]
+#                      [{"shot": 5, "headline": "A better title", "label": "New label"}]
+on:
+  workflow_dispatch:
+    inputs:
+      edits:
+        description: 'Changes as JSON: [{"shot": 12, "narration": "..."}] (shot = number from 1, or "at": "3:12"; also headline, kicker, label, replace)'
+        required: true
+      video:
+        description: "Which video: part of its folder name (blank = the newest)"
+        default: ""
+
+concurrency:
+  group: fix-video
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: video/package-lock.json
+      - name: Video renderer
+        working-directory: video
+        run: npm ci --no-audit --no-fund && npx remotion browser ensure
+
+      # the same voice environment as the video job (cached between runs): a new narration is spoken in the owner's voice
+      - name: Keep the voice environment between runs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .voice
+            ~/.cache/huggingface
+          key: voice-chatterbox-0.1.7-fw-${{ runner.os }}-py313-v1
+      - name: Voice cloning environment
+        continue-on-error: true
+        run: |
+          ready() { .voice/bin/python -c "import chatterbox, faster_whisper" 2>/dev/null; }
+          if ! ready; then
+            rm -rf .voice && python -m venv .voice
+            .voice/bin/pip install -q torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+            .voice/bin/pip install -q chatterbox-tts==0.1.7 faster-whisper
+          fi
+          if ready; then echo "VOICE_PYTHON=$GITHUB_WORKSPACE/.voice/bin/python" >> "$GITHUB_ENV"; fi
+      - name: Video encoder (H.264)
+        run: |
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 ||
+            { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
+
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+
+      - name: Fix the video
+        env:
+          PATCH_EDITS: ${{ inputs.edits }}
+          PATCH_RUN: ${{ inputs.video }}
+          VOICE_FARM: "off"          # one or two lines: spoken on this machine
+        run: python -u -m blogwriter.patch
