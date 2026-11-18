@@ -244,7 +244,11 @@ def main() -> int:
            "-movflags", "+faststart", new]
     log("joining the old picture and the new shots")
     video.ffmpeg(cmd, timeout=4 * 3600)
-    log("playback check: " + video.playback_check(new)["summary"])
+    check = video.playback_check(new)
+    log("playback check: " + check["summary"])
+    if check.get("problems"):      # never replace a good stored video with a broken one
+        log("the fixed video has playback problems; nothing was uploaded: " + "; ".join(check["problems"])[:300])
+        return 1
 
     # upload: the original is kept beside, the same names carry the fix, the state follows so a next fix builds on this one
     key = f"{folder}/long_video_en.mp4"
@@ -268,5 +272,19 @@ def main() -> int:
     return 0
 
 
+def commit() -> str:
+    """The git commit the video was made with ("" when unknown); the Fix a video workflow draws with that code."""
+    s = Settings.from_env()
+    c = storage._client(s)
+    try:
+        folder = pick_folder(c, s.s3_bucket, os.environ.get("PATCH_RUN", "").strip())
+        return c.get_object(Bucket=s.s3_bucket, Key=f"{folder}/commit.txt")["Body"].read().decode().strip()
+    except Exception:
+        return ""
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["commit"]:
+        print(commit())
+        sys.exit(0)
     sys.exit(main())

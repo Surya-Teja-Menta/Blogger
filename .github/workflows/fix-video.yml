@@ -31,6 +31,31 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Load all secrets and variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, secrets
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for source in ("ALL_VARS", "ALL_SECRETS"):
+                  for key, value in json.loads(os.environ.get(source) or "{}").items():
+                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                          continue
+                      mark = "END_" + secrets.token_hex(8)
+                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
+          EOF
+
+      # draw with the code the video was made with, so the fixed shots look like the rest (look and camera change over time)
+      - name: Use the code this video was made with
+        env:
+          PATCH_RUN: ${{ inputs.video }}
+        run: |
+          sha=$(python -m blogwriter.patch commit || true)
+          if [ -n "$sha" ] && git fetch --quiet --depth=1 origin "$sha"; then
+            rm -rf video && git checkout "$sha" -- video && echo "drawing with commit $sha"
+          else echo "no stored commit: drawing with the current code"; fi
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -62,22 +87,6 @@ jobs:
         run: |
           ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 ||
             { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; }
-
-      - name: Load all secrets and variables
-        env:
-          ALL_SECRETS: ${{ toJSON(secrets) }}
-          ALL_VARS: ${{ toJSON(vars) }}
-        run: |
-          python - <<'EOF'
-          import json, os, re, secrets
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-              for source in ("ALL_VARS", "ALL_SECRETS"):
-                  for key, value in json.loads(os.environ.get(source) or "{}").items():
-                      if key.lower() == "github_token" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                          continue
-                      mark = "END_" + secrets.token_hex(8)
-                      env.write(f"{key}<<{mark}\n{value}\n{mark}\n")
-          EOF
 
       - name: Fix the video
         env:

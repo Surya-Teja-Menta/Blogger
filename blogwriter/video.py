@@ -1196,7 +1196,11 @@ def upload_state(settings: Settings, job: str, folder: str, log: Callable[[str],
         from .storage import _client
         tmp = tempfile.mkdtemp(prefix="state_")
         archive = shutil.make_archive(os.path.join(tmp, "state"), "zip", job)
-        _client(settings).upload_file(archive, settings.s3_bucket, f"{folder}/state.zip", ExtraArgs={"ContentType": "application/zip"})
+        client = _client(settings)
+        client.upload_file(archive, settings.s3_bucket, f"{folder}/state.zip", ExtraArgs={"ContentType": "application/zip"})
+        # the code this video was drawn with: a fix draws its shots with the same code, so they match the rest
+        client.put_object(Bucket=settings.s3_bucket, Key=f"{folder}/commit.txt", Body=os.environ.get("GITHUB_SHA", "").encode(),
+                          ContentType="text/plain")
         log(f"[state] saved {os.path.getsize(archive) / 1e6:.0f} MB to {folder}/state.zip (for fixing this video later)")
         shutil.rmtree(tmp, ignore_errors=True)
         return True
