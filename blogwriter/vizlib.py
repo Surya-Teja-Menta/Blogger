@@ -261,6 +261,33 @@ _t("doubleslit", "quantum", "the double-slit experiment: photons arrive one at a
    "on, knowing which slit they used makes the stripes vanish", {"photons": ("int", 150, 1500, 700), "watch": ("bool", False)},
    {"photons": 700, "watch": False}, "double slit interference wave particle duality quantum observation photon electron "
    "superposition measurement", (60, 50))
+# ------------------------------------------------------- chemistry, astronomy, and mind-reading and perception
+_t("molecule", "chem", "a molecule drawn from its real structure (atoms and bonds laid out by RDKit; a name from the table of common "
+   "molecules: water, methane, ethanol, benzene, glucose, aspirin, caffeine, ammonia, carbon dioxide, ...)",
+   {"name": ("text", 3)}, {"name": "caffeine"}, "molecule chemistry structure bonds atoms organic compound formula benzene water "
+   "glucose caffeine aspirin ethanol methane", (50, 50))
+_t("gaslaw", "chem", "a gas of hard particles in a box with a lid: heating makes them faster and the pressure, counted from their "
+   "hits on the walls, rises; squeezing the lid raises it too (gas laws, kinetic theory)",
+   {"change": ("choice", ("heat", "squeeze", "both"), "heat"), "particles": ("int", 30, 120, 70)}, {"change": "both", "particles": 70},
+   "gas pressure temperature volume boyle charles kinetic theory particles ideal gas collisions heat", (55, 50))
+_t("equilibrium", "chem", "a reversible reaction A to B and back run particle by particle: both crowds change until they stop, "
+   "at the balance the two rates predict", {"forward": ("num", 0.002, 0.05, 0.02), "reverse": ("num", 0.002, 0.05, 0.01), "labels": ("texts", 2, 0, 2)},
+   {"forward": 0.02, "reverse": 0.01, "labels": ["reactant", "product"]},
+   "chemical equilibrium reversible reaction rate le chatelier concentration reactants products dynamic", (55, 50))
+_t("transit", "science", "a planet crossing in front of its star dims it: the light curve's dip is the exact share of the star "
+   "covered (how exoplanets are found)", {"depth": ("num", 0.002, 0.05, 0.01)}, {"depth": 0.01},
+   "exoplanet transit light curve star planet brightness dip kepler astronomy detection", (55, 50))
+_t("doppler", "science", "light from a receding galaxy: every spectral line shifts toward red by the real Doppler factor "
+   "(redshift, the expanding universe)", {"speed": ("num", 0.02, 0.3, 0.12), "object": ("text", 3)}, {"speed": 0.12, "object": "a distant galaxy"},
+   "redshift doppler spectrum spectral lines expanding universe hubble galaxy astronomy light speed", (55, 50))
+_t("binarycards", "explain", "the 'guess your number' magic cards: each card holds the numbers with one binary digit set, and adding "
+   "the first number of the cards you point to gives your number (binary, a mind-reading trick explained)",
+   {"cards": ("int", 4, 6, 6), "secret": ("int", 1, 63, 37)}, {"cards": 6, "secret": 37},
+   "binary numbers magic trick mind reading cards guess number powers of two mentalism math", (60, 55))
+_t("illusion", "explain", "an optical illusion whose lines or circles are really equal, measured on screen at the reveal: "
+   "Muller-Lyer arrows, Ebbinghaus circles, or the Hermann grid's ghost spots (perception, the mind's shortcuts)",
+   {"kind": ("choice", ("mullerlyer", "ebbinghaus", "hermann"), "mullerlyer")}, {"kind": "mullerlyer"},
+   "optical illusion perception vision brain eyes mentalism psychology cognitive bias seeing trick", (55, 50))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},
@@ -904,6 +931,12 @@ def _special(el: dict, why: List[str]) -> bool:
         el["geo"] = places.resolve(el["places"])
         if len(el["geo"]) < 2:
             why.append("globe needs at least 2 places it knows (big cities or cloud regions such as us-east)")
+            return True
+    if t == "molecule":
+        from . import chem
+        el["mol"] = chem.layout(el["name"])
+        if not el["mol"]:
+            why.append(f'molecule "{el["name"]}" is not one it can draw (common molecules like water, ethanol, benzene, glucose, caffeine)')
             return True
     if t == "qubit":
         el["gates"] = [g.strip().upper() for g in el["gates"] if g.strip().upper() in ("H", "X", "Y", "Z", "S", "T")]

@@ -14,5 +14,8 @@ import {PHYSICS} from "./physics";
 import {BLACKBOX} from "./blackbox";
 import {PROB} from "./prob";
 import {QUANTUM} from "./quantum";
+import {CHEM} from "./chem";
+import {ASTRO} from "./astro";
+import {MIND} from "./mind";
 
-export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM, ...PHYSICS, ...BLACKBOX, ...PROB, ...QUANTUM};
+export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM, ...PHYSICS, ...BLACKBOX, ...PROB, ...QUANTUM, ...CHEM, ...ASTRO, ...MIND};

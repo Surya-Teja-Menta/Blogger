@@ -13,3 +13,4 @@ boto3         # upload to S3-compatible object storage (Cloudflare R2 / Backblaz
 Pillow        # contact sheet for the video quality check
 # optional: PDF output (needs GTK/Pango; HTML report is always written)
 # weasyprint
+rdkit         # molecules drawn from their real structures (the chemistry pictures)
