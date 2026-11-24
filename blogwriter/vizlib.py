@@ -288,6 +288,11 @@ _t("illusion", "explain", "an optical illusion whose lines or circles are really
    "Muller-Lyer arrows, Ebbinghaus circles, or the Hermann grid's ghost spots (perception, the mind's shortcuts)",
    {"kind": ("choice", ("mullerlyer", "ebbinghaus", "hermann"), "mullerlyer")}, {"kind": "mullerlyer"},
    "optical illusion perception vision brain eyes mentalism psychology cognitive bias seeing trick", (55, 50))
+_t("llmreal", "llm", "a small real language model (GPT-2) reading a short sentence of 4 to 10 words: the attention one of its heads "
+   "really paid, word by word, and the chances it really gave the next word (written in the field text: a plain sentence the "
+   "narration reads, ending where the next word is the question)", {"text": ("text", 12)},
+   {"text": "The cat sat on the"}, "llm attention transformer language model next token prediction probabilities gpt "
+   "real model internals inside how a language model works", (60, 55))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},
@@ -938,6 +943,13 @@ def _special(el: dict, why: List[str]) -> bool:
         if not el["mol"]:
             why.append(f'molecule "{el["name"]}" is not one it can draw (common molecules like water, ethanol, benzene, glucose, caffeine)')
             return True
+    if t == "llmreal":
+        from . import llmprobe
+        data = llmprobe.probe(el["text"]) if 3 <= len(el["text"].split()) <= 12 else None
+        if not data:
+            why.append("llmreal needs a sentence of 3 to 12 words and a machine that can run the small model; draw the idea another way")
+            return True
+        el.update(tokens=data["tokens"], attn=data["attn"], next=data["next"], layer=data["layer"], head=data["head"])
     if t == "qubit":
         el["gates"] = [g.strip().upper() for g in el["gates"] if g.strip().upper() in ("H", "X", "Y", "Z", "S", "T")]
         if not el["gates"]:

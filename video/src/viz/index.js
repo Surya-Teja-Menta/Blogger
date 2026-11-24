@@ -17,5 +17,6 @@ import {QUANTUM} from "./quantum";
 import {CHEM} from "./chem";
 import {ASTRO} from "./astro";
 import {MIND} from "./mind";
+import {LLMREAL} from "./llmreal";
 
-export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM, ...PHYSICS, ...BLACKBOX, ...PROB, ...QUANTUM, ...CHEM, ...ASTRO, ...MIND};
+export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM, ...PHYSICS, ...BLACKBOX, ...PROB, ...QUANTUM, ...CHEM, ...ASTRO, ...MIND, ...LLMREAL};

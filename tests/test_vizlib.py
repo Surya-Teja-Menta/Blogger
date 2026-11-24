@@ -19,8 +19,12 @@ def drawn_names() -> set:
     return names
 
 
-def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks():
-    assert len(vizlib.TECH) == 190
+def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks(monkeypatch):
+    from blogwriter import llmprobe              # the real-model picture needs torch: its data is stood in for here
+    monkeypatch.setattr(llmprobe, "probe", lambda text, **k: {"tokens": ["The", " cat", " sat", " on", " the"], "layer": 5, "head": 7,
+                        "attn": [[1, 0, 0, 0, 0], [0.5, 0.5, 0, 0, 0], [0.3, 0.3, 0.4, 0, 0], [0.2, 0.2, 0.3, 0.3, 0], [0.1, 0.4, 0.1, 0.1, 0.3]],
+                        "next": [[" mat", 0.3], [" floor", 0.1], [" couch", 0.05], [" ground", 0.04], [" table", 0.03]]})
+    assert len(vizlib.TECH) == 191
     assert drawn_names() == set(vizlib.TECH)              # no technique without a component, no stray component
     for name, t in vizlib.TECH.items():
         el, why = {"type": name}, []
@@ -30,11 +34,11 @@ def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks():
 
 
 def test_the_library_gives_100_plus_shot_kinds_20_plot_types_and_35_motion_graphics():
-    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 164
+    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 165
     assert len(video.PLOTS) + len(vizlib.PLOT_TYPES) == 20
     assert len(graphics.TYPES) + len(vizlib.GRAPHIC_TYPES) == 38
     roles = set(vizlib.SHOT_KINDS) | set(vizlib.PLOT_TYPES) | set(vizlib.GRAPHIC_TYPES)
-    assert roles == set(vizlib.TECH) and len(vizlib.SHOT_KINDS + vizlib.PLOT_TYPES + vizlib.GRAPHIC_TYPES) == 190
+    assert roles == set(vizlib.TECH) and len(vizlib.SHOT_KINDS + vizlib.PLOT_TYPES + vizlib.GRAPHIC_TYPES) == 191
     fams = {t["fam"] for t in vizlib.TECH.values()}
     assert {"system", "chart", "ml", "dl", "llm", "genai", "k8s", "ops", "pattern", "paper", "data", "explain"} <= fams
 
