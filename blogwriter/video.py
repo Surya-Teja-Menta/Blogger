@@ -2329,6 +2329,7 @@ class VideoMaker:
         # every shot is measured as drawn, captions included: nothing may run into anything else
         self.audit_layout(scenes, long_scenes, spoken, theme, job, long_captions, starts)
         self.log(variety.report(long_scenes))        # how samey is the finished plan? (it changes nothing)
+        self.log(variety.coverage(long_scenes))       # which shots show the inside for real, and which are only words (what to build next)
         props = os.path.join(job, "long.json")
         with open(props, "w", encoding="utf-8") as f:
             sub = subscribe_at(starts, [s["kind"] for s in scenes], total)

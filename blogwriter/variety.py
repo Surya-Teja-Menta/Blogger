@@ -56,3 +56,17 @@ def report(scenes: List[dict]) -> str:
     return (f"[variety] {r['score']}/100: {r['shots']} shots, {r['distinct']} different pictures ({r['techniques']} library "
             f"techniques), {round(100 * r['words_only'])}% type only, longest repeat {r['run']}, most used "
             f"{r['top'][0]} {round(100 * r['top'][1])}%{warn}")
+
+
+# the pictures that run the real thing (video/src/viz/sim.jsx, physics, prob, quantum, chem, astro, mind, llmreal, blackbox)
+LIVE = {"nntrain", "optimizers", "orbits", "engine4", "gears", "rigidbody", "blackbox", "montecarlo", "randomwalk", "markov", "bayes",
+        "qubit", "qcircuit", "doubleslit", "molecule", "gaslaw", "equilibrium", "transit", "doppler", "binarycards", "illusion", "llmreal"}
+
+
+def coverage(scenes: List[dict]) -> str:
+    """The log line for what the video shows inside: how many shots got a live picture, and the headlines of the shots that are only
+    words, so the next pictures to build are the ones the videos actually needed."""
+    live = [label(s) for s in scenes if label(s) in LIVE]
+    bare = [str(s.get("headline") or s.get("narration", ""))[:50] for s in scenes if words_only(s)]
+    return (f"[pictures] {len(live)} of {len(scenes)} shots run the real thing ({', '.join(f'{k} x{n}' for k, n in Counter(live).most_common(6)) or 'none'})"
+            + (f"; words only: {' | '.join(bare[:6])}" if bare else ""))

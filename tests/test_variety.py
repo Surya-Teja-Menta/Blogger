@@ -64,3 +64,12 @@ def test_a_plan_that_is_mostly_type_asks_the_art_director_again_with_type_ruled_
     kin = [{"kind": "photo", "headline": "Short head", "narration": "x"}]
     assert graphics.assign(kin, [only], lambda *a: True, lambda m: None, no_kinetic=True) == 0
     assert graphics.assign(kin, [only], lambda *a: True, lambda m: None) == 1
+
+
+def test_the_coverage_line_counts_live_pictures_and_lists_the_shots_that_are_only_words():
+    from blogwriter import variety
+    scenes = [{"kind": "diagram", "headline": "Engine", "diagram": {"elements": [{"type": "engine4"}]}},
+              {"kind": "diagram", "diagram": {"elements": [{"type": "engine4"}]}}, {"kind": "diagram", "diagram": {"elements": [{"type": "hashring"}]}},
+              {"kind": "photo", "headline": "Why it matters", "graphic": {"type": "kinetic"}}]
+    line = variety.coverage(scenes)
+    assert "2 of 4 shots run the real thing (engine4 x2)" in line and "Why it matters" in line
