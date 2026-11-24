@@ -20,7 +20,7 @@ def drawn_names() -> set:
 
 
 def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks():
-    assert len(vizlib.TECH) == 174
+    assert len(vizlib.TECH) == 176
     assert drawn_names() == set(vizlib.TECH)              # no technique without a component, no stray component
     for name, t in vizlib.TECH.items():
         el, why = {"type": name}, []
@@ -30,11 +30,11 @@ def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks():
 
 
 def test_the_library_gives_100_plus_shot_kinds_20_plot_types_and_35_motion_graphics():
-    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 151
+    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 153
     assert len(video.PLOTS) + len(vizlib.PLOT_TYPES) == 20
     assert len(graphics.TYPES) + len(vizlib.GRAPHIC_TYPES) == 35
     roles = set(vizlib.SHOT_KINDS) | set(vizlib.PLOT_TYPES) | set(vizlib.GRAPHIC_TYPES)
-    assert roles == set(vizlib.TECH) and len(vizlib.SHOT_KINDS + vizlib.PLOT_TYPES + vizlib.GRAPHIC_TYPES) == 174
+    assert roles == set(vizlib.TECH) and len(vizlib.SHOT_KINDS + vizlib.PLOT_TYPES + vizlib.GRAPHIC_TYPES) == 176
     fams = {t["fam"] for t in vizlib.TECH.values()}
     assert {"system", "chart", "ml", "dl", "llm", "genai", "k8s", "ops", "pattern", "paper", "data", "explain"} <= fams
 

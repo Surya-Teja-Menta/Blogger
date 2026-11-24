@@ -10,5 +10,7 @@ import {OPS} from "./ops";
 import {PATTERNS} from "./patterns";
 import {GLOBE} from "./globe";
 import {SIM} from "./sim";
+import {PHYSICS} from "./physics";
+import {BLACKBOX} from "./blackbox";
 
-export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM};
+export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM, ...PHYSICS, ...BLACKBOX};

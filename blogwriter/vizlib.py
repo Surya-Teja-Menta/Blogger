@@ -216,6 +216,23 @@ _t("engine4", "mechanics", "a four-stroke engine cross-section: the piston, cran
 _t("gears", "mechanics", "a gear train whose teeth really mesh: each gear turns the other way, faster or slower by its tooth count",
    {"teeth": ("nums", 2, 4), "names": ("texts", 2, 0, 4)}, {"teeth": [24, 12, 18], "names": ["motor", "idler", "output"]},
    "gear gears teeth ratio torque speed transmission gearbox mesh mechanism", (60, 45))
+_t("rigidbody", "mechanics", "a real rigid-body physics scene (pendulum, chaos, lever, collision, pulley, ramp, Newton's cradle) "
+   "where weights, joints and collisions behave as they really do. Settings by scene: pendulum (a weight 1-4, b start angle "
+   "10-80 degrees); chaos (b start angle 90-165: two double pendulums started 3 degrees apart drift completely apart); lever "
+   "(a left weight, b right weight, 1-6); collision (a, b masses 1-6, elastic true or false: the total push is kept); "
+   "pulley (a left mass, b right mass, 1-6); ramp (a angle 8-55 degrees, b friction 0-1.2: it slides or sticks); cradle "
+   "(a balls 3-6, b balls lifted 1-3)",
+   {"scene": ("choice", ("pendulum", "chaos", "lever", "collision", "pulley", "ramp", "cradle"), "pendulum"),
+    "a": ("num", 0, 165, 1), "b": ("num", 0, 165, 50), "elastic": ("bool", True), "note": ("text", 9)},
+   {"scene": "pendulum", "a": 1, "b": 50, "elastic": True, "note": ""},
+   "rigid body physics pendulum chaos lever collision momentum pulley ramp friction newton cradle energy gravity force mass torque "
+   "mechanics rigid body simulation", (55, 50))
+_t("blackbox", "explain", "the black box opening: a closed box shows what goes in and what comes out, then an x-ray scan makes its "
+   "shell transparent and the stages inside are seen working, data flowing through them. For any 'how does it work inside' "
+   "idea: an engine, a compiler, a kidney, a language model, a phone",
+   {"name": ("text", 4), "inputs": ("texts", 2, 1, 3), "outputs": ("texts", 2, 1, 3), "inside": ("texts", 2, 2, 5)},
+   {"name": "the engine", "inputs": ["fuel", "air"], "outputs": ["motion", "exhaust"], "inside": ["intake", "compress", "burn", "exhaust"]},
+   "black box inside internals how it works mechanism cutaway x-ray stages pipeline process inputs outputs", (60, 55))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},
