@@ -42,3 +42,24 @@ def test_the_researched_tags_come_first_under_the_video_and_the_short():
     assert "#ConsistentHashing #SystemDesign" in yt["description"] and "consistent hashing explained" in yt["tags"]
     assert yt["short_description"].endswith("#Shorts") and "#ConsistentHashing" in yt["short_description"]
     assert len(yt["tags"]) <= 15
+
+
+def test_a_sentence_with_a_typo_becomes_a_subject_before_the_encyclopedia_is_asked(monkeypatch):
+    from blogwriter import research
+    asked = []
+
+    class Model:
+        def complete_json(self, prompt, **kw):
+            assert "Auto mobile" in prompt
+            return {"subject": "Internal combustion engine", "wikipedia": ["Internal combustion engine"], "keywords": ["combustion", "exhaust"]}
+
+    lead = "An internal combustion engine is a heat engine in which the combustion of a fuel occurs with an oxidizer. " * 6
+    monkeypatch.setattr(research, "wikipedia_leads", lambda q, n: asked.append(q) or [("Internal combustion engine", "https://en.wikipedia.org/wiki/X", lead)])
+    r = research.Researcher(Model(), lambda m: None)
+    article, text = r.seed("How the Auto mobile Engine works, end to end process explanation")
+    assert article.title == "Internal combustion engine" and text and asked[0] == "Internal combustion engine"
+
+    class Down:
+        def complete_json(self, prompt, **kw):
+            raise TypeError("no model")
+    assert research.Researcher(Down(), lambda m: None).clean_topic("Gears, a long request about what to cover")["subject"] == "Gears"

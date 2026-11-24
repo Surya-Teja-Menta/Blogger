@@ -357,7 +357,7 @@ class BlogPipeline:
         self.log("\n=== 3/5 Researching: article, other outlets, RSS pool, encyclopedia, archives, web search ===")
         dossier = self.researcher.run(article, article_text, m, pool=self.news.pool, study=study)
         if not dossier.facts and not (article_text or article.description):
-            raise PipelineError("research found no verifiable facts; refusing to write from nothing")
+            raise PipelineError(f"research found no verifiable facts for {topic!r}; refusing to write from nothing (a short, plainly spelled topic works best: put what to cover in Notes)")
         m = scaled_mode(m, dossier)
         if not report:
             return self._research_only(topic, mode, article, ranked, dossier, source, order, t0)

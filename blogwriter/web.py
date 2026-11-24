@@ -60,6 +60,51 @@ def fetch_text(url: str, limit: int = 6000) -> str:
         return ""
 
 
+def pdf_text(url: str, keep: set, limit: int = 4500, max_mb: int = 25) -> str:
+    """The pages of a free PDF (textbook, lecture notes, a paper) that talk most about `keep` (the topic's words), as plain
+    text up to `limit` characters, in reading order. '' when it is not a PDF, too big, scanned or unreadable."""
+    try:
+        r = get(url, timeout=25, tries=1)
+        if r.status_code != 200 or len(r.content) > max_mb * 1_000_000 or not r.content.startswith(b"%PDF"):
+            return ""
+        import io
+        from pypdf import PdfReader
+        pages = []
+        for k, page in enumerate(PdfReader(io.BytesIO(r.content)).pages[:150]):
+            text = " ".join((page.extract_text() or "").split())
+            if len(text) > 300:
+                words = set(re.findall(r"[a-z]{4,}", text.lower()))
+                pages.append((len(words & keep), k, text))
+        best = sorted(sorted(pages, reverse=True)[:5], key=lambda p: p[1])
+        return " ".join(t for _, _, t in best)[:limit] if best and sorted(pages, reverse=True)[0][0] >= 3 else ""
+    except Exception:
+        return ""
+
+
+def wiki_study(host: str, query: str, n: int = 2) -> List[tuple]:
+    """Study material from a Wikimedia textbook site (en.wikibooks.org: free textbooks; en.wikiversity.org: courses and
+    lessons): (title, url, text) of the best matches. Never raises."""
+    try:
+        r = get(f"https://{host}/w/api.php", params={
+            "action": "query", "format": "json", "generator": "search", "gsrsearch": query, "gsrlimit": n,
+            "prop": "extracts|info", "explaintext": 1, "exchars": 6000, "exlimit": n, "inprop": "url"})
+        pages = sorted(r.json().get("query", {}).get("pages", {}).values(), key=lambda p: p.get("index", 99))
+        return [(p["title"], p.get("fullurl", ""), (p.get("extract") or "")[:6000]) for p in pages if p.get("extract") and p.get("fullurl")]
+    except Exception:
+        return []
+
+
+def arxiv(query: str, n: int = 3) -> List[tuple]:
+    """Open-access papers on the topic (arXiv): (title, url, abstract). Never raises."""
+    try:
+        import feedparser
+        r = get("https://export.arxiv.org/api/query", params={"search_query": f"all:{query}", "max_results": n,
+                                                              "sortBy": "relevance"}, timeout=15, tries=1)
+        return [(" ".join(e.title.split()), e.link, " ".join(e.summary.split())) for e in feedparser.parse(r.text).entries]
+    except Exception:
+        return []
+
+
 @dataclass
 class Source:
     title: str

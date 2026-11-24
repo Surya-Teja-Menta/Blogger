@@ -18,7 +18,7 @@ from . import notes
 from .config import Mode
 from .llm import LLMClient, LLMError
 from .news import Article, similar
-from .web import Source, fetch_text, web_search, wikipedia_leads
+from .web import Source, arxiv, fetch_text, pdf_text, web_search, wiki_study, wikipedia_leads
 
 # Ordered so a smaller mode (which takes the first N) still gets the 4W1H core: what/when (Timeline), who
 # (Stakeholders), why (Causes), how (Mechanism); then impacts, effects and reactions; where is Geographic.
@@ -250,16 +250,21 @@ class Researcher:
         page on it (else the best readable web page) stands in for the news article, so every later research pass
         has a core text, names and vocabulary to stay on topic with. Returns (article, its text); the text is
         empty when nothing relevant could be read."""
-        wanted = _terms(topic)
-        need = max(1, (len(wanted) + 1) // 2)              # at least half the topic's distinctive words
+        clean = self.clean_topic(topic)                  # a sentence with a typo is not a subject (see clean_topic)
+        subject, topic = clean["subject"], clean["subject"]
+        wanted = _terms(subject)
+        need = max(1, (len(wanted) + 1) // 2)              # at least half the subject's distinctive words
 
         def on_topic(text: str) -> bool:
             return len(wanted & _terms(text)) >= need
 
         url, text = "", ""
-        for title, link, lead in wikipedia_leads(topic, 2):
-            if on_topic(f"{title} {lead[:600]}") and len(lead) >= 400:
-                url, text = link, lead
+        for query in clean["wikipedia"] + [topic]:         # the exact articles the model named first, then a search
+            for title, link, lead in wikipedia_leads(query, 2):
+                if on_topic(f"{title} {lead[:600]}") and len(lead) >= 400:
+                    url, text = link, lead
+                    break
+            if text:
                 break
         if not text:
             for hit in web_search(topic, n=6):
@@ -270,10 +275,33 @@ class Researcher:
                     url, text = hit.url, page
                     break
         title = topic.strip()[:1].upper() + topic.strip()[1:]
-        article = Article(title, text[:300], url or f"topic:{topic}", datetime.now(timezone.utc),
+        article = Article(title, (text[:300] or ", ".join(clean["keywords"])), url or f"topic:{topic}", datetime.now(timezone.utc),
                           domain(url) if url else "requested topic", "topic")
         self.log(f"[research] topic seed: {len(text)} chars from {url or 'nowhere'}")
         return article, text
+
+    def clean_topic(self, topic: str) -> dict:
+        """A requested topic as a clean subject: {"subject", "wikipedia": [article titles], "keywords": [...]}. The owner types
+        a request ("How the Auto mobile Engine works, end to end process explanation"): a typo, a sentence, a hint of what to
+        cover. The encyclopedia lookup, the search engine and the relevance filter all need the subject ("Internal combustion
+        engine"), so the model names it, spelled right, with the articles that cover it; without a model, the first clause."""
+        first = re.split(r",|:|—| - ", topic)[0].strip() or topic.strip()
+        fallback = {"subject": first, "wikipedia": [], "keywords": []}
+        prompt = ("Someone asked for a video on this topic (the spelling may be wrong, and it may say what to cover): "
+                  f'"{topic}"\n\nName the subject as an encyclopedia would: 2 to 6 words, spelling corrected, no instructions. '
+                  "Give up to 3 exact English Wikipedia article titles that cover it best, and 3 to 6 plain search keywords.\n"
+                  'Return JSON: {"subject": "...", "wikipedia": ["Article title", ...], "keywords": ["...", ...]}')
+        try:
+            raw = self.llm.complete_json(prompt, max_tokens=300)
+            subject = " ".join(str(raw.get("subject", "")).split())[:80]
+            out = {"subject": subject or first,
+                   "wikipedia": [str(t)[:80] for t in (raw.get("wikipedia") or [])[:3] if isinstance(t, str)],
+                   "keywords": [str(k)[:40] for k in (raw.get("keywords") or [])[:6] if isinstance(k, str)]}
+        except (LLMError, AttributeError, TypeError):
+            out = fallback
+        if out["subject"] != topic.strip():
+            self.log(f"[research] topic understood as {out['subject']!r}" + (f" (articles: {', '.join(out['wikipedia'])})" if out["wikipedia"] else ""))
+        return out
 
     def _queries(self, article: Article, angles, per_angle: int) -> Dict[str, List[str]]:
         """One LLM call for every angle's search queries; deterministic fallback if it fails."""
@@ -437,6 +465,52 @@ class Researcher:
         self._extract_into(article, "Historical", "background and history from the encyclopedia", evidence[:4], 8,
                            4000, ["wikipedia: " + q for q in queries], len(evidence))
 
+    # where textbooks, lecture notes and documentation live; a search is narrowed to them one site at a time
+    STUDY_SITES = ("openstax.org", "libretexts.org", "ocw.mit.edu", "khanacademy.org", "geeksforgeeks.org")
+
+    def _study_pass(self, article: Article, vocab, entities) -> None:
+        """Study material beyond the encyclopedia: free textbooks and lessons (Wikibooks, Wikiversity, OpenStax, LibreTexts, MIT
+        OpenCourseWare), free books and lecture notes as PDF (the pages that discuss the topic are read), official documentation, and
+        open-access papers (arXiv). Facts are checked against the text like every other fact."""
+        subject = " ".join(re.findall(r"[\w'-]+", article.title)[:7])
+        evidence: List[dict] = []
+        queries: List[str] = []
+        seen = set(u["url"] for u in self.dossier.sources)
+
+        def add(title: str, url: str, text: str) -> None:
+            hit = Source(title, url, text[:300])
+            if url in seen or len(text) < 250 or not is_relevant_hit(hit, vocab, entities):
+                return
+            seen.add(url)
+            sid = self._register(url, title, text)
+            self.dossier.sources[sid - 1]["text"] = text
+            evidence.append(self.dossier.sources[sid - 1])
+
+        for host in ("en.wikibooks.org", "en.wikiversity.org"):
+            queries.append(f"{host}: {subject}")
+            for title, url, text in wiki_study(host, subject, 2):
+                add(title, url, text)
+        wanted = [f"{subject} textbook chapter pdf", f"{subject} lecture notes filetype:pdf", f"{subject} documentation guide",
+                  f"{subject} free book pdf"] + [f"{subject} site:{s}" for s in self.STUDY_SITES[:3]]
+        queries += wanted
+        hits: List[Source] = []
+        for q in wanted:
+            hits += web_search(q, n=4)
+            time.sleep(0.3)
+        pages = [h for h in dict((h.url, h) for h in hits).values()
+                 if not any(b in h.url for b in LOW_QUALITY) and is_relevant_hit(h, vocab, entities)][:10]
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            texts = list(pool.map(lambda h: pdf_text(h.url, vocab, 4500) if h.url.lower().split("?")[0].endswith(".pdf")
+                                  else fetch_text(h.url, 4500), pages))
+        for h, text in zip(pages, texts):
+            add(h.title, h.url, text)
+        queries.append(f"arxiv: {subject}")
+        for title, url, abstract in arxiv(subject, 3):
+            add(title, url, abstract)
+        self.log(f"[research] study materials: {len(evidence)} usable (textbooks, lecture notes, documentation, papers)")
+        self._extract_into(article, "Study materials", "what textbooks, lecture notes, documentation and papers teach about it",
+                           evidence[:8], 10, 4500, queries, len(evidence))
+
     def _feed_pass(self, article: Article, pool: List[Article], vocab, entities, limit_items: int = 6) -> None:
         """Other items from the collected news/RSS pool that are about this same story: read them in full."""
         related = [c for c in pool if c.url != article.url and not similar(c.title, article.title)
@@ -523,6 +597,7 @@ class Researcher:
         if mode.background:
             self._feed_pass(article, pool or [], vocab, entities)
             self._wikipedia_pass(article, vocab, entities)
+            self._study_pass(article, vocab, entities)
             core = " ".join(re.findall(r"[\w'-]+", article.title)[:7])
             self._gather(article, [("Historical", "older coverage and earlier events leading up to this story",
                                     [f"{core} background history", f"{core} previous events timeline"])],
