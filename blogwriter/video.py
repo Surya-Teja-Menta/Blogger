@@ -32,7 +32,7 @@ from .footage import CLIP_SECONDS, encoders as footage_encoders, ffmpeg_exe, fin
 from .llm import LLMClient, LLMError
 from .mailer import send_email
 from .pricing import label
-from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, camera, notes, palettes, plainwords, sfx, skeleton, variety, vizlib, voicefarm
+from . import composer, design, diagram, email_page, graphics, layout, looks, mathexpr, camera, notes, palettes, trending, plainwords, sfx, skeleton, variety, vizlib, voicefarm
 from .research import domain
 from .storage import keep_latest_runs, link_for, put_text, upload_run
 from .web import UA
@@ -2159,6 +2159,7 @@ class VideoMaker:
         plan = self.script(title, facts, sources, brief["style"], brief,
                            report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
         scenes, beats = plan["scenes"], plan["short"]
+        plan["trend"] = trending.research(plan["title"], plan.get("tags", []), self.log)      # the tags people search and follow now
         skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
@@ -2983,6 +2984,16 @@ def hashtags(tags: List[str], n: int = 3) -> List[str]:
     return out
 
 
+def pick_hashtags(plan: dict, n: int = 5) -> List[str]:
+    """The hashtags under a description: what the research found people search for this topic (the topic's own tag first),
+    then the writer's tags, no repeats, at most `n` (YouTube ignores all hashtags past 15 and a stuffed line looks like spam)."""
+    out: List[str] = []
+    for tag in list((plan.get("trend") or {}).get("hashtags", [])) + hashtags([str(t) for t in plan.get("tags", [])], 12):
+        if tag and tag.lower() not in {x.lower() for x in out}:
+            out.append(tag)
+    return out[:n]
+
+
 def youtube_text(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits: List[dict], product: str,
                  meta: dict, sources: Optional[List[dict]] = None, lang: str = "en", linked: bool = False) -> dict:
     """What goes into YouTube for one language: the title, the description and the tags of the long video and of its
@@ -2990,8 +3001,9 @@ def youtube_text(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits:
     default): no links at all, the owner's wish. Photo credits the licences require are named (without links)."""
     lines = texts[lang]
     title, desc = lines[n_lines], lines[n_lines + 1]
-    tags = [str(t) for t in plan.get("tags", [])][:12]
-    tagline = " ".join(hashtags(tags))
+    trend = plan.get("trend") or {}
+    tags = list(dict.fromkeys([str(t) for t in plan.get("tags", [])][:12] + [str(p) for p in trend.get("phrases", [])]))[:15]
+    tagline = " ".join(pick_hashtags(plan))
     extra = ""
     if linked:
         g = meta.get("gumroad") or {}
@@ -3005,7 +3017,7 @@ def youtube_text(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits:
     description = "\n\n".join(x for x in (desc.strip(), extra.strip(), f"Photos: {photos}" if photos else "",
                                           tagline) if x)
     short_title = (title if len(title) <= 90 else title[:89].rsplit(" ", 1)[0]) + " #Shorts"
-    short_description = "\n\n".join(x for x in (desc.strip(), (tagline + " #Shorts").strip()) if x)
+    short_description = "\n\n".join(x for x in (desc.strip(), (" ".join(pick_hashtags(plan, 4)) + " #Shorts").strip()) if x)
     return {"title": title[:100], "description": description[:4900], "tags": tags,
             "short_title": short_title, "short_description": short_description[:4900]}
 
