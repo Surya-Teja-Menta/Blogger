@@ -233,6 +233,34 @@ _t("blackbox", "explain", "the black box opening: a closed box shows what goes i
    {"name": ("text", 4), "inputs": ("texts", 2, 1, 3), "outputs": ("texts", 2, 1, 3), "inside": ("texts", 2, 2, 5)},
    {"name": "the engine", "inputs": ["fuel", "air"], "outputs": ["motion", "exhaust"], "inside": ["intake", "compress", "burn", "exhaust"]},
    "black box inside internals how it works mechanism cutaway x-ray stages pipeline process inputs outputs", (60, 55))
+# ----------------------------------------------------------------------------- probability and quantum, computed for real
+_t("montecarlo", "chart", "random points thrown into a square: the share landing inside the quarter circle gives pi, the guess "
+   "settling as the points pile up (Monte Carlo)", {"dots": ("int", 200, 2000, 800)}, {"dots": 800},
+   "monte carlo simulation random sampling estimate pi probability law of large numbers convergence", (50, 50))
+_t("randomwalk", "chart", "hundreds of random walkers taking coin-flip steps: their paths spread and the crowd piles up into a bell "
+   "curve (the central limit theorem, diffusion, drunkard's walk)", {"walkers": ("int", 60, 300, 200), "steps": ("int", 30, 120, 70)},
+   {"walkers": 200, "steps": 70}, "random walk diffusion central limit theorem bell curve normal brownian stochastic coin flip", (50, 55))
+_t("markov", "chart", "a Markov chain: a token hops between states by fixed probabilities, and the time spent in each state "
+   "settles on the stationary distribution", {"states": ("texts", 1, 2, 4), "steps": ("int", 60, 500, 300)},
+   {"states": ["sunny", "cloudy", "rainy"], "steps": 300}, "markov chain states transition probability stationary distribution pagerank "
+   "weather random process", (55, 50))
+_t("bayes", "chart", "Bayes' rule counted in a crowd of 1000 people: who is sick, who tests positive, and of the positives how many "
+   "really are sick (base rates, false positives)",
+   {"prevalence": ("num", 0.001, 0.3, 0.01), "sens": ("num", 0.5, 1, 0.9), "fpr": ("num", 0.005, 0.3, 0.05), "labels": ("texts", 1, 0, 2)},
+   {"prevalence": 0.01, "sens": 0.9, "fpr": 0.05, "labels": ["sick", "healthy"]},
+   "bayes theorem conditional probability base rate false positive medical test prior posterior", (55, 50))
+_t("qubit", "quantum", "a qubit on the Bloch sphere: gates (H, X, Y, Z, S, T) really rotate its state, and the chances of 0 and 1 "
+   "follow; optionally it is measured and collapses", {"gates": ("texts", 1, 1, 6), "measure": ("bool", False)},
+   {"gates": ["H", "T", "H"], "measure": True}, "qubit quantum bloch sphere superposition gate hadamard measurement collapse "
+   "quantum computing state", (55, 55))
+_t("qcircuit", "quantum", "a two-qubit quantum circuit run on an exact state vector: gates H, X, Z and CX (written like H0, CX01) build "
+   "superposition and entanglement; the exact chances of 00, 01, 10, 11 and 200 simulated measurements are drawn",
+   {"circuit": ("texts", 4, 1, 8)}, {"circuit": ["H0", "CX01"]},
+   "quantum circuit entanglement bell state cnot hadamard superposition measurement qubits quantum computing algorithm", (60, 50))
+_t("doubleslit", "quantum", "the double-slit experiment: photons arrive one at a time and still build interference stripes; with 'watch' "
+   "on, knowing which slit they used makes the stripes vanish", {"photons": ("int", 150, 1500, 700), "watch": ("bool", False)},
+   {"photons": 700, "watch": False}, "double slit interference wave particle duality quantum observation photon electron "
+   "superposition measurement", (60, 50))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},
@@ -876,6 +904,16 @@ def _special(el: dict, why: List[str]) -> bool:
         el["geo"] = places.resolve(el["places"])
         if len(el["geo"]) < 2:
             why.append("globe needs at least 2 places it knows (big cities or cloud regions such as us-east)")
+            return True
+    if t == "qubit":
+        el["gates"] = [g.strip().upper() for g in el["gates"] if g.strip().upper() in ("H", "X", "Y", "Z", "S", "T")]
+        if not el["gates"]:
+            why.append("qubit needs gates from H, X, Y, Z, S, T")
+            return True
+    if t == "qcircuit":
+        el["circuit"] = [c.strip().upper() for c in el["circuit"] if re.fullmatch(r"[HXZ][01]|CX(01|10)", c.strip().upper())]
+        if not el["circuit"]:
+            why.append("qcircuit needs gates written like H0, X1, Z0, CX01 or CX10")
             return True
     if t == "quorum":
         el["writes"], el["reads"] = min(el["writes"], el["n"]), min(el["reads"], el["n"])
