@@ -192,6 +192,30 @@ _t("globe", "system", "a slowly turning dot-matrix globe with pins on real place
    {"places": ("texts", 2, 2, 6), "links": ("choice", ("star", "chain"), "star")},
    {"places": ["Mumbai", "London", "New York", "Singapore"], "links": "star"},
    "globe world global cdn region latency geo distance replication datacenter edge international countries cities trade", (50, 55))
+# ----------------------------------------------------------------------------------- live simulations (video/src/viz/sim.jsx)
+# These RUN the thing they explain (real gradient descent, real gravity, the engine's exact crank geometry) instead of
+# drawing a picture of it; the video code computes them with a seeded generator, so every render is identical.
+_t("nntrain", "ml", "a small neural network that really trains: the coloured regions bend around the points as the mistakes "
+   "shrink on a loss curve",
+   {"data": ("choice", ("circles", "xor", "moons", "spiral"), "circles"), "units": ("int", 3, 10, 6)},
+   {"data": "circles", "units": 6},
+   "neural network training backpropagation learning decision boundary classification deep learning weights hidden layer "
+   "loss gradient descent live", (55, 50))
+_t("optimizers", "ml", "plain gradient descent zig-zagging down a narrow valley while momentum and Adam glide to the lowest point",
+   {"methods": ("choice", ("all", "gd-vs-momentum", "gd-vs-adam"), "all")}, {"methods": "all"},
+   "optimizer gradient descent momentum adam learning rate loss landscape convergence sgd", (50, 55))
+_t("orbits", "science", "planets orbiting a star under real gravity: closer planets move faster, orbits are ellipses, equal areas "
+   "are swept in equal times", {"planets": ("texts", 1, 1, 3), "ecc": ("num", 0, 0.7, 0.3), "law2": ("bool", False)},
+   {"planets": ["Mercury", "Venus", "Earth"], "ecc": 0.3, "law2": True},
+   "orbit planet gravity kepler solar system astronomy astrophysics orbital sun satellite ellipse", (55, 55))
+_t("engine4", "mechanics", "a four-stroke engine cross-section: the piston, crank and valves move exactly as the crank geometry "
+   "says, the gas changes with each stroke, and the pressure-volume loop draws itself",
+   {"labels": ("bool", True), "speed": ("int", 1, 3, 1)}, {"labels": True, "speed": 1},
+   "engine piston cylinder crankshaft combustion four stroke otto cycle petrol car intake compression power exhaust valve "
+   "spark internal combustion", (60, 55))
+_t("gears", "mechanics", "a gear train whose teeth really mesh: each gear turns the other way, faster or slower by its tooth count",
+   {"teeth": ("nums", 2, 4), "names": ("texts", 2, 0, 4)}, {"teeth": [24, 12, 18], "names": ["motor", "idler", "output"]},
+   "gear gears teeth ratio torque speed transmission gearbox mesh mechanism", (60, 45))
 _t("hashring", "system", "consistent hashing: nodes and keys on a ring, each key going to the next node clockwise; "
    "a new node arrives and only a few keys move",
    {"nodes": ("texts", 2, 2, 6), "keys": ("int", 4, 16, 10), "add": ("text", 2)},

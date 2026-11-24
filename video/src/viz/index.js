@@ -9,5 +9,6 @@ import {AI} from "./ai";
 import {OPS} from "./ops";
 import {PATTERNS} from "./patterns";
 import {GLOBE} from "./globe";
+import {SIM} from "./sim";
 
-export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE};
+export const VIZ = {...CHARTS, ...SYSTEMS1, ...SYSTEMS2, ...ML, ...EXPLAIN, ...DATA, ...AI, ...OPS, ...PATTERNS, ...GLOBE, ...SIM};
