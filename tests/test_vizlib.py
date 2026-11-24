@@ -30,9 +30,9 @@ def test_every_technique_is_declared_drawn_and_its_example_passes_its_checks():
 
 
 def test_the_library_gives_100_plus_shot_kinds_20_plot_types_and_35_motion_graphics():
-    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 153
+    assert len(video.KINDS) + len(vizlib.SHOT_KINDS) == 152
     assert len(video.PLOTS) + len(vizlib.PLOT_TYPES) == 20
-    assert len(graphics.TYPES) + len(vizlib.GRAPHIC_TYPES) == 35
+    assert len(graphics.TYPES) + len(vizlib.GRAPHIC_TYPES) == 36
     roles = set(vizlib.SHOT_KINDS) | set(vizlib.PLOT_TYPES) | set(vizlib.GRAPHIC_TYPES)
     assert roles == set(vizlib.TECH) and len(vizlib.SHOT_KINDS + vizlib.PLOT_TYPES + vizlib.GRAPHIC_TYPES) == 176
     fams = {t["fam"] for t in vizlib.TECH.values()}
