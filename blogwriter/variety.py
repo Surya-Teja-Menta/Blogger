@@ -59,8 +59,7 @@ def report(scenes: List[dict]) -> str:
 
 
 # the pictures that run the real thing (video/src/viz/sim.jsx, physics, prob, quantum, chem, astro, mind, llmreal, blackbox)
-LIVE = {"nntrain", "optimizers", "orbits", "engine4", "gears", "rigidbody", "blackbox", "montecarlo", "randomwalk", "markov", "bayes",
-        "qubit", "qcircuit", "doubleslit", "molecule", "gaslaw", "equilibrium", "transit", "doppler", "binarycards", "illusion", "llmreal"}
+LIVE = vizlib.LIVE
 
 
 def coverage(scenes: List[dict]) -> str:

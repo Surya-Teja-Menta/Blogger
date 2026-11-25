@@ -271,7 +271,9 @@ const otto = (deg) => {
 
 export const Engine4 = ({e, rect, frame, end, vertical}) => {
   const B = box(rect, vertical), T = timing(e, frame, end);
-  const deg = Math.max(0, T.t - 14) * (3.2 + 1.6 * (e.speed - 1)), d = deg % 720, stroke = Math.floor(d / 180), th = (deg * Math.PI) / 180;
+  const single = e.stroke && e.stroke !== "all", sidx = ["intake", "compression", "power", "exhaust"].indexOf(e.stroke);
+  const run = Math.max(0, T.t - 14) * (3.2 + 1.6 * (e.speed - 1));
+  const deg = single ? sidx * 180 + (run % 180) : run, d = deg % 720, stroke = Math.floor(d / 180), th = (deg * Math.PI) / 180;   // one stroke, looped, when the narration is about it
   const r = 1, l = 2.8, u = Math.min(B.H * 0.9 / 6.4, (vertical ? B.W * 0.9 : B.W * 0.42) / 5.2);
   const ex = vertical ? B.cx : B.x0 + B.W * 0.27, ey = vertical ? B.y0 + B.H * 0.5 : B.y1 - B.fs * 2.2 - u * 1.1;
   const x = r * Math.cos(th) + Math.sqrt(l * l - r * r * Math.sin(th) ** 2), py = ey - x * u;
@@ -288,7 +290,7 @@ export const Engine4 = ({e, rect, frame, end, vertical}) => {
   );
   // the pressure-volume loop, drawn as the engine turns
   const gx0 = vertical ? B.x0 + B.W * 0.1 : B.x0 + B.W * 0.6, gw = vertical ? B.W * 0.8 : B.W * 0.36, gh = vertical ? B.H * 0.2 : B.H * 0.5, gy1 = vertical ? B.y1 - B.fs * 1.5 : B.cy + gh * 0.5;
-  const loop = Array.from({length: Math.min(720, Math.floor(deg)) + 1}, (_, i) => otto(i));
+  const loop = Array.from({length: single ? 721 : Math.min(720, Math.floor(deg)) + 1}, (_, i) => otto(i));
   const GX = (V) => gx0 + ((V - 1) / 7) * gw, GY = (P) => gy1 - (P / 52) * gh, cur = otto(d), colors = [C.cool, C.violet, C.hot, C.muted];
   return (
     <g opacity={clamp(T.t / 10)}>
@@ -314,7 +316,7 @@ export const Engine4 = ({e, rect, frame, end, vertical}) => {
       <line x1={gx0} y1={gy1} x2={gx0 + gw} y2={gy1} stroke={C.muted} strokeWidth={3}/><line x1={gx0} y1={gy1} x2={gx0} y2={gy1 - gh} stroke={C.muted} strokeWidth={3}/>
       <Txt x={gx0 + gw / 2} y={gy1 + B.fs * 1.1} size={B.fs * 0.8} color={C.muted}>volume →</Txt>
       <Txt x={gx0 - 10} y={gy1 - gh - B.fs * 0.5} size={B.fs * 0.8} anchor="start" color={C.muted}>pressure ↑</Txt>
-      {loop.slice(1).map((q, i) => { const a = loop[i]; return <line key={i} x1={GX(a.V)} y1={GY(a.P)} x2={GX(q.V)} y2={GY(q.P)} stroke={colors[Math.floor((((i + 1) % 720) / 180)) % 4]} strokeWidth={5} strokeLinecap="round"/>; })}
+      {loop.slice(1).map((q, i) => { const a = loop[i]; return <line key={i} x1={GX(a.V)} y1={GY(a.P)} x2={GX(q.V)} y2={GY(q.P)} stroke={colors[Math.floor((((i + 1) % 720) / 180)) % 4]} strokeWidth={5} strokeLinecap="round" opacity={single && Math.floor(((i + 1) % 720) / 180) !== stroke ? 0.25 : 1}/>; })}
       <circle cx={GX(cur.V)} cy={GY(cur.P)} r={10} fill={colors[stroke]} stroke={C.bg} strokeWidth={3}/>
     </g>
   );

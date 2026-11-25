@@ -189,7 +189,11 @@ shot with only labels and arrows is the last resort.
 
 MORE MOVING PARTS: the technique library, the parts that best fit these shots. Each fills a region like the parts above
 (give x, y, w, h and the fields named), at most one per shot. A technique already used in another shot of this
-video is not used again. When a shot's WANTED names a part ("a "hashring" part ..."), build that shot around
+video is not used again, EXCEPT the live pictures (nntrain, optimizers, orbits, engine4, gears, rigidbody, blackbox, montecarlo,
+randomwalk, markov, bayes, qubit, qcircuit, doubleslit, molecule, gaslaw, equilibrium, transit, doppler, binarycards, illusion,
+llmreal): those run the real thing and draw their own labels, so give each the whole room it asks for and put NO label, arrow,
+stamp or other part on top of it (a short label may sit beside it); use them again in other shots when each shot shows another
+stage or setting (engine4 with stroke "exhaust" for the exhaust shot, "power" for the power shot). When a shot's WANTED names a part ("a "hashring" part ..."), build that shot around
 exactly that part, filled with this sentence's own things.
 {library}
 
@@ -236,8 +240,10 @@ def refine_prompt(scene: dict, d: dict, icons: str) -> str:
 
 
 def used_parts(scenes: List[dict]) -> set:
-    """The library techniques the video's diagrams already use."""
-    return {el["type"] for s in scenes for el in (s.get("diagram") or {}).get("elements", []) if el["type"] in vizlib.TECH}
+    """The library techniques the video's diagrams already use (the live pictures are not counted: a video about an engine may
+    show the engine in many shots, each at another stage)."""
+    return {el["type"] for s in scenes for el in (s.get("diagram") or {}).get("elements", [])
+            if el["type"] in vizlib.TECH and el["type"] not in vizlib.LIVE}
 
 
 def prompt(scenes: List[dict], idx: List[int], title: str, mood: str, style: str = "") -> str:

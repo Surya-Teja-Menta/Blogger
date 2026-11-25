@@ -210,9 +210,11 @@ _t("orbits", "science", "planets orbiting a star under real gravity: closer plan
    "orbit planet gravity kepler solar system astronomy astrophysics orbital sun satellite ellipse", (55, 55))
 _t("engine4", "mechanics", "a four-stroke engine cross-section: the piston, crank and valves move exactly as the crank geometry "
    "says, the gas changes with each stroke, and the pressure-volume loop draws itself",
-   {"labels": ("bool", True), "speed": ("int", 1, 3, 1)}, {"labels": True, "speed": 1},
+   {"labels": ("bool", True), "speed": ("int", 1, 3, 1),
+    "stroke": ("choice", ("all", "intake", "compression", "power", "exhaust"), "all")}, {"labels": True, "speed": 1, "stroke": "all"},
    "engine piston cylinder crankshaft combustion four stroke otto cycle petrol car intake compression power exhaust valve "
-   "spark internal combustion", (60, 55))
+   "spark internal combustion. stroke: 'all' runs the whole cycle; 'intake', 'compression', 'power' or 'exhaust' loops just that "
+   "stroke, for a shot that is about it", (60, 55))
 _t("gears", "mechanics", "a gear train whose teeth really mesh: each gear turns the other way, faster or slower by its tooth count",
    {"teeth": ("nums", 2, 4), "names": ("texts", 2, 0, 4)}, {"teeth": [24, 12, 18], "names": ["motor", "idler", "output"]},
    "gear gears teeth ratio torque speed transmission gearbox mesh mechanism", (60, 45))
@@ -1031,6 +1033,11 @@ def catalogue(names: List[str]) -> str:
         fields = "; ".join(f'"{f}": {kind_text(k)}' for f, k in t["fields"].items())
         lines.append(f'- "{n}" (w at least {t["size"][0]}, h at least {t["size"][1]}): {t["use"]}. {fields}')
     return "\n".join(lines)
+
+
+# the pictures that run the real thing: they draw their own labels, and may be used in several shots of one video
+LIVE = {"nntrain", "optimizers", "orbits", "engine4", "gears", "rigidbody", "blackbox", "montecarlo", "randomwalk", "markov", "bayes",
+        "qubit", "qcircuit", "doubleslit", "molecule", "gaslaw", "equilibrium", "transit", "doppler", "binarycards", "illusion", "llmreal"}
 
 
 # Where each technique can be chosen (every one is also a part the diagram designer can draw):
