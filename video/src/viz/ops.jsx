@@ -196,7 +196,7 @@ export const Drift = ({e, rect, frame, end, vertical}) => {
 };
 
 export const FeatureStore = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), store = [B.cx, B.cy], c = cyc(T.t, 30, 50);
+  const B = box(rect, vertical, true), T = timing(e, frame, end), store = [B.cx, B.cy], c = cyc(T.t, 30, 50);
   return (
     <g>
       <Card x={B.x0} y={B.cy - 60} w={B.W * 0.18} h={120} icon="database" label="raw data" color={C.muted} p={pop(T.t)} fs={B.fs * 0.8}/>

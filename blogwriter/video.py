@@ -58,6 +58,7 @@ MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
 WAV_BYTES_PER_SECOND = 48000  # 24 kHz, 16 bit, mono
 SHORT_MAX_SECONDS = 38     # a Short is a thirty second explanation of the whole thing
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
+LESSON_MINUTES = 8          # a lesson or concept video is never planned shorter (the owner: 8 to 12 minutes)
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
 SHOTS_PER_REQUEST = 14    # the most shots one request is asked to write (asked for 70 at once, a model returns ~18)
 MAX_SCENES = 110          # shots in one video
@@ -125,7 +126,7 @@ Reply with JSON:
   "examples": "2 to 4 everyday real-life situations the viewer has lived that make this subject concrete (from food,
     phones, traffic, sport, exams, shopping, queues, weather...), the first one strong enough to run through the
     whole video",
-  "minutes": a number: 8 to 12 for an education lesson (every idea taught properly, with pictures, a worked
+  "minutes": a number: 8 to 12 for an education or concept video (every idea taught properly, with pictures, a worked
     example and a check), 3 to 8 otherwise,
   "maths": true if the subject has formulas worth teaching, else false}}"""
 
@@ -361,6 +362,18 @@ Use exactly 4 beats, each reusing the picture of the shot that shows it best:
 About 65 words in all, plain words, no names and no dates. Say only what the shots say.
 [rows]
 Reply with JSON: {"short": [{"scene": index, "narration": "..."}]}"""
+
+
+SHORT_MORE = """These are the shots of a video (index | kind | narration). Write 2 MORE vertical Shorts from it. Each one
+answers ONE different question that a curious person would type into YouTube search about this topic, and stands on its
+own: a viewer who has seen nothing else understands it. Each uses 3 beats, every beat reusing the picture of the shot
+that shows it best:
+1. the question itself, at most 12 words;
+2. the answer, at most 25 words;
+3. why it is so, or what to remember, at most 18 words.
+Plain words, no names and no dates. Say only what the shots say.
+[rows]
+Reply with JSON: {"shorts": [{"question": "...", "beats": [{"scene": index, "narration": "..."}]}]}"""
 
 
 def outline_parts(outline) -> List[dict]:
@@ -1270,6 +1283,17 @@ def hero_shot(scenes: List[dict], starts: List[int]) -> Optional[int]:
     return starts[i] + max(1, scenes[i]["frames"] - TRANSITION - 12)
 
 
+def chapter_lines(scenes: List[dict], starts: List[int], total: int) -> List[str]:
+    """YouTube chapters from the shots that open a part. YouTube shows them only if the first is at 0:00, there are at
+    least three and each lasts 10 seconds or more, so otherwise there are none."""
+    marks = [(0, "Introduction")]
+    for sc, start in zip(scenes, starts):
+        at, name = start // FPS, (sc.get("chapter") or {}).get("title")
+        if name and at - marks[-1][0] >= 10 and total // FPS - at >= 10:
+            marks.append((at, name[:1].upper() + name[1:]))
+    return [f"{at // 60}:{at % 60:02d} {name}" for at, name in marks] if len(marks) >= 3 else []
+
+
 def country_names() -> Dict[str, str]:
     try:
         with open(ATLAS, encoding="utf-8") as f:
@@ -1670,10 +1694,12 @@ LEVEL_RULES = {
 }
 
 
-WELCOME = ("""The video does NOT start straight at the point, and it does NOT start with a story or a joke. It welcomes the
-  viewer, says plainly what the topic is and why it matters, and only THEN moves into a real-life moment. Its first four
+WELCOME = ("""The video does NOT dive straight into the lesson, and it does NOT start with a story or a joke. It gives the
+  viewer one reason to stay, welcomes them, says plainly what the topic is and why it matters, and only THEN moves into a
+  real-life moment. Its first four
   shots (about 90 to 120 words in all, each shot at most 35, calm and warm, a touch of dry humour allowed):
-  1. welcome the viewer to {channel} in one short, friendly line and name the topic ("Welcome to {channel}. Today,
+  1. at most 28 words: FIRST one short surprising question or result about the topic (at most 12 words, so the viewer
+     hears it in the first five seconds), THEN the welcome that names the topic ("... Welcome to {channel}. Today,
      {topic}.");
   2. WHAT IT IS: define the topic literally, in one or two simple sentences ("{topic} is ..."), helped by a small
      everyday comparison, with a picture of the idea. This shot is a real definition, never a quip about the topic;
@@ -1781,7 +1807,7 @@ def check_brief(raw, style: str) -> dict:
             "opening": s("opening", "a question or a surprising fact the viewer already half-wonders about."),
             "ending": s("ending", "answer the opening question in one sentence."),
             "tone": s("tone", "clear, curious, warm"), "mood": s("mood", ""), "sound": s("sound", ""),
-            "minutes": minutes,
+            "minutes": max(LESSON_MINUTES, minutes) if style in ("education", "concept") else minutes,
             "narrator": narrator,
             "device": s("device", "one running example that grows with every shot."),
             "examples": s("examples", "an everyday situation the viewer has lived, chosen for this subject"),
@@ -1851,7 +1877,7 @@ class VideoMaker:
             raw = {}
         b = check_brief(raw, style)
         if lesson and lesson.get("minutes"):
-            b["minutes"] = min(12.0, max(6.0, float(lesson["minutes"])))
+            b["minutes"] = min(12.0, max(float(LESSON_MINUTES), float(lesson["minutes"])))
             b["maths"] = b["maths"] or bool(lesson.get("maths"))
         self.log(f"[video] plan ({b['style']}, {b['minutes']:g} min{', maths' if b['maths'] else ''}): "
                  f"{b['structure'][:140]} | {' / '.join(a['title'] for a in b['acts'])}")
@@ -1953,6 +1979,29 @@ class VideoMaker:
             if isinstance(idx, int) and 0 <= idx < len(scenes) and text:
                 beats.append({"scene": idx, "narration": text})
         return beats[:4]
+
+    def more_shorts(self, scenes: List[dict], allowed: str) -> List[dict]:
+        """Two more Shorts, each answering one question: [{"title": the question, "beats": [...]}]; fewer, or none, when
+        the model's reply is not usable."""
+        rows = "\n".join(f"{i} | {s['kind']} | {s['narration'][:140]}" for i, s in enumerate(scenes))
+        try:
+            reply = self.llm.complete_json(fill(SHORT_MORE, rows=rows), max_tokens=2500, temperature=0.6)
+        except LLMError:
+            reply = {}
+        out = []
+        for item in (reply.get("shorts") if isinstance(reply, dict) else None) or []:
+            if not isinstance(item, dict):
+                continue
+            question = " ".join(str(item.get("question") or "").split())[:90]
+            beats = []
+            for b in item.get("beats") or []:
+                idx = b.get("scene") if isinstance(b, dict) else None
+                text = plainwords.plainer(strip_unsupported_numbers(str((b or {}).get("narration", "")).strip(), allowed))
+                if isinstance(idx, int) and 0 <= idx < len(scenes) and text:
+                    beats.append({"scene": idx, "narration": text})
+            if question and len(beats) >= 2:
+                out.append({"title": question, "beats": beats[:3]})
+        return out[:2]
 
     def script(self, title: str, facts: List[dict], sources: List[dict], style: str = "news",
                brief: Optional[dict] = None, report: bool = False, lesson: Optional[dict] = None) -> dict:
@@ -2103,8 +2152,12 @@ class VideoMaker:
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
-        short.append({"scene": len(scenes) - 1,
-                      "narration": (SHORT_OUTRO if linked else SHORT_OUTRO_PLAIN).format(channel=self.s.channel_name)})
+        ending = {"scene": len(scenes) - 1,
+                  "narration": (SHORT_OUTRO if linked else SHORT_OUTRO_PLAIN).format(channel=self.s.channel_name)}
+        short.append(ending)
+        more = self.more_shorts(scenes[:-1], allowed)
+        for extra in more:
+            extra["beats"] = [{**b, "narration": uncredit(b["narration"])} for b in extra["beats"]] + [dict(ending)]
         video_title = str(plan.get("title", title))[:100]
         if style == "education":
             chosen = topic_title(video_title, title)
@@ -2114,7 +2167,7 @@ class VideoMaker:
         return {"title": video_title, "thumb_text": str(plan.get("thumb_text", ""))[:40],
                 "thumb_highlight": str(plan.get("thumb_highlight", ""))[:20],
                 "description": str(plan.get("description", "")), "tags": [str(t) for t in plan.get("tags", [])][:12],
-                "scenes": scenes, "short": short}
+                "scenes": scenes, "short": short, "more_shorts": more}
 
     def translate_lines(self, lines: List[str], lang: str) -> Optional[List[str]]:
         """Translate the lines (same count, same order; empty lines stay empty), or None if the model will not."""
@@ -2158,14 +2211,18 @@ class VideoMaker:
         brief["channel"] = self.s.channel_name                       # named once, in the welcome
         plan = self.script(title, facts, sources, brief["style"], brief,
                            report=bool((meta.get("gumroad") or {}).get("url")), lesson=lesson)
-        scenes, beats = plan["scenes"], plan["short"]
+        scenes = plan["scenes"]
+        sets = [plan["short"]] + [m["beats"] for m in plan.get("more_shorts") or []]      # one list of beats per Short
+        beats = [b for part in sets for b in part]                        # spoken together, then cut back into Shorts
+        edges = [sum(len(part) for part in sets[:n]) for n in range(len(sets) + 1)]
+        groups = [range(a, b) for a, b in zip(edges, edges[1:])]
         plan["trend"] = trending.research(plan["title"], plan.get("tags", []), self.log)      # the tags people search and follow now
         skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
                               f"{brief['mood']} {brief['tone']} {notes.owner_notes()}".strip(), self.log, recent)
         palettes.save_history(self.s, recent, theme)
-        self.log(f"[video] {len(scenes)} scenes ({', '.join(s['kind'] for s in scenes)}), Short of {len(beats)} beats")
+        self.log(f"[video] {len(scenes)} scenes ({', '.join(s['kind'] for s in scenes)}), {len(sets)} Short(s) of {len(beats)} beats")
         self.art_direct(scenes)
         bare = {i for i, s in enumerate(scenes) if s["kind"] in graphics.ELIGIBLE and not s.get("graphic")
                 and not s.get("video") and i > 0}
@@ -2300,6 +2357,7 @@ class VideoMaker:
         tempo = {key: max(1.0, v / longest[key[1]]) if longest[key[1]] else 1.0 for key, v in secs.items()}
         holds = [HOLD if i + 1 < n_long and scenes[i + 1].get("chapter") else 0 for i in range(n_long)]   # a beat before a new part
         frames, starts, total = timeline(longest, kinds, holds)
+        plan["chapters"] = chapter_lines(scenes, starts, total)
         score = sound.music(total / FPS + 1, assets["music"], seed=music_seed, mood=music_mood,
                             sections=[(st / FPS, (st + fr) / FPS, k) for st, fr, k in zip(starts, frames, kinds)])
         self.log(f"[video] music composed for this video: {score}")
@@ -2381,47 +2439,49 @@ class VideoMaker:
         per_beat = [len(x) for x in shown]
         for lang, lines in texts.items():
             screen = lines[n_long + n_short:n_long + n_short + sum(per_beat)]
-            order = list(range(n_short))
-            secs = lambda bs: sum(audio_seconds(clip(lang, "short", b)) + 0.4 for b in bs if clip(lang, "short", b))
-            while secs(order) > SHORT_MAX_SECONDS and len(order) > 2:
-                order.pop(-2)               # drop the weakest middle beat, keep the hook and the ending
-            order = [b for b in order if clip(lang, "short", b)]
-            seconds = [audio_seconds(clip(lang, "short", b)) for b in order]
-            sk = [scenes[beats[b]["scene"]]["kind"] for b in order]
-            fr, st, tot = timeline(seconds, sk)
-            short_scenes, captions = [], []
-            for j, b in enumerate(order):
-                offset = sum(per_beat[:b])
-                visual = with_text(scenes[beats[b]["scene"]], screen[offset:offset + per_beat[b]]) if lang != "en" \
-                    else scenes[beats[b]["scene"]]
-                short_scenes.append({**{k: v for k, v in visual.items() if k != "diagram"}, "frames": fr[j]})
-                words = spoken[(lang, "short", b)]
-                short_scenes[-1].update(cue=cue(words, visual.get("number", "")),
-                                        hcue=cue(words, visual.get("highlight", "")),
-                                        graphic=graphics.timed(visual.get("graphic"), visual.get("headline", ""), words,
-                                                               fr[j], FPS, LEAD),
-                                        parts=graphics.timed_parts(visual.get("parts", []), words, fr[j], FPS, LEAD),
-                                        steps=graphics.timed_steps(visual.get("steps", []), words, fr[j], FPS, LEAD))
-                if visual["kind"] == "check":     # the Short's own voice decides when its answer shows
-                    short_scenes[-1].update(check_cues(texts[lang][n_long + b], words, visual, fr[j]))
-                for ca, cz, line in word_lines(words, 0, 30):
-                    captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
-                                     "text": line})
-            camera.plan(short_scenes, plan["title"] + "short")
-            self.audit_short(short_scenes, captions, st, [spoken[(lang, "short", b)] for b in order], theme, job, lang)
-            path = os.path.join(job, f"short_{lang}.json")
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump({"scenes": short_scenes, "captions": captions, "channel": self.s.channel_name, "theme": theme},
-                          f, ensure_ascii=False)
-            track = os.path.join(job, f"short_{lang}.mp3")
-            short_music = os.path.join(job, f"short_music_{lang}.wav")
-            sound.music(tot / FPS + 1, short_music, seed=music_seed, mood=music_mood,
-                        sections=[(a / FPS, (a + f) / FPS, k) for a, f, k in zip(st, fr, sk)])
-            master([clip(lang, "short", b) for b in order], st, sk, tot, {**assets, "music": short_music}, track, self.log,
-                   sfx_cues=sfx.cues(short_scenes, st, FPS), root_hz=root_hz)
-            self.log(f"[video] rendering the {LANGS[lang]} Short ({tot / FPS:.0f}s)")
-            render("Short", path, track, os.path.join(out, f"short_{lang}.mp4"), self.log)
-            files[f"short_{lang}.mp4"] = "short"
+            for n, group in enumerate(groups):
+                suffix = f"_{n + 1}" if n else ""
+                order = list(group)
+                secs = lambda bs: sum(audio_seconds(clip(lang, "short", b)) + 0.4 for b in bs if clip(lang, "short", b))
+                while secs(order) > SHORT_MAX_SECONDS and len(order) > 2:
+                    order.pop(-2)               # drop the weakest middle beat, keep the hook and the ending
+                order = [b for b in order if clip(lang, "short", b)]
+                seconds = [audio_seconds(clip(lang, "short", b)) for b in order]
+                sk = [scenes[beats[b]["scene"]]["kind"] for b in order]
+                fr, st, tot = timeline(seconds, sk)
+                short_scenes, captions = [], []
+                for j, b in enumerate(order):
+                    offset = sum(per_beat[:b])
+                    visual = with_text(scenes[beats[b]["scene"]], screen[offset:offset + per_beat[b]]) if lang != "en" \
+                        else scenes[beats[b]["scene"]]
+                    short_scenes.append({**{k: v for k, v in visual.items() if k != "diagram"}, "frames": fr[j]})
+                    words = spoken[(lang, "short", b)]
+                    short_scenes[-1].update(cue=cue(words, visual.get("number", "")),
+                                            hcue=cue(words, visual.get("highlight", "")),
+                                            graphic=graphics.timed(visual.get("graphic"), visual.get("headline", ""), words,
+                                                                   fr[j], FPS, LEAD),
+                                            parts=graphics.timed_parts(visual.get("parts", []), words, fr[j], FPS, LEAD),
+                                            steps=graphics.timed_steps(visual.get("steps", []), words, fr[j], FPS, LEAD))
+                    if visual["kind"] == "check":     # the Short's own voice decides when its answer shows
+                        short_scenes[-1].update(check_cues(texts[lang][n_long + b], words, visual, fr[j]))
+                    for ca, cz, line in word_lines(words, 0, 30):
+                        captions.append({"from": st[j] + LEAD + round(ca * FPS), "to": st[j] + LEAD + round(cz * FPS),
+                                         "text": line})
+                camera.plan(short_scenes, plan["title"] + "short" + suffix)
+                self.audit_short(short_scenes, captions, st, [spoken[(lang, "short", b)] for b in order], theme, job, lang + suffix)
+                path = os.path.join(job, f"short_{lang}{suffix}.json")
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"scenes": short_scenes, "captions": captions, "channel": self.s.channel_name, "theme": theme},
+                              f, ensure_ascii=False)
+                track = os.path.join(job, f"short_{lang}{suffix}.mp3")
+                short_music = os.path.join(job, f"short_music_{lang}{suffix}.wav")
+                sound.music(tot / FPS + 1, short_music, seed=music_seed, mood=music_mood,
+                            sections=[(a / FPS, (a + f) / FPS, k) for a, f, k in zip(st, fr, sk)])
+                master([clip(lang, "short", b) for b in order], st, sk, tot, {**assets, "music": short_music}, track, self.log,
+                       sfx_cues=sfx.cues(short_scenes, st, FPS), root_hz=root_hz)
+                self.log(f"[video] rendering {LANGS[lang]} Short {n + 1} of {len(groups)} ({tot / FPS:.0f}s)")
+                render("Short", path, track, os.path.join(out, f"short_{lang}{suffix}.mp4"), self.log)
+                files[f"short_{lang}{suffix}.mp4"] = "short"
 
         # everything the last stage needs, so it can run here or on another machine after a farmed render
         shutil.copy(os.path.join(job, "long_en.mp3"), os.path.join(out, SOUNDTRACK))
@@ -2478,6 +2538,9 @@ class VideoMaker:
         yt = youtube_text(plan, texts, st["n_lines"], st["credits"], st["product"], st["meta"], st["sources"],
                           linked=self.s.description_report)
         yt.update(category="27", lesson=st.get("lesson") or {})        # 27 = Education
+        yt["shorts"] = [{"file": f"short_en_{k}.mp4", "title": f"{m['title']} #Shorts",
+                         "description": f"{m['title']}\n\n{' '.join(pick_hashtags(plan, 4))} #Shorts"}
+                        for k, m in enumerate(plan.get("more_shorts") or [], 2) if f"short_en_{k}.mp4" in files]
         with open(os.path.join(out, "youtube.json"), "w", encoding="utf-8") as f:
             json.dump(yt, f, ensure_ascii=False, indent=1)
         files["youtube.json"] = "youtube"
@@ -3015,7 +3078,8 @@ def youtube_text(plan: dict, texts: Dict[str, List[str]], n_lines: int, credits:
             extra += (f"Sources ({len(urls)}):\n" + "".join(f"- {u}\n" for u in urls[:15])
                       + (f"- and {len(urls) - 15} more\n" if len(urls) > 15 else ""))
     photos = "; ".join(f"{c['subject']}: {c['author'] or 'Wikimedia Commons'}, {c['license']}" for c in credits)
-    description = "\n\n".join(x for x in (desc.strip(), extra.strip(), f"Photos: {photos}" if photos else "",
+    chapters = "\n".join(plan.get("chapters") or []) if lang == "en" else ""
+    description = "\n\n".join(x for x in (desc.strip(), chapters, extra.strip(), f"Photos: {photos}" if photos else "",
                                           tagline) if x)
     short_title = (title if len(title) <= 90 else title[:89].rsplit(" ", 1)[0]) + " #Shorts"
     short_description = "\n\n".join(x for x in (desc.strip(), (" ".join(pick_hashtags(plan, 4)) + " #Shorts").strip()) if x)

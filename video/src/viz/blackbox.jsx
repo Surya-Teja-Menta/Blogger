@@ -5,7 +5,7 @@
 import {React, box, clamp, ease, glide, lerp, pop, pal, timing, Txt, Card, C, alpha} from "./kit";
 
 export const BlackBox = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), n = e.inside.length;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), n = e.inside.length;
   const bw = B.W * (vertical ? 0.62 : 0.5), bh = B.H * (vertical ? 0.64 : 0.74), bx = B.cx - bw / 2, by = B.cy - bh / 2 + B.fs * 0.4;
   const scan = clamp(T.k / 34), open = ease(scan), cy = by + bh / 2;
   const ins = e.inputs, outs = e.outputs, pillW = B.W * 0.17, pillH = B.fs * 1.7;

@@ -23,6 +23,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3"
 API_URL = "https://www.googleapis.com/youtube/v3"
 CHUNK = 32 * 1024 * 1024
+SHORT_HOURS = (1, 4, 7)        # the owner's schedule: each Short goes public this many hours after the click
 
 
 class SignInError(RuntimeError):
@@ -78,10 +79,13 @@ def synthetic_on() -> bool:
     return os.environ.get("YT_SYNTHETIC", "off").strip().lower() in ("on", "1", "yes", "true")
 
 
-def video_body(meta: dict, short: bool, privacy: str, synthetic: Optional[bool] = None, omit: bool = False) -> dict:
+def video_body(meta: dict, short: bool, privacy: str, synthetic: Optional[bool] = None, omit: bool = False,
+               publish_at: str = "") -> dict:
     """The video's title, description, tags and settings: Education, not made for kids, English, and the
     synthetic-media label as synthetic_on() says (omit: leave the field out, for an API that refuses it)."""
     status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False, "embeddable": True}
+    if publish_at:                    # YouTube publishes it itself at that time; until then it has to be private
+        status.update(privacyStatus="private", publishAt=publish_at)
     if not omit:
         status["containsSyntheticMedia"] = synthetic_on() if synthetic is None else bool(synthetic)
     return {"snippet": {"title": safe_text(meta["short_title"] if short else meta["title"], 300, 100),
@@ -132,14 +136,14 @@ def upload_file(token: str, path: str, body: dict, log=print) -> str:
             pos = int(got.rsplit("-", 1)[1]) + 1 if got else 0
 
 
-def upload_video(token: str, path: str, meta: dict, short: bool, privacy: str, log=print) -> str:
+def upload_video(token: str, path: str, meta: dict, short: bool, privacy: str, log=print, publish_at: str = "") -> str:
     try:
-        return upload_file(token, path, video_body(meta, short, privacy), log)
+        return upload_file(token, path, video_body(meta, short, privacy, publish_at=publish_at), log)
     except RuntimeError as exc:                # an API without the synthetic-media field: once more without it
         if "containsSyntheticMedia" not in str(exc):
             raise
         log("[youtube] the synthetic-media field was not accepted; uploading without it")
-        return upload_file(token, path, video_body(meta, short, privacy, omit=True), log)
+        return upload_file(token, path, video_body(meta, short, privacy, omit=True, publish_at=publish_at), log)
 
 
 STATUS_WRITABLE = ("privacyStatus", "embeddable", "license", "publicStatsViewable", "selfDeclaredMadeForKids",
@@ -288,7 +292,7 @@ def run(request: str, log=print, privacy: str = "") -> str:
         from .storage import get_text, put_text
         s = _settings()
         known = {}                                 # both items' markers: the pair is linked whenever both exist
-        for item in ("video", "short"):
+        for item in ("video", "short", "short2", "short3"):
             try:
                 mark = json.loads(get_text(s, f"uploads/{folder}/{item}.json") or "null")
             except ValueError:
@@ -305,9 +309,22 @@ def run(request: str, log=print, privacy: str = "") -> str:
                     "upload button, or storage has already removed it (it keeps the 4 newest videos).")
         with open(files["youtube.json"], encoding="utf-8") as f:
             meta = json.load(f)
-        lines = []
-        for item, name, short in (("video", "long_video_en.mp4", False), ("short", "short_en.mp4", True)):
-            label = "Short" if short else "Video"
+        plan = [("video", "long_video_en.mp4", meta), ("short", "short_en.mp4", meta)]
+        for k, extra in enumerate(meta.get("shorts") or [], 2):      # "Upload Short" sends every Short of the video
+            plan.append((f"short{k}", extra["file"], {**meta, "short_title": extra["title"],
+                                                      "short_description": extra["description"]}))
+        if "short" in items:
+            items = items + [item for item, _, _ in plan[2:]]
+            done.update({item: known[item] for item in items if item in known})
+            more = [name for item, name, _ in plan[2:] if item not in done]
+            files.update(fetch(folder, more, os.path.join("yt_upload", folder), log) if more else {})
+        lines, clicked = [], time.time()
+        # public Shorts are spread out: with the video 1, 4 and 7 hours after the click; Shorts alone at once, 3 h, 6 h
+        hours = dict(zip(("short", "short2", "short3"),
+                         SHORT_HOURS if "video" in items else [h - SHORT_HOURS[0] for h in SHORT_HOURS]))
+        for item, name, info in plan:
+            short = item != "video"
+            label = f"Short {item[5:]}".strip() if short else "Video"
             if item not in items:
                 continue
             if item in done:
@@ -319,8 +336,17 @@ def run(request: str, log=print, privacy: str = "") -> str:
                 continue
             log(f"[youtube] uploading {name} ({os.path.getsize(files[name]) / 1e6:.0f} MB) as {privacy}")
             token = access_token()                 # a sign-in lasts an hour: a fresh one for every upload
-            vid = upload_video(token, files[name], meta, short, privacy, log)
-            title = meta["short_title" if short else "title"]
+            wait = hours.get(item, 0) if privacy == "public" else 0
+            when = time.gmtime(clicked + wait * 3600)
+            later = {"publish_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", when)} if wait else {}
+            try:
+                vid = upload_video(token, files[name], info, short, privacy, log, **later)
+            except Exception as exc:
+                if item in ("video", "short"):
+                    raise
+                lines.append(f"- {label}: not uploaded ({str(exc)[:200]}). Run the Upload to YouTube job again for it.")
+                continue                           # an extra Short never costs the report of what did go up
+            title = info["short_title" if short else "title"]
             url = f"https://youtu.be/{vid}" if not short else f"https://youtube.com/shorts/{vid}"
             known[item] = {"id": vid, "url": url, "title": title, "at": int(time.time())}
             put_text(s, f"uploads/{folder}/{item}.json", json.dumps(known[item]), "application/json; charset=utf-8")
@@ -334,15 +360,22 @@ def run(request: str, log=print, privacy: str = "") -> str:
                                              else "not added"))
             state = privacy_of(token, vid)
             note = (" YouTube kept it **private**: until Google audits the app, API uploads stay private. Open it "
-                    "in YouTube Studio and set it to Public." if state == "private" and privacy != "private" else "")
-            lines.append(f"- {label}: [{title}]({url}) is uploaded, now **{state}**"
+                    "in YouTube Studio and set it to Public." if state == "private" and privacy != "private" and not wait else "")
+            now = (f"goes **public** by itself at {time.strftime('%H:%M UTC', when)} (in {wait} h)" if wait
+                   else f"now **{state}**")
+            lines.append(f"- {label}: [{title}]({url}) is uploaded, {now}"
                          f"{'; ' + ', '.join(extras) if extras else ''}.{note}")
         if "video" in known and "short" in known:
             lines += link_pair(access_token(), known["video"], known["short"], log)
+        if "video" in known:                       # every further Short points to the full lesson too
+            for item in (k for k in known if k in ("short2", "short3")):
+                add_link_line(access_token(), known[item]["id"], f"The full lesson: {known['video']['url']}",
+                              known["video"]["url"], log)
         if known:                                  # every run brings this video's AI label in line with the setting
             token, flag = access_token(), synthetic_on()
-            got = {item: set_label(token, known[item]["id"], flag, log) for item in ("video", "short") if item in known}
-            lines.append("- AI label: " + ", ".join(f"{'Short' if k == 'short' else 'video'} {v}" for k, v in got.items())
+            got = {item: set_label(token, mark["id"], flag, log) for item, mark in known.items()}
+            lines.append("- AI label: " + ", ".join(f"{f'Short {k[5:]}'.strip() if k != 'video' else 'video'} {v}"
+                                                    for k, v in got.items())
                          + ".")
         head = ("Uploaded to YouTube:" if any("is uploaded" in x for x in lines) else
                 "Nothing new uploaded:")

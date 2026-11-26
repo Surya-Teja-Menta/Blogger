@@ -209,7 +209,7 @@ export const Dag = ({e, rect, frame, end, vertical}) => {
 
 // --------------------------------------------------------------------------------------------------------------
 export const MapReduce = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), words = e.words;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), words = e.words;
   const keys = [...new Set(words)], counts = keys.map((k) => words.filter((w) => w === k).length);
   const cx = [B.x0 + B.W * 0.12, B.cx, B.x1 - B.W * 0.12], heads = ["map", "shuffle", "reduce"];
   const wy = row(words.length, B.y0 + B.fs * 2, B.y1 - 20), ky = row(keys.length, B.y0 + B.fs * 2.4, B.y1 - 40);

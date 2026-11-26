@@ -6,7 +6,7 @@ const hashOf = (s) => { let h = 2166136261; for (const ch of String(s)) { h ^= c
 
 // --------------------------------------------------------------------------------------------------------------
 export const HashTable = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), nb = e.buckets, keys = e.keys;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), nb = e.buckets, keys = e.keys;
   const bx = B.x0 + B.W * 0.42, by = row(nb, B.y0 + 30, B.y1 - 30), bh = Math.min(70, (B.H - 20) / nb - 10);
   const kx = B.x0 + B.W * 0.08, ky = row(keys.length, B.y0 + 30, B.y1 - 30), slots = Array(nb).fill(0);
   return (

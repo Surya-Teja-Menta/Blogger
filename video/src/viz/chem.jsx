@@ -108,7 +108,7 @@ export const GasLaw = ({e, rect, frame, end, vertical}) => {
       <rect x={gx} y={gy1 - gh} width={gw} height={gh} rx={8} fill={alpha(C.muted, 0.2)}/>
       <rect x={gx} y={gy1 - gh * clamp(pr)} width={gw} height={gh * clamp(pr)} rx={8} fill={C.accent}/>
       <line x1={gx - 8} y1={gy1 - gh * base} x2={gx + gw + 8} y2={gy1 - gh * base} stroke={C.violet} strokeWidth={4} strokeDasharray="8 6"/>
-      <Txt x={gx + gw / 2} y={gy1 + B.fs * 1} size={B.fs * 0.85} color={C.muted}>pressure (counted from the hits)</Txt>
+      <Txt x={gx - 8} y={gy1 + B.fs * 1} size={B.fs * 0.85} anchor="start" color={C.muted}>pressure (counted from the hits)</Txt>
       <Txt x={bx + side / 2} y={by + side + B.fs * 1.3} size={B.fs * 0.85} color={C.muted}>{i < 300 * 1.0 ? "particles bouncing, each hit pushes the wall" : e.change === "squeeze" ? "squeezed: more hits on the walls" : e.change === "heat" ? "hotter: faster, harder hits" : "hotter and squeezed: far more pressure"}</Txt>
     </g>
   );

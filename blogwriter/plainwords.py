@@ -138,7 +138,8 @@ Reply with JSON: {{"lines": [exactly {n} strings, in the same order]}}"""
 INTRO = """Write the first four lines of an explainer video called "{title}" on the channel {channel}. They are read aloud
 over the first four shots, in plain spoken English, warm and calm, a friend explaining it. Each line is one to three
 short sentences, at most 30 words. No numbers, no dates, no history, no jokes at the viewer's cost.
-  1. Welcome the viewer to {channel} and name the topic: "Welcome to {channel}. Today, ..."
+  1. FIRST one short surprising question or result about the topic (at most 12 words), THEN welcome the viewer to
+     {channel} and name the topic: "... Welcome to {channel}. Today, ..."
   2. WHAT IT IS: say what the topic is in one or two simple sentences, with a small everyday comparison.
   3. WHY IT MATTERS: what it lets us do, or what goes wrong without it, and where the viewer meets it in daily life.
   4. THE ROAD: one sentence on where we are going: first this, then that.

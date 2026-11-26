@@ -242,7 +242,7 @@ export const Quantize = ({e, rect, frame, end, vertical}) => {
 };
 
 export const Rlhf = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), xs = spread(3, B.x0, B.x1), y = B.cy;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), xs = spread(3, B.x0, B.x1), y = B.cy;
   const s1 = glide(T.t - 10, 1), s2 = glide(T.t - 60, 1), s3 = glide(later(T, 110), 1.2);
   return (
     <g>
@@ -339,7 +339,7 @@ export const Beam = ({e, rect, frame, end, vertical}) => {
 };
 
 export const Chunking = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), n = e.chunk === "small" ? 6 : 3, dx = B.x0 + 20, dw = B.W * 0.3, dh = B.H - 20;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), n = e.chunk === "small" ? 6 : 3, dx = B.x0 + 20, dw = B.W * 0.3, dh = B.H - 20;
   const cut = glide(T.t - 30, 1.6), emb = glide(later(T, 80), 1.6), ch = dh / n, ov = ch * 0.25;
   return (
     <g>
@@ -362,7 +362,7 @@ export const Chunking = ({e, rect, frame, end, vertical}) => {
 };
 
 export const Guardrails = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), y = B.cy, xs = [B.x0 + B.W * 0.06, B.x0 + B.W * 0.3, B.cx + B.W * 0.05, B.x1 - B.W * 0.28, B.x1 - B.W * 0.05];
+  const B = box(rect, vertical, true), T = timing(e, frame, end), y = B.cy, xs = [B.x0 + B.W * 0.06, B.x0 + B.W * 0.3, B.cx + B.W * 0.05, B.x1 - B.W * 0.28, B.x1 - B.W * 0.05];
   const c = cyc(T.t, 20, 70), blocked = c.n % 3 === 1, blockOut = c.n % 3 === 2;
   const gate = (x, label, hit) => (
     <g>
@@ -489,7 +489,7 @@ export const SemanticCache = ({e, rect, frame, end, vertical}) => {
 };
 
 export const MultiAgent = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), n = e.agents.length, plan = [B.cx, B.y0 + 60], xs = spread(n, B.x0, B.x1), ay = B.cy + B.H * 0.15;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), n = e.agents.length, plan = [B.cx, B.y0 + 60], xs = spread(n, B.x0, B.x1), ay = B.cy + B.H * 0.15;
   const out = glide(T.t - 30, 1.2), back = glide(later(T, 110), 1.2);
   return (
     <g>

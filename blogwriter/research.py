@@ -261,7 +261,8 @@ class Researcher:
         url, text = "", ""
         for query in clean["wikipedia"] + [topic]:         # the exact articles the model named first, then a search
             for title, link, lead in wikipedia_leads(query, 2):
-                if on_topic(f"{title} {lead[:600]}") and len(lead) >= 400:
+                need_chars = 200 if title.lower() == query.lower() else 400      # the very article asked for may open briefly
+                if on_topic(f"{title} {lead[:600]}") and len(lead) >= need_chars:
                     url, text = link, lead
                     break
             if text:
@@ -274,6 +275,10 @@ class Researcher:
                 if len(page) >= 500:
                     url, text = hit.url, page
                     break
+        if "wikipedia.org/wiki/" in url:                # the whole article, not only its opening lines
+            page = fetch_text(url, 6000)
+            text = page if len(page) > len(text) else text
+        self.subject_words = _terms(" ".join([subject, *clean["keywords"]]))
         title = topic.strip()[:1].upper() + topic.strip()[1:]
         article = Article(title, (text[:300] or ", ".join(clean["keywords"])), url or f"topic:{topic}", datetime.now(timezone.utc),
                           domain(url) if url else "requested topic", "topic")
@@ -574,6 +579,8 @@ class Researcher:
         self.by_url[dossier.sources[0]["url"]] = 1
         vocab = story_vocab(article, article_text)
         entities = frozenset(story_entities(article_text))
+        if study and article.api == "topic":       # a lesson: stray names ("world", a surname) threw the good pages away
+            entities = frozenset(getattr(self, "subject_words", None) or _terms(article.title))
 
         # 1. the original article is the richest source: read all of it, not a 2,500-character slice
         story = self._extract(article, "Story", "what the original article itself reports",

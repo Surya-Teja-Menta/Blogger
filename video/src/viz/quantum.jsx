@@ -129,7 +129,7 @@ export const QCircuit = ({e, rect, frame, end, vertical}) => {
           {nShots > 0 && <rect x={hx + (k * hw) / 4 + hw / 8 - 7} y={hy + hh - (shots[k] / Math.max(1, nShots)) * hh} width={14} height={(shots[k] / Math.max(1, nShots)) * hh} fill={C.text} opacity={0.85}/>}
           <Txt x={hx + (k + 0.5) * (hw / 4)} y={hy + hh + B.fs * 1} size={B.fs * 0.9} color={C.muted}>{`|${lb}⟩`}</Txt>
         </g>))}
-      <Txt x={hx + hw / 2} y={hy - B.fs * 0.9} size={B.fs * 0.85} color={C.muted}>{nShots > 0 ? "bars: the exact chances; white: 200 measurements" : entangled ? "entangled: the two qubits only ever agree" : "the chance of each pair of answers"}</Txt>
+      <Txt x={B.x1} y={hy + hh + B.fs * 2.7} size={B.fs * 0.85} anchor="end" color={C.muted}>{nShots > 0 ? "bars: the exact chances; white: 200 measurements" : entangled ? "entangled: the two qubits only ever agree" : "the chance of each pair of answers"}</Txt>
     </g>
   );
 };

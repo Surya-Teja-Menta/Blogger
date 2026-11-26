@@ -32,8 +32,10 @@ export const smoothstep = (t) => { const x = clamp(t); return x * x * (3 - 2 * x
 
 // text with a halo in the background colour, so it reads over lines and fills
 export const Txt = ({x, y, children, size = 28, color, anchor = "middle", weight = 800, op = 1, mono = false, rotate, halo = true}) => (
-  <text x={x} y={y} fontSize={size} fontFamily={mono ? FONT.mono : FONT.body} fontWeight={weight} fill={color || C.text}
-        textAnchor={anchor} dominantBaseline="central" opacity={op} stroke={halo ? C.bg : "none"} strokeWidth={size * 0.3} paintOrder="stroke"
+  // never under 24px, and secondary words in a softened text colour rather than the faint one: a phone must read them
+  <text x={x} y={y} fontSize={Math.max(24, size)} fontFamily={mono ? FONT.mono : FONT.body} fontWeight={weight}
+        fill={color === C.muted ? alpha(C.text, 0.82) : color || C.text}
+        textAnchor={anchor} dominantBaseline="central" opacity={op} stroke={halo ? C.bg : "none"} strokeWidth={Math.max(24, size) * 0.3} paintOrder="stroke"
         strokeLinejoin="round" transform={rotate ? `rotate(${rotate} ${x} ${y})` : undefined}>{children}</text>
 );
 

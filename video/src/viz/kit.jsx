@@ -20,11 +20,12 @@ export const timing = (e, frame, end) => {
 };
 
 // the region in handy numbers, and the type size that suits it
-export const box = (rect, vertical) => {
+export const box = (rect, vertical, tight) => {     // tight: a crowded picture keeps the smaller type, or its words collide
   const [x0, y0, x1, y1] = rect;
   const W = x1 - x0, H = y1 - y0;
   return {x0, y0, x1, y1, W, H, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2,
-          fs: Math.round(clamp(Math.min(W / 22, H / 9), 22, vertical ? 40 : 34))};
+          fs: Math.round(tight ? clamp(Math.min(W / 22, H / 9), 22, vertical ? 40 : 34)
+                                 : clamp(Math.min(W / 18, H / 8), 28, vertical ? 48 : 44))};      // read on a phone
 };
 
 // colours for a set of things: the element's own colour first, then the theme's other chart colours

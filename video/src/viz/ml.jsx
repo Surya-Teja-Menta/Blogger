@@ -132,7 +132,7 @@ export const Kmeans = ({e, rect, frame, end, vertical, seed = 0}) => {
 
 // --------------------------------------------------------------------------------------------------------------
 export const LossCurve = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end);
+  const B = box(rect, vertical, true), T = timing(e, frame, end);
   const X = (t) => B.x0 + 30 + t * (B.W - 60), Y = (v) => B.y1 - B.fs * 1.4 - v * (B.H - B.fs * 2.4);
   const train = (t) => 0.08 + 0.85 * Math.exp(-t * 4.5), val = (t) => (e.overfit ? 0.18 + 0.75 * Math.exp(-t * 5) + 0.5 * Math.max(0, t - 0.45) ** 1.6 : train(t) + 0.08);
   const p = glide(T.t - 10, 3.6), N = 80;
@@ -260,7 +260,7 @@ export const Context = ({e, rect, frame, end, vertical}) => {
 
 // --------------------------------------------------------------------------------------------------------------
 export const Rag = ({e, rect, frame, end, vertical}) => {
-  const B = box(rect, vertical), T = timing(e, frame, end), n = e.docs.length;
+  const B = box(rect, vertical, true), T = timing(e, frame, end), n = e.docs.length;
   const q = [B.x0 + B.W * 0.13, B.y0 + 60], db = [B.x0 + B.W * 0.13, B.y1 - 70], llm = [B.x0 + B.W * 0.6, B.cy], ans = [B.x1 - B.W * 0.13, B.cy];
   const ret = glide(T.t - 30, 1.2), aug = glide(T.t - 60, 1.2), gen = glide(T.k > 0 ? T.k : T.t - 100, 1.2);
   const dy = row(n, B.y0 + 80, B.y1 - 80), dx = B.x0 + B.W * 0.36;

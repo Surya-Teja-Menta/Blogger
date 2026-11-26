@@ -9,6 +9,8 @@ from urllib.parse import quote, urlencode
 # what each delivered file is, in the order the table lists them
 FILES = [("long_video_en.mp4", "Long video (2K)", "the one to upload"),
          ("short_en.mp4", "Short", "vertical, under a minute"),
+         ("short_en_2.mp4", "Short 2", "answers one question"),
+         ("short_en_3.mp4", "Short 3", "answers one question"),
          ("thumbnail.png", "Thumbnail", "for the long video"),
          ("subtitles_en.srt", "Captions", "optional, already burned in"),
          ("study_notes.pdf", "Study notes (PDF)", ""),
@@ -70,11 +72,12 @@ def build(title: str, links: Dict[str, str], yt: Optional[dict], quality: str, n
     buttons = ""
     if repo and run and stored:
         short = bool(links.get("short_en.mp4"))
+        shorts = "Shorts" if links.get("short_en_2.mp4") else "Short"
         how = ("One click starts the upload on GitHub (it holds the YouTube sign-in); an email with the YouTube link "
                "follows in a few minutes. A second click never uploads twice." if base else
                "Each button opens a ready-filled GitHub page: press <b>Create</b> there to upload.")
         buttons = (_button(link("video"), "Upload video to YouTube", True)
-                   + (_button(link("short"), "Upload Short", False) if short else "")
+                   + (_button(link("short"), f"Upload {shorts}", False) if short else "")
                    + (_button(link("both"), "Upload both", False) if short else "")
                    + f'<div style="color:{MUTED};font-size:12px;margin-top:4px">{how} Nothing is posted until you '
                      f'click.</div>')

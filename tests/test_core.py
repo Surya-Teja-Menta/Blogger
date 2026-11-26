@@ -1000,6 +1000,7 @@ def test_reader_level_and_niche_reach_the_writer_and_bad_inputs_are_refused():
 
 
 def test_a_video_run_makes_only_the_video_no_report_and_no_report_email(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIN_FACTS", "1")          # the few facts of this fake research are enough here
     from types import SimpleNamespace
     from blogwriter import pipeline as P
     from blogwriter.config import Settings
@@ -1213,13 +1214,15 @@ def test_video_plan_shapes_the_script_and_acts_become_stings():
                          "opening": "Start on the empty harbour."}, "auto")
     assert brief["style"] == "story" and brief["minutes"] == 4 and brief["maths"]
     assert check_brief(None, "education")["style"] == "education"          # a failed plan keeps the asked style
-    assert check_brief({"minutes": "lots"}, "auto")["minutes"] == 4.0
+    assert check_brief({"minutes": "lots"}, "news")["minutes"] == 4.0
     assert check_brief({"minutes": "lots"}, "education")["minutes"] == 9.0 and check_brief({"minutes": 30}, "auto")["minutes"] == 12
 
     class FakeLLM:
         def complete_json(self, prompt, **kw):
             if prompt.startswith(("These are the narration lines", "You are the comedy writer")):      # the lengthening pass: lines kept as they are
                 return {"lines": json.loads(prompt.split("Lines (JSON): ", 1)[1].split("\n")[0])}
+            if "MORE vertical Shorts" in prompt:
+                return {"shorts": []}
             assert "Lemmino" in prompt and "clue by clue" in prompt and "Start on the empty harbour." in prompt
             assert "MATHS INTUITION" in prompt and r"\frac{1}{n}" in prompt and "28 to 40 scenes" in prompt
             assert "{shape}" not in prompt and "{shots}" not in prompt and "{{" not in prompt
@@ -2684,9 +2687,9 @@ def test_a_lesson_opens_with_a_welcome_a_definition_and_the_road_ahead():
     brief = {"opening": "a surprising fact", "channel": "Adyora"}
     edu = video.opening_rule(brief, "education", "Central Limit Theorem")
     assert "Welcome to Adyora" in edu and "Central Limit Theorem" in edu and "WHAT IT IS" in edu
-    assert "does NOT start straight at the point" in edu and "exactly these four beats" in edu
+    assert "does NOT dive straight into the lesson" in edu and "exactly these four beats" in edu
     assert "WHY IT MATTERS" in edu and "never a quip" in edu and "from today's world" in edu
-    assert video.opening_rule(brief, "concept", "Entropy").startswith("The video does NOT start straight")
+    assert video.opening_rule(brief, "concept", "Entropy").startswith("The video does NOT dive straight")
     news = video.opening_rule(brief, "news", "A story")
     assert news.startswith("a surprising fact") and "No greeting" in news       # news still opens cold
     assert "open cold" not in video.VOICE

@@ -136,7 +136,7 @@ export const Bayes = ({e, rect, frame, end, vertical}) => {
       {s3 > 0 && <g opacity={s3}>
         <circle cx={rx} cy={ry} r={rr} fill={alpha(C.muted, 0.2)}/>
         <path d={arc(0, 2 * Math.PI * post * s3)} fill={pal(e, 2)}/>
-        <Txt x={rx} y={ry + rr + B.fs * 1.2} size={B.fs * 0.9} color={C.text}>{e.show ? `${Math.round(post * 100)}% of positives really are ${names[0]}` : `of those who test positive, this share really are ${names[0]}`}</Txt>
+        <Txt x={vertical ? rx : B.x1} y={vertical ? ry + rr + B.fs * 1.2 : gy + rows * side + B.fs * 2.8} anchor={vertical ? "middle" : "end"} size={B.fs * 0.9} color={C.text}>{e.show ? `${Math.round(post * 100)}% of positives really are ${names[0]}` : `of those who test positive, this share really are ${names[0]}`}</Txt>
       </g>}
     </g>
   );

@@ -103,7 +103,7 @@ export const DiagramScene = ({s, i, vertical}) => {
   const u = (box.y1 - box.y0) / 100;                       // size unit: 1% of the canvas height
   const X = (x) => box.x0 + ((box.x1 - box.x0) * x) / 100;
   const Y = (y) => box.y0 + ((box.y1 - box.y0) * y) / 100;
-  const fs = {s: 34, m: 46, l: 66}, fScale = vertical ? 1.15 : 1;
+  const fs = {s: 40, m: 48, l: 66}, fScale = vertical ? 1.15 : 1;
   const els = (s.diagram && s.diagram.elements) || [];
   const hasTex = els.some((e) => e.type === "tex");
 

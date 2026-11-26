@@ -266,6 +266,11 @@ class BlogPipeline:
                                sell=sell, report_email=email and not video, study=self.writer.study)
         except LLMError as exc:      # nothing is saved and the story is not marked as used
             raise PipelineError(f"no LLM provider could complete a request: {exc}") from exc
+        if video and source == "topic" and self.writer.study:
+            need = int(os.environ.get("MIN_FACTS", "20"))
+            if result.get("verified_facts", need) < need:       # a thin video is worse than none
+                raise PipelineError(f"research found only {result['verified_facts']} verified facts on this topic "
+                                    f"(a lesson needs {need}). Run it again with mode 'deep', or word the topic more broadly")
         if video:
             from .video import VideoMaker
             try:                     # the report is already saved and sent; a video failure must not undo that
