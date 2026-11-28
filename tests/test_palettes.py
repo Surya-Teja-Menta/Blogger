@@ -40,6 +40,7 @@ def test_a_video_gets_colours_and_a_backdrop_that_suit_its_subject_but_not_alway
 def test_every_backdrop_and_every_shape_is_drawn():
     fx, gen, back = read("fx.jsx"), read("gen.jsx"), read("backdrops.jsx")
     new = set(re.findall(r"(\w+): \w+(?:,|\})", back.split("export const BACKS = {")[1]))
+    new |= set(re.findall(r"(\w+): \w+(?:,|\})", read("backdrops2.jsx").split("export const BACKS2 = {")[1]))
     old = set(re.findall(r'C\.back === "(\w+)"', fx))
     assert (new | old | {"aurora"}) >= set(palettes.BACKDROPS)         # aurora is the plain branch
     assert not set(design.BACKGROUNDS) - (new | old | {"aurora"})
