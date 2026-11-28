@@ -2295,6 +2295,7 @@ class VideoMaker:
         plan["trend"] = trending.research(plan["title"], plan.get("tags", []), self.log, asked=meta.get("topic", ""))      # the tags people search and follow now
         skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
+        vizlib.RECENT = set(recent.get("techs", []))      # ... and the pictures they used come lower in the offers
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
                               f"{brief['mood']} {brief['tone']} {notes.owner_notes()}".strip(), self.log, recent)
         palettes.save_history(self.s, recent, theme)
@@ -2306,6 +2307,12 @@ class VideoMaker:
             self.art_direct(scenes, only=bare)      # in a lesson every idea gets a picture, not just its words
         brief["look"] = looks.moves_text(theme)       # the film look's own language, for the diagram designer
         self.draw_diagrams(scenes, brief, plan["title"])
+        used = sorted({el["type"] for s in scenes for el in (s.get("diagram") or {}).get("elements", []) if el["type"] in vizlib.TECH}
+                      | {(s.get("graphic") or {}).get("type") for s in scenes} & set(vizlib.TECH))
+        try:
+            palettes.note_techs(self.s, recent, used)
+        except Exception as exc:                   # a nicety: never costs the video
+            self.log(f"[variety] the used pictures were not remembered ({type(exc).__name__})")
         if brief["style"] in ("education", "concept"):
             n = graphics.no_stock_photos(scenes)
             if n:

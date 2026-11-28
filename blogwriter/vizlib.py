@@ -10,6 +10,7 @@ region it reads well in, and a worked example (used by the tests and the render 
 channel's rule: a number appears on screen only if the narration says it (`show` is set only then); otherwise
 values only shape the picture. Each video is offered a different selection (`pick`), topic first, so videos do
 not look alike, and a technique is used at most once per video."""
+import os
 import random
 import re
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1076,6 +1077,9 @@ def _family_boost(text: str) -> Dict[str, int]:
     return boost
 
 
+RECENT: set = set()          # techniques the last videos used (palettes history "techs"), set by video.make
+
+
 def match(context: str, n: int = 8, used: Optional[set] = None, pool: Optional[tuple] = None, title: str = "",
           seed: str = "") -> List[str]:
     """The techniques that fit a context best, from the WHOLE library: the family table is only how the library is
@@ -1087,17 +1091,25 @@ def match(context: str, n: int = 8, used: Optional[set] = None, pool: Optional[t
     used = used or set()
     ctx, ttl = _keys(context), _keys(title)
     fam_c, fam_t = _family_boost(context), _family_boost(title)
-    rng = random.Random(re.sub(r"\W", "", (seed or title or context)[:200].lower()) or "x")
+    # the run's own seed too: the same subject made again gets other close fits (os.environ: the GitHub run)
+    rng = random.Random((re.sub(r"\W", "", (seed or title or context)[:200].lower()) or "x") + os.environ.get("GITHUB_RUN_ID", ""))
     scored = []
     for name, t in TECH.items():
         if name in used or (pool is not None and name not in pool):
             continue
         keys = TECH_KEYS[name]
         fit = 3 * len(keys & ctx) + len(keys & ttl) + fam_c.get(t["fam"], 0) + 0.5 * fam_t.get(t["fam"], 0)
-        scored.append((fit, t["fam"] == "explain", rng.random(), name))
-    relevant = sorted((x for x in scored if x[0] >= 2), reverse=True)
-    neutral = sorted((x for x in scored if x[0] < 2 and x[1]), key=lambda x: (x[0], x[2]), reverse=True)
-    return [x[3] for x in relevant + neutral][:n]
+        fresh = -1.5 if name in RECENT else 0.0                  # used in the last videos: still offered, further down
+        scored.append((fit, fit + fresh + rng.uniform(0, 1.8), t["fam"] == "explain", rng.random(), name))
+    # relevance decides who is in; among the relevant, a shuffle of near-equal fits (randomness), recent ones lower
+    relevant = sorted((x for x in scored if x[0] >= 2), key=lambda x: x[1], reverse=True)
+    neutral = sorted((x for x in scored if x[0] < 2 and x[2]), key=lambda x: (x[0], x[3]), reverse=True)
+    out = [x[4] for x in relevant + neutral][:n]
+    # and a wildcard: one loosely related technique from anywhere in the library, so a video can surprise
+    loose = [x[4] for x in scored if 0 < x[0] < 2 and x[4] not in out and x[4] not in RECENT]
+    if loose and n >= 4:
+        out[-1] = rng.choice(loose)
+    return out
 
 
 def pick(title: str, n: int = 28, used: Optional[set] = None, pool: Optional[tuple] = None) -> List[str]:

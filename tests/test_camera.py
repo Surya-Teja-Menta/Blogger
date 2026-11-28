@@ -21,18 +21,19 @@ def test_every_shot_gets_a_move_and_no_move_repeats_back_to_back():
     scenes = shots()
     summary = camera.plan(scenes, "A title")
     moves = [s["cam"]["move"] for s in scenes]
-    assert moves[0] == "push" and all(s["cam"]["move"] == "pull" for s in scenes if s.get("chapter"))
-    assert all(moves[k] != moves[k - 1] or moves[k] in ("push", "pull") for k in range(2, len(moves)))     # no repeat except the fixed openers
+    assert moves[0] == "push" and all(s["cam"]["move"] in ("pull", "lowangle") for s in scenes if s.get("chapter"))
+    assert all(moves[k] != moves[k - 1] or moves[k] in ("push", "pull", "lowangle") for k in range(2, len(moves)))     # no repeat except the fixed openers
     assert len(set(moves)) >= 5 and "push" in summary
 
 
-def test_text_heavy_shots_never_roll_or_blur_and_a_dutch_angle_is_rare():
+def test_text_heavy_shots_never_roll_or_blur_and_a_dutch_angle_is_about_one_in_ten():
     scenes = shots(120)
     camera.plan(scenes, "Another title")
     for s in scenes:
         if s["kind"] == "diagram":
             assert s["cam"]["move"] in camera.CALM and s["cam"]["move"] != "dutch"
-    assert Counter(s["cam"]["move"] for s in scenes)["dutch"] <= max(1, 120 // 25)
+    assert 1 <= Counter(s["cam"]["move"] for s in scenes)["dutch"] <= max(2, 120 // 10)
+    assert {"lowangle", "highangle", "sideangle"} & {s["cam"]["move"] for s in scenes}      # angles in perspective
     assert all(s["cam"]["punch"] is None or 24 <= s["cam"]["punch"] <= s["frames"] - 24 for s in scenes)
     assert any(s["cam"]["punch"] is not None for s in scenes)                                       # some shots punch in on a beat
 

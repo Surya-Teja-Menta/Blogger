@@ -25,7 +25,8 @@ export const cameraStyle = ({cam, frame, duration, i, amount, width, height}) =>
   const t = frame / Math.max(1, duration), s = inOut(t), dir = plan.dir || (i % 2 ? 1 : -1);
   const a = amount * (plan.amount ?? 1);
   const sway = (key, period) => noise2D(`${key}-${i}`, frame / period, 0);
-  let sc = 1, tx = 0, ty = 0, rot = 0;
+  let sc = 1, tx = 0, ty = 0, rot = 0, rx = 0, ry = 0;      // rx, ry: a tilt in perspective (low, high and side angles)
+  const deg = (plan.amount ?? 1) >= 0.8 ? 15 : 6;      // a picture shot tilts clearly; a diagram only gently, so it stays readable
   switch (plan.move) {
     case "pull": sc = 1 + 0.06 * a * (1 - s); break;
     case "truck": tx = dir * (s - 0.5) * 0.034 * width * a; sc = 1.012; break;
@@ -43,12 +44,18 @@ export const cameraStyle = ({cam, frame, duration, i, amount, width, height}) =>
     case "whip": { const w = inOut(Math.min(1, t * 6)); tx = dir * (1 - w) * 0.08 * width * a; sc = 1.02 + 0.03 * s; break; }  // arrives fast, settles
     case "snap": sc = 1 + (t > 0.55 ? 0.08 * a * inOut((t - 0.55) * 5) : 0.005 * s); break;              // holds, then a hard zoom
     case "handheld": tx = sway("hhx", 26) * 16 * a; ty = sway("hhy", 31) * 11 * a; rot = sway("hhr", 40) * 0.45 * a; sc = 1.025; break;
+    case "lowangle": rx = deg * (0.8 - 0.3 * s); sc = 1.02 + 0.03 * s; ty = -0.01 * height * a; break;     // from below: the subject towers
+    case "highangle": rx = -deg * (0.8 - 0.3 * s); sc = 1.02 + 0.03 * s; ty = 0.01 * height * a; break;    // from above: the subject looks small
+    case "sideangle": ry = dir * deg * (1 - 0.5 * s); sc = 1.03; tx = -dir * 0.015 * width * a; break;    // from the side, turning to face it
+    case "swing": ry = dir * deg * Math.cos(s * Math.PI); sc = 1.03; break;                               // swings round past the subject
+    case "corkscrew": rot = dir * 2.5 * a * (1 - s); ry = dir * deg * 0.6 * (1 - s); sc = 1.06 - 0.03 * s; break;   // screws in and settles
     default: sc = 1 + 0.06 * a * s;                                                   // push (and the old plain push)
   }
   tx += sway("tx", 160) * 5 * a;
   ty += sway("ty", 180) * 3 * a;
   if (plan.punch != null) sc *= 1 + 0.035 * a * bump(frame - plan.punch);
-  return {transform: `translate(${tx}px, ${ty}px) rotate(${rot}deg) scale(${sc})`,
+  const tilt = rx || ry ? `perspective(${Math.round(width * 1.3)}px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) ` : "";
+  return {transform: `${tilt}translate(${tx}px, ${ty}px) rotate(${rot}deg) scale(${sc})`,
           transformOrigin: `${(plan.fx ?? 0.5) * 100}% ${(plan.fy ?? 0.45) * 100}%`};
 };
 

@@ -13,8 +13,10 @@ from typing import Dict, List, Optional
 
 # how often each move is chosen
 MOVES: Dict[str, int] = {"push": 4, "pull": 2, "truck": 3, "pedestal": 2, "arc": 2, "drift": 2, "rack": 2,
-                         "crane": 2, "tilt": 2, "glide": 2, "orbit": 1, "spiral": 1, "whip": 1, "snap": 1, "handheld": 1}
-CALM = ("push", "pull", "truck", "pedestal", "drift", "crane", "tilt", "glide")   # no roll, no blur: for shots full of small text
+                         "crane": 2, "tilt": 2, "glide": 2, "orbit": 1, "spiral": 1, "whip": 1, "snap": 1, "handheld": 1,
+                         "lowangle": 3, "highangle": 3, "sideangle": 3, "swing": 2, "corkscrew": 1}
+CALM = ("push", "pull", "truck", "pedestal", "drift", "crane", "tilt", "glide",   # no roll, no blur: for shots full of small text,
+        "lowangle", "highangle", "sideangle")      # ... and gentle angles in perspective (a few degrees on a diagram: still readable)
 CALM_KINDS = {"equation", "graph", "derive", "plot", "check", "steps", "diagram", "timeline", "list", "map", "compare",
               "bars", "line", "donut", "kpis"}
 PUNCH_SHARE = 0.45          # the share of shots with a punch-in on their key moment
@@ -40,14 +42,14 @@ def key_frame(shot: dict) -> Optional[int]:
 def plan(scenes: List[dict], seed: str) -> str:
     """Give every shot its camera move. Returns a one-line summary of the moves used."""
     last: List[str] = []
-    dutch_left = max(1, len(scenes) // 25)
+    dutch_left = max(2, len(scenes) // 10)              # a tilted frame now and then: about one shot in ten
     used = Counter()
     for i, s in enumerate(scenes):
         calm = s.get("kind") in CALM_KINDS or bool(s.get("diagram"))
         if i == 0:
             move = "push"                                       # the opening dollies in
         elif s.get("chapter"):
-            move = "pull"                                       # a new part opens with a reveal
+            move = "lowangle" if _r(seed, i, "open") < 0.5 else "pull"     # a new part opens big: from below, or a reveal
         else:
             pool = {m: w for m, w in MOVES.items() if (m in CALM or not calm) and m not in last[-2:]} or {"drift": 1}
             roll = _r(seed, i, "move") * sum(pool.values())
@@ -58,8 +60,8 @@ def plan(scenes: List[dict], seed: str) -> str:
                     move = m
                     break
         dutch = 0.0
-        if i and not calm and not s.get("chapter") and dutch_left and _r(seed, i, "dutch") < 0.08:
-            move, dutch, dutch_left = "dutch", round(0.8 + 0.5 * _r(seed, i, "deg"), 2), dutch_left - 1
+        if i and not calm and not s.get("chapter") and dutch_left and last[-1:] != ["dutch"] and _r(seed, i, "dutch") < 0.2:
+            move, dutch, dutch_left = "dutch", round(2.0 + 2.0 * _r(seed, i, "deg"), 2), dutch_left - 1
         punch = key_frame(s) if move not in ("rack", "dutch") and _r(seed, i, "punch") < PUNCH_SHARE else None
         s["cam"] = {"move": move, "dir": 1 if _r(seed, i, "dir") < 0.5 else -1, "amount": round(0.6 if calm else 0.9 + 0.4 * _r(seed, i, "amt"), 2),
                     "fx": round(0.38 + 0.24 * _r(seed, i, "fx"), 2), "fy": round(0.38 + 0.14 * _r(seed, i, "fy"), 2),

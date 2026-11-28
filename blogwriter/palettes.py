@@ -208,7 +208,7 @@ def photo_grade(seed: str) -> str:
 
 # ---- memory: what the last videos used, so two in a row never share a look --------------------------------------
 HISTORY_KEY = "design_history.json"
-KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2, "layouts": 1, "fonts": 6}
+KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2, "layouts": 1, "fonts": 6, "techs": 60}
 
 
 def load_history(settings) -> dict:
@@ -222,6 +222,18 @@ def load_history(settings) -> dict:
     return {k: [str(x) for x in (data.get(k) or [])][-n:] for k, n in KEEP.items()}
 
 
+def note_techs(settings, history: dict, names) -> None:
+    """Add the library techniques this video used (pictures and graphics), so the next videos offer them lower."""
+    import json
+    from . import storage
+    history["techs"] = [*history.get("techs", []), *names][-KEEP["techs"]:]
+    try:
+        old = json.loads(storage.get_text(settings, HISTORY_KEY) or "{}")
+    except ValueError:
+        old = {}
+    storage.put_text(settings, HISTORY_KEY, json.dumps({**old, "techs": history["techs"]}), "application/json")
+
+
 def save_history(settings, history: dict, theme: dict) -> None:
     """Add this video's world, backdrop and film look (if any) and keep the last few."""
     import json
@@ -232,6 +244,7 @@ def save_history(settings, history: dict, theme: dict) -> None:
            "captions": theme.get("caption"),
            "layouts": json.dumps(theme["layout"], sort_keys=True) if theme.get("layout") else None}
     out = {k: ([*history.get(k, []), new[k]] if (new[k] or k == "looks") else history.get(k, []))[-n:] for k, n in KEEP.items()
-           if k != "fonts"}
+           if k not in ("fonts", "techs")}
+    out["techs"] = history.get("techs", [])[-KEEP["techs"]:]
     out["fonts"] = [*history.get("fonts", []), *[f for f in (theme.get("display"), theme.get("body")) if f]][-KEEP["fonts"]:]
     storage.put_text(settings, HISTORY_KEY, json.dumps(out), "application/json")
