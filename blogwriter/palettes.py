@@ -65,6 +65,17 @@ BACKDROPS: Dict[str, str] = {
     # drawn by a shader (video/src/silk.jsx): the richest ones, the brand's signature
     "silk": "luxury premium elegant brand rich calm story education lesson learning explained statistics system finance business culture",
     "marble": "luxury premium elegant brand formal law finance history power strategy politics economy classic",
+    "dunes": "desert geography travel time patience history landscape calm",
+    "smoke": "chemistry fire combustion engine mystery heat energy reaction",
+    "constellation": "network graph connections distributed system social ai neural data",
+    "orbits": "astronomy physics planets cycles probability gravity system",
+    "glass": "modern product interface software design cloud api premium",
+    "lattice": "architecture structure engineering database math geometry crystal",
+    "sheen": "luxury premium brand finance gold metal elegant formal",
+    "beam": "reveal spotlight story drama surprise paradox insight",
+    "drift": "gentle calm basics introduction lesson nature seasons",
+    "ink": "art writing literature psychology creative mind philosophy",
+    "threads": "flow streaming connection language time series signal elegant",
 }
 
 
