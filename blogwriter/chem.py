@@ -21,7 +21,6 @@ SMILES: Dict[str, str] = {
     "vitamin c": "OCC(O)C1OC(=O)C(O)=C1O", "ascorbic acid": "OCC(O)C1OC(=O)C(O)=C1O", "co2": "O=C=O", "h2o": "O", "ch4": "C", "nh3": "N",
     "o2": "O=O", "n2": "N#N", "h2": "[H][H]", "hcl": "Cl", "c6h6": "c1ccccc1",
 }
-CPK = {"H": "#f2f2f2", "C": "#8a8f98", "N": "#4f7dff", "O": "#ff5a4f", "S": "#f0c040", "Cl": "#46d160", "P": "#ff9a3c", "F": "#8ad66a"}
 
 
 def lookup(name: str) -> Optional[str]:

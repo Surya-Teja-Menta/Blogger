@@ -17,7 +17,6 @@ TRENDS = "https://trends.google.com/trending/rss"
 GEOS = ("US", "IN", "GB")
 FORMS = ("{t}", "{t} explained", "{t} for beginners", "{t} interview", "how {t} works", "{t} vs")
 STOP = {"the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with", "is", "are", "how", "why", "what", "your", "you", "do", "does"}
-BROAD = {"video", "videos", "youtube", "tutorial", "example", "examples", "meaning", "definition", "course", "pdf", "free", "download"}
 
 
 def core(title: str) -> str:
@@ -93,7 +92,7 @@ def rank(topic: str, found: Dict[str, List[str]], trends: List[str], track: str 
     return seen
 
 
-def research(title: str, tags: List[str], log: Callable[[str], None] = print) -> dict:
+def research(title: str, tags: List[str], log: Callable[[str], None] = print, asked: str = "") -> dict:
     """{"hashtags": [...up to 8, best first...], "phrases": [...the suggestions people type...], "trending": [...]} for the
     video titled `title`. Never raises."""
     topic = core(title)
@@ -103,7 +102,7 @@ def research(title: str, tags: List[str], log: Callable[[str], None] = print) ->
     trends = [t for geo in GEOS for t in trending(geo)]
     mine = words_of(topic + " " + " ".join(tags))
     about = [t for t in trends if len(words_of(t) & mine) >= min(2, max(1, len(words_of(t))))]      # trending AND about this topic
-    first = re.split(r"\s*[:|—]\s*", title)[0].strip()
+    first = re.split(r"\s*[:|—]\s*", asked or title)[0].strip()      # the topic asked for keeps its course ("Statistics: ...")
     track = first if 0 < len(first.split()) <= 3 and first != topic else ""             # "System Design", "Statistics"
     tagged = rank(topic, found, about, track)[:8]
     phrases = [p for ps in found.values() for p in ps[:3]]

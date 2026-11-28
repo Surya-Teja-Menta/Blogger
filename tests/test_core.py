@@ -2174,13 +2174,6 @@ def test_a_video_run_sells_its_document_but_sends_only_the_video_email(tmp_path,
         P.BlogPipeline.run(p, "CLT", source="topic", publish=publish, video=video_on)
         a, k = seen[0]
         assert (k["sell"], k["report"], k["report_email"], a[8]) == (sells, report, mails, publish)
-    guide = tmp_path / "posting_guide.txt"
-    guide.write_text("POSTING GUIDE\n===== ENGLISH =====\nTitle: The CLT\nDescription:\nAverages behave.\n\n"
-                     "Full study notes (PDF): https://g.co/l/x\nSources: 3 sources.\n- https://a\n"
-                     "Photo and footage credits (required by the licences):\n- none\n", encoding="utf-8")
-    block = video.youtube_block(str(guide))
-    assert block.startswith("Title: The CLT") and "https://g.co/l/x" in block and "Photo and footage" not in block
-    assert video.youtube_block(str(tmp_path / "missing.txt")) == ""
 
 
 def test_a_film_look_from_the_library_is_chosen_for_the_subject(monkeypatch):

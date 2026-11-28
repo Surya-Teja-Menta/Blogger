@@ -295,7 +295,13 @@ def restyle(d: dict, raw_fx, title: str, style: str, mood: str, liked=((), ()), 
         pal[key] = fit(pal[key], pal["bg"], need)
     light = luminance(pal["bg"]) > 0.4
     back = palettes.backdrops(context, title, DARK_ONLY if light else ("paper",), liked[1], recent.get("backs", ()))
-    return _finish(pal, d["display"], d["body"], d["upper"], back, d["named_cuts"], d["pace"], d["source"], d["title"],
+    used = set(recent.get("fonts", ()))
+    rnd = random.Random(int(hashlib.sha256(("font" + title).encode()).hexdigest(), 16))
+    display = d["display"] if d["display"] in DISPLAY_FONTS and d["display"] not in used else \
+        rnd.choice([f for f in DISPLAY_FONTS if f not in used] or list(DISPLAY_FONTS))
+    body = d["body"] if d["body"] in BODY_FONTS and d["body"] not in used else \
+        rnd.choice([f for f in BODY_FONTS if f not in used and f != display] or list(BODY_FONTS))
+    return _finish(pal, display, body, d["upper"], back, d["named_cuts"], d["pace"], d["source"], d["title"],
                    d["kicker"], check_fx(raw_fx, pal["bg"] + d["display"] + pal["accent"], light))
 
 

@@ -58,6 +58,12 @@ MP3_BYTES_PER_SECOND = 6000   # edge-tts speaks 24 kHz, 48 kbit/s mono MP3
 WAV_BYTES_PER_SECOND = 48000  # 24 kHz, 16 bit, mono
 SHORT_MAX_SECONDS = 38     # a Short is a thirty second explanation of the whole thing
 MAX_TEMPO = 1.3           # a dubbed track may be sped up this much (pitch kept) to fit the English picture
+# the hook of a title takes one of these forms, chosen by the topic, so the titles of a channel do not all ask "Why ..."
+HOOK_FORMS = ("a question the viewer has asked themselves (not starting with Why)", "a surprising true claim from the facts",
+              "what goes wrong without it", "the everyday thing it secretly runs", "a plain promise of what the viewer will be able to do",
+              "a myth the video breaks")
+SHORT_ENDS = ("The full lesson is on {channel}.", "The whole story is on {channel}.", "Watch the full lesson on {channel}.",
+              "There's a longer version on {channel}.", "See it all worked out on {channel}.")
 LESSON_MINUTES = 8          # a lesson or concept video is never planned shorter (the owner: 8 to 12 minutes)
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
 SHOTS_PER_REQUEST = 14    # the most shots one request is asked to write (asked for 70 at once, a model returns ~18)
@@ -231,7 +237,8 @@ SCRIPT_PROMPT = """{shape}
   in news, the agency that reported an event may be named ("Reuters reports"). No predictions, opinions, advice or facts that are not listed. Write figures as they are said aloud
   ("115 billion dollars"); on-screen fields keep the short form ("$115B").
 - "outro": 1 or 2 closing sentences in this video's own voice that {outro_ask}invite the viewer to subscribe to
-  {channel} (say the channel's name). Not a slogan; make it fit the story.
+  {channel} (say the channel's name). Not a slogan; make it fit the story. Never open with "Thanks for watching" or
+  "If you enjoyed"; end on this video's own running example. Only the outro asks to subscribe: no other shot does.
 
 VISUALS: pick a "kind" per shot, never the same kind twice in a row, at least 7 different kinds overall.
 About a third of shots are "photo" shots; the rest are graphics. Whenever the facts hold several comparable
@@ -302,9 +309,9 @@ behind the sentence, concrete and filmable, e.g. "server racks", "container ship
 "rocket launch"; empty for the other kinds), "act" (see above), and "facts" (the fact numbers used).
 
 Return JSON:
-{{"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short catchy hook that makes a viewer curious (a question, a surprise, a stake), e.g. 'Mean, Median and Mode: Which Average Is Lying to You?', 'Statistics Explained: Why One Sample Can Fool You'; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
+{{"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short hook in this form: <<HOOK>>; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
   "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
-  "description": "2 or 3 plain sentences on what the video covers",
+  "description": "2 or 3 plain sentences on what the video covers; the first sentence starts with the viewer's own question or the surprising point, never with We walk through, In this video, Learn or Discover",
   "tags": ["8 to 12 search tags"],
   "scenes": [{{"kind": "...", "narration": "...", "headline": "...", "kicker": "...", "highlight": "...",
               "number": "", "label": "", "items": [], "events": [], "countries": [], "quote": "", "speaker": "",
@@ -325,6 +332,8 @@ SHORT_OUTRO = "Full story, with every source, on {channel}."
 # DESCRIPTION_REPORT off (the default): the description carries no links, so nothing may point there
 OUTRO_PLAIN = "That's the idea, minus the headache. If it finally clicked, subscribe to {channel} for the next one."
 SHORT_OUTRO_PLAIN = "The full lesson is on {channel}."
+SUBSCRIBE = re.compile(r"\bsubscribe\b", re.I)
+WELCOMED = re.compile(r"[^.!?]*\bwelcome to\b[^.!?]*[.!?]\s*(today[^.!?]*[.!?]\s*)?", re.I)   # a long video's greeting, not for a Short
 POINTS_DOWN = re.compile(r"\b(description|link(ed|s)?|below|report|sources?)\b", re.I)
 # a long video is planned as an outline, then written part by part (placeholders are filled with fill())
 OUTLINE = """
@@ -334,9 +343,9 @@ Break it into the parts of the plan, in order: ONE entry in "parts" for EACH par
 for the whole video), and each part into beats. One beat is one thing the viewer SEES and learns (it becomes one or
 two shots), written as its shot kind and what it shows, e.g. "graph: the cost as w slides, its lowest point marked"
 or "check: which way does w move if the slope is negative?". About [shots] beats in all.
-Reply with JSON: {"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short catchy hook that makes a viewer curious (a question, a surprise, a stake), e.g. 'Mean, Median and Mode: Which Average Is Lying to You?', 'Statistics Explained: Why One Sample Can Fool You'; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
+Reply with JSON: {"title": "YouTube title, max 70 characters, in two parts: the topic's key terms first, as a student would search for them, then a short hook in this form: <<HOOK>>; honest (the video delivers it), no ALL CAPS, no emoji, no fake shock",
  "thumb_text": "3 or 4 words for the thumbnail", "thumb_highlight": "1 word of thumb_text",
- "description": "2 or 3 plain sentences on what the video covers", "tags": ["8 to 12 search tags"],
+ "description": "2 or 3 plain sentences on what the video covers; the first sentence starts with the viewer's own question or the surprising point, never with We walk through, In this video, Learn or Discover", "tags": ["8 to 12 search tags"],
  "outro": "the closing sentences described above",
  "parts": [{"title": "2 to 4 words", "beats": ["kind: what this beat shows and teaches", "..."]}]}"""
 ACT = """
@@ -1713,6 +1722,8 @@ WELCOME = ("""The video does NOT dive straight into the lesson, and it does NOT 
   3. WHY IT MATTERS: its importance in plain words: what it lets us do, what goes wrong without it, and where it quietly
      works in the viewer's world today (their phone, their feed, the shops, the hospital, the news). No history;
   4. THE ROAD: one sentence on where we are going (first this, then that).
+  The capitals (WHAT IT IS, WHY IT MATTERS, THE ROAD) are for you, never on screen: each shot's headline and kicker
+  use this topic's own words.
   In an outline the first part is "Welcome" with exactly these four beats. Shots 2 to 4 are pictures of the idea (a
   diagram, the steps), not a talking head or a repeated title.
   Only after shot 4 does the first real part begin, and it opens inside a real situation from today's world that the
@@ -1900,7 +1911,8 @@ class VideoMaker:
         for attempt in range(2):          # an outline in an unexpected shape is read leniently, then asked for again
             try:
                 outline = self.llm.complete_json(
-                    rules + fill(OUTLINE, minutes=f"{brief['minutes']:g}", words=words_needed, shots=n_shots) +
+                    rules + fill(OUTLINE, minutes=f"{brief['minutes']:g}", words=words_needed, shots=n_shots).replace(
+                        "<<HOOK>>", brief.get("hook_form") or HOOK_FORMS[0]) +
                     ("\n\nYour last reply had no usable \"parts\" list with \"beats\": reply in exactly that format."
                      if attempt else ""), max_tokens=6000, temperature=0.6)
             except LLMError as exc:
@@ -2028,6 +2040,8 @@ class VideoMaker:
             else "do not mention the description, links, sources or a report; ").replace(
             "{channel}", self.s.channel_name)
         prompt = prompt.replace("{{", "{").replace("}}", "}")
+        brief["hook_form"] = HOOK_FORMS[int(hashlib.md5(title.encode()).hexdigest(), 16) % len(HOOK_FORMS)]
+        prompt = prompt.replace("<<HOOK>>", brief["hook_form"])
         words_needed = round(brief["minutes"] * 160 * narration_pace())   # ~170 words a minute at full speed; pauses take the rest
         plan = None
         if brief["minutes"] >= LONG_MINUTES:
@@ -2137,6 +2151,10 @@ class VideoMaker:
                 sc.pop("graph", None)
                 sc.pop("surface", None)
         scenes[0]["kind"] = "hook" if scenes[0]["kind"] in ("photo", "hook", "stat") else scenes[0]["kind"]
+        if scenes and SUBSCRIBE.search(scenes[-1]["narration"]):          # the outro asks; the shot before it does not
+            kept = " ".join(x for x in re.split(r"(?<=[.!?])\s+", scenes[-1]["narration"]) if not SUBSCRIBE.search(x))
+            if kept.strip():
+                scenes[-1]["narration"] = kept.strip()
         outro = strip_persona(strip_unsupported_numbers(str(plan.get("outro") or "").strip(), allowed))
         pointless = (not report and "report" in outro.lower()) or (not linked and POINTS_DOWN.search(outro))
         if not 8 <= len(outro.split()) <= 60 or pointless:
@@ -2159,12 +2177,18 @@ class VideoMaker:
             if isinstance(idx, int) and 0 <= idx < len(scenes) - 1 and text:
                 short.append({"scene": idx, "narration": text})
         short = short or [{"scene": 0, "narration": scenes[0]["narration"]}]
+        pick = int(hashlib.md5(title.encode()).hexdigest(), 16)
         ending = {"scene": len(scenes) - 1,
-                  "narration": (SHORT_OUTRO if linked else SHORT_OUTRO_PLAIN).format(channel=self.s.channel_name)}
+                  "narration": (SHORT_OUTRO if linked else SHORT_ENDS[pick % len(SHORT_ENDS)]).format(channel=self.s.channel_name)}
         short.append(ending)
         more = self.more_shorts(scenes[:-1], allowed)
         for extra in more:
-            extra["beats"] = [{**b, "narration": uncredit(b["narration"])} for b in extra["beats"]] + [dict(ending)]
+            extra["beats"] = [{**b, "narration": uncredit(b["narration"])} for b in extra["beats"]] + [
+                {**ending, "narration": SHORT_ENDS[(pick + len(extra["title"])) % len(SHORT_ENDS)].format(channel=self.s.channel_name)}
+                if not linked else dict(ending)]
+        for beats_ in [short] + [m["beats"] for m in more]:
+            for b in beats_[:-1]:
+                b["narration"] = " ".join(WELCOMED.sub(" ", b["narration"]).split()) or b["narration"]
         video_title = str(plan.get("title", title))[:100]
         if style == "education":
             chosen = topic_title(video_title, title)
@@ -2223,7 +2247,7 @@ class VideoMaker:
         beats = [b for part in sets for b in part]                        # spoken together, then cut back into Shorts
         edges = [sum(len(part) for part in sets[:n]) for n in range(len(sets) + 1)]
         groups = [range(a, b) for a, b in zip(edges, edges[1:])]
-        plan["trend"] = trending.research(plan["title"], plan.get("tags", []), self.log)      # the tags people search and follow now
+        plan["trend"] = trending.research(plan["title"], plan.get("tags", []), self.log, asked=meta.get("topic", ""))      # the tags people search and follow now
         skeleton.mark_parts(scenes)         # the label above a headline may be shown only where a part begins
         recent = palettes.load_history(self.s)           # what the last videos used: no two in a row look alike
         theme = design.design(self.llm.complete_json, plan["title"], brief["style"],
@@ -3030,17 +3054,6 @@ def notes_section(meta: dict, pdf_url: str = "") -> str:
     if chapters:
         lines.append("  Chapters: " + "; ".join(f"{i}. {c}" for i, c in enumerate(chapters, 1)))
     return "\n".join(lines) + "\n"
-
-
-def youtube_block(guide_path: str) -> str:
-    """The English title, description, study-notes link and sources from the posting guide (for the email)."""
-    try:
-        with open(guide_path, encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return ""
-    m = re.search(r"===== ENGLISH =====\n(.*?)(?=Photo and footage credits|\n===== |\Z)", text, re.S)
-    return m.group(1).strip() if m else ""
 
 
 def hashtags(tags: List[str], n: int = 3) -> List[str]:

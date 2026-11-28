@@ -2,6 +2,7 @@
 of players, a unit chart, kinetic type, a spotlight, a versus split or a stack of layers; video/src/graphics.jsx
 draws them) and fills it with icons and short labels. The model only chooses and names; every layout is fixed,
 so a graphic always looks right. Each choice is checked: known type and icons, short labels, verified numbers."""
+import collections
 import difflib
 import os
 import re
@@ -231,6 +232,7 @@ def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log:
             else:
                 log(f"[graphics] shot {k}: unusable {str(raw)[:120]}")
     last = None
+    count = collections.Counter(s["graphic"]["type"] for s in scenes if s.get("graphic"))
     used = {s["graphic"]["type"] for s in scenes if s.get("graphic") and s["graphic"]["type"] in more_types()}   # earlier passes
     for k, s in enumerate(scenes):
         g = picks.get(k)
@@ -238,9 +240,12 @@ def assign(scenes: List[dict], reply, verified: Callable[[str, str], bool], log:
             g = None
         if g and g["type"] in more_types() and g["type"] in used:       # a library graphic once per video
             g = None
+        if g and g["type"] != "kinetic" and count[g["type"]] >= max(3, len(scenes) // 10):    # 19 "flow" shots in one video
+            g = None
         if g and g["type"] != last:
             s["graphic"] = g
             used.add(g["type"])
+            count[g["type"]] += 1
         last = s["graphic"]["type"] if s.get("graphic") else None
     return sum(1 for s in scenes if s.get("graphic"))
 

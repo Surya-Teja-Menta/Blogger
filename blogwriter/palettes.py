@@ -181,7 +181,7 @@ def photo_grade(seed: str) -> str:
 
 # ---- memory: what the last videos used, so two in a row never share a look --------------------------------------
 HISTORY_KEY = "design_history.json"
-KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2, "layouts": 1}
+KEEP = {"worlds": 8, "backs": 5, "looks": 3, "captions": 2, "layouts": 1, "fonts": 6}
 
 
 def load_history(settings) -> dict:
@@ -204,5 +204,7 @@ def save_history(settings, history: dict, theme: dict) -> None:
     new = {"worlds": theme.get("world"), "backs": theme.get("back"), "looks": (theme.get("look") or {}).get("slug", ""),
            "captions": theme.get("caption"),
            "layouts": json.dumps(theme["layout"], sort_keys=True) if theme.get("layout") else None}
-    out = {k: ([*history.get(k, []), new[k]] if (new[k] or k == "looks") else history.get(k, []))[-n:] for k, n in KEEP.items()}
+    out = {k: ([*history.get(k, []), new[k]] if (new[k] or k == "looks") else history.get(k, []))[-n:] for k, n in KEEP.items()
+           if k != "fonts"}
+    out["fonts"] = [*history.get("fonts", []), *[f for f in (theme.get("display"), theme.get("body")) if f]][-KEEP["fonts"]:]
     storage.put_text(settings, HISTORY_KEY, json.dumps(out), "application/json")

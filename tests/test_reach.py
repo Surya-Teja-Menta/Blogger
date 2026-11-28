@@ -194,3 +194,33 @@ def test_make_a_video_runs_wait_in_line_and_are_made_one_after_another(monkeypat
     assert q.next_up()["id"] == second["id"]
     assert q.pop(second["id"], ok=True) == "made; 0 waiting" and q.next_up() == {}
     assert [d["status"] for d in q.read(q.DONE)] == ["failed", "made"]
+
+
+def test_what_repeated_in_every_video_now_changes(monkeypatch):
+    from blogwriter import design, graphics, trending
+    # fonts: never one the last videos used, even when the model asks for it again
+    d = {"display": "Montserrat", "body": "Inter", "upper": False, "named_cuts": ["fade", "wipe"], "pace": "steady",
+         "source": "designed", "title": "left", "kicker": "pill", "fx": None}
+    got = design.restyle(d, None, "Covariance", "education", "calm", recent={"fonts": ["Montserrat", "Inter"]})
+    assert got["display"] != "Montserrat" and got["body"] != "Inter"
+    assert design.restyle(d, None, "Covariance", "education", "calm")["display"] == "Montserrat"   # nothing recent: kept
+    # one graphic type may not fill the video
+    scenes = [{"kind": "photo", "narration": "alpha beta gamma", "headline": ""} for _ in range(20)]
+    reply = [{"scene": k, "type": "flow", "nodes": [{"icon": "x", "label": w} for w in ("alpha", "beta", "gamma")]}
+             for k in range(0, 20, 2)]
+    graphics.assign(scenes, reply, lambda t, a: True, lambda m: None)
+    assert sum(1 for s in scenes if (s.get("graphic") or {}).get("type") == "flow") == 3
+    # the course's hashtag comes from the topic asked for
+    monkeypatch.setattr(trending, "suggestions", lambda q: [])
+    monkeypatch.setattr(trending, "trending", lambda geo: [])
+    tags = trending.research("Correlation and Covariance: Hidden Patterns", [], lambda m: None,
+                             asked="Statistics: Covariance and correlation")["hashtags"]
+    assert "#Statistics" in tags
+
+
+def test_the_script_rules_against_stock_lines():
+    assert "<<HOOK>>" in video.SCRIPT_PROMPT and "<<HOOK>>" in video.OUTLINE and "Why One Sample" not in video.SCRIPT_PROMPT
+    assert "never with We walk through" in video.SCRIPT_PROMPT and "Thanks for watching" in video.SCRIPT_PROMPT
+    said = "Can steps predict each other? Welcome to Adyora. Today we look at it. Covariance is a number."
+    assert " ".join(video.WELCOMED.sub(" ", said).split()) == "Can steps predict each other? Covariance is a number."
+    assert len(set(video.SHORT_ENDS)) >= 4 and len(set(video.HOOK_FORMS)) >= 4

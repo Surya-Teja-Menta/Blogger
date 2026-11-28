@@ -901,28 +901,3 @@ def timed(d: Optional[dict], words: List[tuple], frames: int, fps: int, lead: in
                     m["at"] = max(el["at"] + 6, frames - 30)
                 el[motion] = m
     return {"elements": els}
-
-
-VISION = """Each image is the finished frame of one shot from an educational YouTube video, drawn as an animated
-diagram. For image N the narration was:
-{lines}
-Judge each like a demanding editor of a top explainer channel: does the drawing clearly SHOW what the narration
-says, and is it clean (nothing overlapping, cut off, crowded, tiny or confusing)? Reply with JSON:
-{{"shots": [{{"n": 1, "score": 1-10, "problem": "one line, or empty"}}]}}"""
-
-
-def vision_prompt(narrations: List[str]) -> str:
-    return VISION.format(lines="\n".join(f"{n + 1}. {t}" for n, t in enumerate(narrations)))
-
-
-def verdicts(reply, count: int) -> Dict[int, tuple]:
-    """image number (0-based) -> (score, problem)"""
-    out = {}
-    for s in (reply or {}).get("shots", []) if isinstance(reply, dict) else []:
-        try:
-            n = int(s.get("n")) - 1
-            if 0 <= n < count:
-                out[n] = (float(s.get("score", 0)), str(s.get("problem") or "")[:120])
-        except (TypeError, ValueError):
-            continue
-    return out

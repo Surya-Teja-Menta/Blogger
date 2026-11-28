@@ -145,6 +145,6 @@ short sentences, at most 30 words. No numbers, no dates, no history, no jokes at
   4. THE ROAD: one sentence on where we are going: first this, then that.
 Facts you may lean on (do not copy their wording, add nothing that is not true):
 {facts}
-Reply with JSON: {{"lines": [exactly 4 strings], "headlines": [exactly 4 strings of at most 5 words: the topic's name, "What it is", "Why it matters", "The road"]}}"""
+Reply with JSON: {{"lines": [exactly 4 strings], "headlines": [exactly 4 strings of at most 5 words, in this topic's own words (never "What it is", "Why it matters" or "The road")]}}"""
 
 INTRO = INTRO.replace("Facts you may lean on", STYLE + "Facts you may lean on")      # the four opening lines follow the same rules
