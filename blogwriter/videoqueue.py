@@ -7,14 +7,16 @@ queued and is tried again next day, up to MAX_TRIES times.
 CLI (used by the workflows):
   python blogwriter/videoqueue.py add "Topic one; Topic two" --style education --level basic --mode standard
   python blogwriter/videoqueue.py plan --news "geopolitics,technology" --take 2     (prints the run matrix as JSON)
-  python blogwriter/videoqueue.py now "Topic one; Topic two" --style story ...      (matrix for an immediate run)
   python blogwriter/videoqueue.py done ID --ok | --failed
+  python blogwriter/videoqueue.py push "Any text: one video" --style education --notes "..."   ("Make a video": the line)
+  python blogwriter/videoqueue.py next [--out FILE]      (the first video in the line, for the "Video queue" run)
+  python blogwriter/videoqueue.py pop ID --ok | --failed  (that video is finished: it leaves the line)
 """
 import argparse
 import hashlib
 import json
-import re
 import os
+import re
 import sys
 import time
 from typing import List
@@ -22,6 +24,7 @@ from typing import List
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUEUE = os.path.join(ROOT, "queue", "topics.jsonl")
 DONE = os.path.join(ROOT, "queue", "done.jsonl")
+LINE = os.path.join(ROOT, "queue", "now.jsonl")      # the "Make a video" runs, made one after another, oldest first
 STYLES = ("auto", "news", "story", "education", "concept")
 LEVELS = ("basic", "intermediate", "advanced")
 MODES = ("fast", "standard", "deep")
@@ -112,16 +115,54 @@ def done(item_id: str, ok: bool) -> str:
     return status
 
 
+def push(text: str, notes: str = "", **opts) -> dict:
+    """One "Make a video" run: the whole text is one video, put at the end of the line (the same topic already waiting
+    is not added twice). {} when there is no topic."""
+    topics = one_topic(text)
+    if not topics:
+        return {}
+    items = read(LINE)
+    same = next((i for i in items if i["topic"].lower() == topics[0].lower()), None)
+    if same:
+        return same
+    item = {**entry(topics[0], **opts), "notes": " ".join(str(notes or "").split())[:500]}
+    write(items + [item], LINE)
+    return item
+
+
+def next_up() -> dict:
+    """The first video in the line ({} when the line is empty)."""
+    items = read(LINE)
+    return {k: items[0].get(k, "") for k in FIELDS + ("notes",)} if items else {}
+
+
+def pop(item_id: str, ok: bool) -> str:
+    """A finished (or failed) video leaves the line and is listed in queue/done.jsonl."""
+    items = read(LINE)
+    gone = [i for i in items if i["id"] == item_id]
+    write([i for i in items if i["id"] != item_id], LINE)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    write(read(DONE) + [{**i, "status": "made" if ok else "failed", "finished": stamp} for i in gone], DONE)
+    return f"{'made' if ok else 'failed'}; {len(read(LINE))} waiting" if gone else "not in the line"
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(prog="python blogwriter/videoqueue.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("add", "now"):
+    for name in ("add", "push"):
         p = sub.add_parser(name)
         p.add_argument("topics")
         p.add_argument("--style", default="auto", choices=STYLES)
         p.add_argument("--level", default="intermediate", choices=LEVELS)
         p.add_argument("--mode", default="standard", choices=MODES)
         p.add_argument("--publish", action="store_true")
+        p.add_argument("--notes", default="")
+    p = sub.add_parser("next")
+    p.add_argument("--out", default="")
+    p = sub.add_parser("pop")
+    p.add_argument("id")
+    p.add_argument("--ok", action="store_true")
+    p.add_argument("--failed", action="store_true")
     p = sub.add_parser("plan")
     p.add_argument("--news", default="")
     p.add_argument("--take", type=int, default=2)
@@ -130,19 +171,32 @@ def main(argv: List[str]) -> int:
     p.add_argument("--ok", action="store_true")
     p.add_argument("--failed", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd in ("add", "now"):
-        opts = dict(style=a.style, level=a.level, mode=a.mode, publish=a.publish)
-        topics = split_topics(a.topics) if a.cmd == "add" else one_topic(a.topics)
+    if a.cmd == "push":
+        item = push(a.topics, a.notes, style=a.style, level=a.level, mode=a.mode, publish=a.publish)
+        if not item:
+            print("no topic given", file=sys.stderr)
+            return 2
+        line = read(LINE)
+        place = next(k for k, i in enumerate(line, 1) if i["id"] == item["id"])
+        print(f"Video {place} of {len(line)} in the line: {item['topic']}")
+    elif a.cmd == "next":
+        item = next_up()
+        if a.out:            # GitHub step outputs; a value may hold anything, so each one is fenced
+            with open(a.out, "a", encoding="utf-8") as f:
+                for k in FIELDS + ("notes",):
+                    v = item.get(k, "")
+                    f.write(f"{k}<<END_OF_VALUE\n{str(v).lower() if isinstance(v, bool) else v}\nEND_OF_VALUE\n")
+        print(json.dumps(item, ensure_ascii=False) if item else "the line is empty")
+    elif a.cmd == "pop":
+        print(pop(a.id, a.ok and not a.failed))
+    elif a.cmd == "add":
+        topics = split_topics(a.topics)
         if not topics:
             print("no topic given", file=sys.stderr)
             return 2
-        if a.cmd == "add":
-            for i in add(topics, **opts):
-                print(f"queued: {i['topic']} ({i['style']})", file=sys.stderr)
-            print(f"{len(read())} topic(s) waiting", file=sys.stderr)
-        else:
-            jobs = [{**entry(t, **opts), "id": ""} for t in topics]
-            print(json.dumps([{k: j[k] for k in FIELDS} for j in jobs]))
+        for i in add(topics, style=a.style, level=a.level, mode=a.mode, publish=a.publish):
+            print(f"queued: {i['topic']} ({i['style']})", file=sys.stderr)
+        print(f"{len(read())} topic(s) waiting", file=sys.stderr)
     elif a.cmd == "plan":
         news = [t.strip() for t in a.news.split(",") if t.strip()]
         print(json.dumps(plan(news, a.take)))

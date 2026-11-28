@@ -175,3 +175,22 @@ def test_a_line_the_owner_s_voice_could_not_say_is_tried_again_then_the_video_st
     with pytest.raises(video.VoiceError):
         video.speak_cloned([("one", "v", str(tmp_path / "1.mp3"))], Settings(), str(tmp_path), lambda m: None)
     assert asked == [[0]]                                       # spoken again with more takes before giving up
+
+
+def test_make_a_video_runs_wait_in_line_and_are_made_one_after_another(monkeypatch, tmp_path):
+    from blogwriter import videoqueue as q
+    monkeypatch.setattr(q, "LINE", str(tmp_path / "now.jsonl"))
+    monkeypatch.setattr(q, "DONE", str(tmp_path / "done.jsonl"))
+    first = q.push("Covariance, Pearson and Spearman\n[ ] 14. Pearson and Spearman", "use formulas", style="education")
+    second = q.push("Simpson's paradox", style="education")
+    assert q.push("covariance, pearson and spearman") == first                 # the same topic is not added twice
+    up = q.next_up()
+    assert up["topic"] == "Covariance, Pearson and Spearman" and up["notes"] == "use formulas"
+    out = tmp_path / "out.txt"
+    assert q.main(["next", "--out", str(out)]) == 0
+    assert "topic<<END_OF_VALUE\nCovariance, Pearson and Spearman\nEND_OF_VALUE" in out.read_text(encoding="utf-8")
+    assert "publish<<END_OF_VALUE\nfalse\n" in out.read_text(encoding="utf-8")
+    assert q.pop(first["id"], ok=False) == "failed; 1 waiting"                  # a failed video leaves the line too
+    assert q.next_up()["id"] == second["id"]
+    assert q.pop(second["id"], ok=True) == "made; 0 waiting" and q.next_up() == {}
+    assert [d["status"] for d in q.read(q.DONE)] == ["failed", "made"]

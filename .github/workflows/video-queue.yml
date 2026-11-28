@@ -1,0 +1,83 @@
+name: Video queue
+
+# Makes the videos waiting in queue/now.jsonl ("Make a video" puts them there), ONE AT A TIME, oldest first: two videos at
+# once ran out of voice machines (GitHub runs 20 jobs at a time). Each run makes the first video in the line, takes it
+# out, and starts the next run if more are waiting. Only one run makes a video at a time (the concurrency group); a
+# start that arrives meanwhile waits, and a waiting start replaced by a newer one loses nothing, because every run
+# simply takes the first video in the line.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  models: read
+  actions: write
+
+concurrency:
+  group: video-queue
+  cancel-in-progress: false
+
+jobs:
+  next:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.next.outputs.id }}
+      topic: ${{ steps.next.outputs.topic }}
+      source: ${{ steps.next.outputs.source }}
+      style: ${{ steps.next.outputs.style }}
+      level: ${{ steps.next.outputs.level }}
+      mode: ${{ steps.next.outputs.mode }}
+      publish: ${{ steps.next.outputs.publish }}
+      notes: ${{ steps.next.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - id: next
+        run: python3 blogwriter/videoqueue.py next --out "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  make:
+    name: ${{ needs.next.outputs.topic }}
+    needs: next
+    if: needs.next.outputs.id != ''
+    uses: ./.github/workflows/make.yml
+    with:
+      topic: ${{ needs.next.outputs.topic }}
+      source: ${{ needs.next.outputs.source }}
+      style: ${{ needs.next.outputs.style }}
+      mode: ${{ needs.next.outputs.mode }}
+      level: ${{ needs.next.outputs.level }}
+      publish: ${{ needs.next.outputs.publish == 'true' }}
+      notes: ${{ needs.next.outputs.notes }}
+      video: true
+    secrets: inherit
+
+  # the video leaves the line whether it was made or not (a failed one is listed in queue/done.jsonl, never retried in a
+  # loop), and the next one starts
+  after:
+    needs: [next, make]
+    if: always() && needs.next.outputs.id != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Out of the line
+        env:
+          ID: ${{ needs.next.outputs.id }}
+          OK: ${{ needs.make.result == 'success' }}
+          MSG: "video line: ${{ needs.make.result }}"
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          export FLAG=$([ "$OK" = "true" ] && echo --ok || echo --failed)
+          export APPLY='python3 blogwriter/videoqueue.py pop "$ID" "$FLAG"'
+          cp .github/scripts/commit.sh "$RUNNER_TEMP/commit.sh"
+          bash "$RUNNER_TEMP/commit.sh"
+      - name: Start the next video
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if python3 blogwriter/videoqueue.py next | grep -q '"id"'; then
+            gh workflow run video-queue.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          else
+            echo "the line is empty"
+          fi
