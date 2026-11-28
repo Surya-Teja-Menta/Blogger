@@ -122,6 +122,17 @@ export const wordEnter = (p, size, k) => {
     case "flip": return {opacity: q, transform: `rotateY(${(1 - p) * 90}deg)`, transformOrigin: "left center"};
     case "spread": return {opacity: q, letterSpacing: `${(1 - q) * size * 0.25}px`, filter: `blur(${(1 - q) * 8}px)`};
     case "tilt": return {opacity: q, transform: `rotate(${(1 - p) * (k % 2 ? 12 : -12)}deg) translateY(${(1 - p) * size * 0.3}px)`};
+    case "zoom": return {opacity: q, transform: `scale(${2.2 - 1.2 * p})`, filter: `blur(${(1 - q) * 10}px)`};
+    case "unfold": return {opacity: q, transform: `perspective(600px) rotateX(${(1 - p) * -90}deg)`, transformOrigin: "center top"};
+    case "skew": return {opacity: q, transform: `skewX(${(1 - p) * -24}deg) translateX(${(1 - p) * size * 0.6}px)`};
+    case "glow": return {opacity: q, textShadow: `0 0 ${(1 - q) * size * 0.8}px ${alpha(C.accent, 0.9)}`, filter: `brightness(${1 + (1 - q) * 0.8})`};
+    case "wave": return {opacity: q, transform: `translateY(${(1 - p) * size * (k % 2 ? 0.6 : -0.6)}px)`};
+    case "swing": return {opacity: q, transform: `rotate(${(1 - p) * -35}deg)`, transformOrigin: "left bottom"};
+    case "stretch": return {opacity: q, transform: `scaleX(${0.2 + 0.8 * p})`, transformOrigin: "left center"};
+    case "fade": return {opacity: ease(q)};
+    case "pop": return {opacity: q, transform: `scale(${p < 1 ? 0.5 + 0.6 * p : 1.1 - 0.1 * Math.min(1, (p - 1) * 10)})`};
+    case "split": return {clipPath: `inset(0 ${(1 - q) * 50}% 0 ${(1 - q) * 50}%)`};
+    case "cascade": return {opacity: q, transform: `translateY(${(1 - p) * size * (0.4 + 0.25 * (k % 4))}px)`};
     default: return {opacity: clamp(p * 1.4), filter: `blur(${(1 - q) * 14}px)`,
                      transform: `translateY(${(1 - p) * size * 0.5}px) rotateX(${(1 - p) * 60}deg)`};
   }
@@ -135,6 +146,14 @@ const clipFor = (shape, p, angle) => {
   if (shape === "split") return `inset(${(1 - q) * 50}% 0 ${(1 - q) * 50}% 0)`;
   if (shape === "bars") return `inset(0 ${(1 - q) * 50}% 0 ${(1 - q) * 50}%)`;
   if (shape === "corner") return `circle(${q * 150}% at ${angle % 2 ? 0 : 100}% ${angle % 3 ? 0 : 100}%)`;
+  if (shape === "hexagon") { const r = q * 95; return `polygon(${[0, 60, 120, 180, 240, 300].map((d) => `${50 + r * Math.cos(d * Math.PI / 180)}% ${50 + r * 1.78 * Math.sin(d * Math.PI / 180)}%`).join(",")})`; }
+  if (shape === "plus") { const a = q * 60, b = q * 120; return `polygon(${50 - a}% ${50 - b}%, ${50 + a}% ${50 - b}%, ${50 + a}% ${50 - a}%, ${50 + b}% ${50 - a}%, ${50 + b}% ${50 + a}%, ${50 + a}% ${50 + a}%, ${50 + a}% ${50 + b}%, ${50 - a}% ${50 + b}%, ${50 - a}% ${50 + a}%, ${50 - b}% ${50 + a}%, ${50 - b}% ${50 - a}%, ${50 - a}% ${50 - a}%)`; }
+  if (shape === "slit") return `inset(0 ${(1 - q) * 50}% 0 ${(1 - q) * 50}% round ${(1 - q) * 40}px)`;
+  if (shape === "triangle") return `polygon(50% ${50 - q * 160}%, ${50 + q * 160}% ${50 + q * 110}%, ${50 - q * 160}% ${50 + q * 110}%)`;
+  if (shape === "zigzag") { const w = 150 * q - 25, pts = Array.from({length: 11}, (_, i) => `${w + (i % 2 ? 6 : -6)}% ${i * 10}%`); return `polygon(-5% 0, ${pts.join(",")}, -5% 100%)`; }
+  if (shape === "ellipse") return `ellipse(${q * 90}% ${q * 30}% at 50% 50%)`;
+  if (shape === "inset") return `inset(${(1 - q) * 45}% ${(1 - q) * 45}% round ${(1 - q) * 60}px)`;
+  if (shape === "sweepup") return `inset(${(1 - q) * 100}% 0 0 0)`;
   // diagonal wipe at an angle
   const a = (angle * Math.PI) / 180, w = 160 * q - 30;
   const dx = Math.cos(a) * 30;

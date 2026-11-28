@@ -12,8 +12,9 @@ from collections import Counter
 from typing import Dict, List, Optional
 
 # how often each move is chosen
-MOVES: Dict[str, int] = {"push": 4, "pull": 2, "truck": 3, "pedestal": 2, "arc": 2, "drift": 2, "rack": 2}
-CALM = ("push", "pull", "truck", "pedestal", "drift")          # no roll, no blur: for shots full of small text
+MOVES: Dict[str, int] = {"push": 4, "pull": 2, "truck": 3, "pedestal": 2, "arc": 2, "drift": 2, "rack": 2,
+                         "crane": 2, "tilt": 2, "glide": 2, "orbit": 1, "spiral": 1, "whip": 1, "snap": 1, "handheld": 1}
+CALM = ("push", "pull", "truck", "pedestal", "drift", "crane", "tilt", "glide")   # no roll, no blur: for shots full of small text
 CALM_KINDS = {"equation", "graph", "derive", "plot", "check", "steps", "diagram", "timeline", "list", "map", "compare",
               "bars", "line", "donut", "kpis"}
 PUNCH_SHARE = 0.45          # the share of shots with a punch-in on their key moment

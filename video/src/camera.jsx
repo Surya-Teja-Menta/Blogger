@@ -34,6 +34,15 @@ export const cameraStyle = ({cam, frame, duration, i, amount, width, height}) =>
     case "dutch": rot = dir * (plan.dutch || 1) * inOut(t * 2.5); sc = 1.03 + 0.025 * s; break;
     case "rack": sc = 1 + 0.03 * a * s; break;
     case "drift": tx = sway("hx", 70) * 12 * a; ty = sway("hy", 80) * 8 * a; rot = sway("hr", 110) * 0.3 * a; sc = 1.012; break;
+    case "crane": ty = -dir * (s - 0.5) * 0.05 * height * a; sc = 1.02 + 0.03 * a * s; break;        // rises past the subject
+    case "tilt": ty = dir * (0.5 - s) * 0.045 * height * a; sc = 1.03; break;                           // looks down the picture
+    case "glide": tx = dir * (s - 0.5) * 0.03 * width * a; ty = (s - 0.5) * 0.025 * height * a; sc = 1.02; break;   // a diagonal slide
+    case "orbit": tx = Math.sin(s * Math.PI) * 0.02 * width * a * dir; ty = (1 - Math.cos(s * Math.PI)) * 0.012 * height * a;
+      rot = dir * 0.6 * a * Math.sin(s * Math.PI); sc = 1.03; break;                                   // a slow half-circle
+    case "spiral": rot = dir * (s - 0.5) * 1.6 * a; sc = 1 + 0.07 * a * s; break;                       // pushes in, turning
+    case "whip": { const w = inOut(Math.min(1, t * 6)); tx = dir * (1 - w) * 0.08 * width * a; sc = 1.02 + 0.03 * s; break; }  // arrives fast, settles
+    case "snap": sc = 1 + (t > 0.55 ? 0.08 * a * inOut((t - 0.55) * 5) : 0.005 * s); break;              // holds, then a hard zoom
+    case "handheld": tx = sway("hhx", 26) * 16 * a; ty = sway("hhy", 31) * 11 * a; rot = sway("hhr", 40) * 0.45 * a; sc = 1.025; break;
     default: sc = 1 + 0.06 * a * s;                                                   // push (and the old plain push)
   }
   tx += sway("tx", 160) * 5 * a;

@@ -485,7 +485,42 @@ const sweepC = ({children, presentationDirection, presentationProgress: p}) => p
                  transform: "skewX(-17deg)", boxShadow: `0 0 60px 20px ${alpha(C.accent, 0.6)}`}}/>
   </AbsoluteFill>
 ) : <AbsoluteFill>{children}</AbsoluteFill>;
+const rotateBlurC = Present((enter, p) => enter
+  ? {transform: `rotate(${(1 - ease(p)) * 8}deg) scale(${1.15 - 0.15 * ease(p)})`, filter: `blur(${(1 - p) * 16}px)`, opacity: clamp(p * 1.5)}
+  : {transform: `rotate(${-ease(p) * 8}deg) scale(${1 + 0.2 * ease(p)})`, filter: `blur(${p * 16}px)`, opacity: 1 - clamp(p * 1.2)});
+const zoomOutC = Present((enter, p) => enter
+  ? {transform: `scale(${0.7 + 0.3 * ease(p)})`, opacity: clamp(p * 1.4), filter: `blur(${(1 - p) * 10}px)`}
+  : {transform: `scale(${1 - 0.25 * ease(p)})`, opacity: 1 - clamp(p * 1.3)});
+const curtainC = Present((enter, p) => enter
+  ? {clipPath: `inset(0 ${(1 - ease(p)) * 50}% 0 ${(1 - ease(p)) * 50}%)`}
+  : {transform: `scale(${1 - 0.06 * ease(p)})`, filter: `brightness(${1 - 0.5 * p})`});
+const pageTurnC = Present((enter, p) => enter
+  ? {transform: `perspective(1800px) rotateY(${(1 - ease(p)) * -70}deg)`, transformOrigin: "left center", opacity: clamp(p * 2)}
+  : {transform: `perspective(1800px) rotateY(${ease(p) * 30}deg)`, transformOrigin: "right center", opacity: 1 - p});
+const prismC = Present((enter, p) => enter
+  ? {transform: `translateX(${(1 - ease(p)) * 6}%)`, opacity: clamp(p * 1.3), filter: `hue-rotate(${(1 - p) * 40}deg) saturate(${1 + (1 - p)})`}
+  : {transform: `translateX(${-ease(p) * 6}%)`, opacity: 1 - clamp(p * 1.3), filter: `hue-rotate(${-p * 40}deg)`});
+const riseBlurC = Present((enter, p) => enter
+  ? {transform: `translateY(${(1 - ease(p)) * 100}%)`, filter: `blur(${(1 - p) * 18}px)`}
+  : {transform: `translateY(${-ease(p) * 30}%) scale(${1 - 0.08 * p})`, filter: `blur(${p * 18}px)`, opacity: 1 - 0.6 * p});
+const lensC = Present((enter, p) => enter
+  ? {clipPath: `circle(${ease(p) * 80}% at 50% 50%)`, transform: `scale(${1.3 - 0.3 * ease(p)})`, filter: `blur(${(1 - p) * 8}px)`}
+  : {transform: `scale(${1 + 0.1 * ease(p)})`, filter: `blur(${p * 12}px)`});
+const stripesC = ({children, presentationDirection, presentationProgress: p}) => {
+  if (presentationDirection !== "entering") return <AbsoluteFill>{children}</AbsoluteFill>;
+  const w = ease(p) * 12.5;                // eight bands that each fill from their left edge
+  const m = `repeating-linear-gradient(90deg, #000 0, #000 ${w}%, transparent ${w}%, transparent 12.5%)`;
+  return <AbsoluteFill style={{WebkitMaskImage: m, maskImage: m}}>{children}</AbsoluteFill>;
+};
 export const CUTS = {
+  rotateBlur: () => ({component: rotateBlurC, props: {}}),
+  zoomOut: () => ({component: zoomOutC, props: {}}),
+  curtain: () => ({component: curtainC, props: {}}),
+  pageTurn: () => ({component: pageTurnC, props: {}}),
+  prism: () => ({component: prismC, props: {}}),
+  riseBlur: () => ({component: riseBlurC, props: {}}),
+  lens: () => ({component: lensC, props: {}}),
+  stripes: () => ({component: stripesC, props: {}}),
   zoomBlur: () => ({component: zoomBlurC, props: {}}),
   slideBlur: () => ({component: slideBlurC, props: {}}),
   sweep: () => ({component: sweepC, props: {}}),

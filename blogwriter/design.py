@@ -43,7 +43,8 @@ DISPLAY_FONTS = ("PlayfairDisplay", "CormorantGaramond", "Cinzel", "BodoniModa",
 BODY_FONTS = ("Inter", "Manrope", "DMSans", "Lora", "Outfit", "WorkSans", "Jost")
 OPEN_FONTS = list(DISPLAY_FONTS + BODY_FONTS)
 BACKGROUNDS = tuple(palettes.BACKDROPS)         # the soft animated backdrops (fx.jsx, backdrops.jsx)
-CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe")
+CUTS = ("zoomBlur", "slideBlur", "sweep", "pushCut", "iris", "clock", "flip", "wipe",
+        "rotateBlur", "zoomOut", "curtain", "pageTurn", "prism", "riseBlur", "lens", "stripes")
 DARK_ONLY = ("stars", "bokeh")      # backdrops drawn for dark backgrounds
 PACES = {"calm": (0.6, 22, 3.5), "steady": (1.0, 16, 2.5), "brisk": (1.5, 12, 1.6)}   # speed, damping, stagger
 COLOURS = ("bg", "panel", "line", "text", "muted", "accent", "hot", "cool", "violet")
@@ -76,9 +77,11 @@ Decide:
   float or pulse, "opacity": 0.02-0.5, "color": accent, hot, cool, violet or text, "blur": 0-60, "stroke": true/false}}
   (e.g. a starfield of tiny dots drifting up; a few huge blurred blobs; thin lines sliding right like data);
   "gradient": {{"x": 0-100, "y": 0-100, "color": ..., "strength": 0-0.4}} (a light source);
-  "text": {{"enter": rise, blur, scale, slide, drop, mask, flip, spread or tilt}} (how words appear);
+  "text": {{"enter": rise, blur, scale, slide, drop, mask, flip, spread, tilt, zoom, unfold, skew, glow, wave, swing,
+  stretch, fade, pop, split or cascade}} (how words appear);
   "transitions": 2 to 4 of {{"shape": circle, diamond, split, bars, corner, diagonal, fade, blinds (upright slats), shutter (flat slats), flash (a white flash),
-  dip (through black), whip (a fast slide, smeared; the angle's sign is its direction) or leak (a warm light leak), "angle": -60 to 60,
+  dip (through black), whip (a fast slide, smeared; the angle's sign is its direction), leak (a warm light leak), hexagon, plus,
+  slit, triangle, zigzag, ellipse, inset or sweepup, "angle": -60 to 60,
   "blur": 0-30, "scale": 0-0.4, "spin": -20 to 20}};
   "motion": {{"ease": how every piece arrives, one of outExpo (fast then still), outQuart, outQuint, outCirc,
   outSine (soft), inOutSine (calm, documentary), inOutQuart, outBack (overshoots and settles), outElastic (springy
@@ -135,8 +138,10 @@ SHAPES = ("circle", "ring", "dot", "square", "line", "plus", "triangle", "blob",
           "hex", "diamond", "star", "chevron", "arc", "squiggle", "cross", "pill")
 DRIFTS = ("up", "down", "left", "right", "orbit", "float", "pulse")
 FX_COLOURS = ("accent", "hot", "cool", "violet", "text")
-ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type")
-CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade", "blinds", "shutter", "flash", "dip", "whip", "leak")
+ENTERS = ("rise", "blur", "scale", "slide", "drop", "mask", "flip", "spread", "tilt", "write", "type",
+          "zoom", "unfold", "skew", "glow", "wave", "swing", "stretch", "fade", "pop", "split", "cascade")
+CLIPS = ("circle", "diamond", "split", "bars", "corner", "diagonal", "fade", "blinds", "shutter", "flash", "dip", "whip", "leak",
+         "hexagon", "plus", "slit", "triangle", "zigzag", "ellipse", "inset", "sweepup")
 # how pieces arrive (anime.js easing curves, drawn in video/src/motion.js) and in what order a group appears
 EASES = ("outExpo", "outQuart", "outQuint", "outCirc", "outSine", "inOutSine", "inOutQuart")      # smooth: no bounce, no wobble
 FROMS = ("first", "last", "center", "edges", "random")
