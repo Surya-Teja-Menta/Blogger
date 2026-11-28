@@ -562,7 +562,7 @@ def clone_with_budget(python: str, spec: str, ref: str, texts: List[str], log: C
             projected = (time.time() - ready) / done * total
             if k >= min(4, len(texts)) and projected > budget:
                 log(f"[voice] cloning would take about {projected / 60:.0f} min for {len(texts)} lines (budget "
-                    f"{budget / 60:.0f}): the standard voice speaks this video")
+                    f"{budget / 60:.0f}): stopped")
                 proc.kill()
                 aborted = True
                 break
@@ -615,11 +615,16 @@ def slow_down(src: str, dest: str, pace: float) -> None:
     raise RuntimeError("the pace could not be set")
 
 
+class VoiceError(RuntimeError):
+    """The owner's voice could not be made for the whole narration: the video stops rather than use another voice."""
+
+
 def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
     """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default): on
     the voice farm's parallel machines (voicefarm.py) when that is available, else, or for any chunk the farm did
-    not deliver, on this machine (VOICE_PYTHON, within the time budget). A line that fails, or everything when
-    cloning cannot be done, is spoken by the standard voice. Returns each line's word timings, like speak_all."""
+    not deliver, on this machine (VOICE_PYTHON, within the time budget). A line that fails is spoken again with more takes;
+    if the owner's voice still cannot be made for every line, VoiceError stops the video: it is never narrated, wholly
+    or partly, by another voice (the owner's rule). NARRATOR_VOICE=standard uses the standard voice on purpose."""
     results: List[Optional[list]] = [None] * len(jobs)
     python = os.environ.get("VOICE_PYTHON", "")
     if os.environ.get("NARRATOR_VOICE", "clone").strip().lower() == "clone" and jobs:
@@ -631,13 +636,13 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
         left = [k for k in range(len(jobs)) if k not in items]
         if left:
             if not python or not os.path.exists(python):
-                log("[voice] the cloning environment is not installed (VOICE_PYTHON): using the standard voice")
-            else:
-                made = clone_here(python, jobs, left, settings, job, log)
-                if made is None:
-                    items = {}                       # never half one voice and half another: the standard voice speaks all
-                else:
-                    items.update(made)
+                raise VoiceError("the cloning environment is not installed (VOICE_PYTHON), so the owner's voice cannot "
+                                 f"speak {len(left)} line(s)")
+            made = clone_here(python, jobs, left, settings, job, log)
+            if made is None:
+                raise VoiceError(f"{len(left)} line(s) were not delivered by the voice machines and cloning them here "
+                                 "would take longer than the time budget")
+            items.update(made)
         from . import voicecheck as vc
 
         def hissy(it) -> bool:
@@ -649,7 +654,7 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             c = it.get("checks") or {}
             return (hissy(it), c.get("bad", 99), float(c.get("hiss", -99.0)))
 
-        weak = [k for k, it in items.items() if it.get("ok") and ((it.get("checks") or {}).get("bad", 0) > 0 or hissy(it))]
+        weak = [k for k, it in items.items() if not it.get("ok") or (it.get("checks") or {}).get("bad", 0) > 0 or hissy(it)]
         if weak and python and os.path.exists(python):
             # a line whose words the checks could not get right, or that came out hissy, in the usual number of takes:
             # spoken again here, with far more takes, and kept only if it is better (the time does not matter, a
@@ -666,7 +671,7 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
                 else:
                     os.environ["CLONE_TAKES"] = before
             for k, it in again.items():
-                if it.get("ok") and rank(it) < rank(items[k]):
+                if it.get("ok") and (not items[k].get("ok") or rank(it) < rank(items[k])):
                     items[k] = it
             still = sorted(k for k in weak if hissy(items[k]))
             if still:
@@ -700,6 +705,8 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             log(f"[voice] {cloned} of {len(jobs)} lines spoken in the owner's voice ({took:.0f}s; "
                 f"{spoken_s / max(1.0, took):.2f}x real time)")
     missing = [k for k, r in enumerate(results) if r is None]
+    if missing and os.environ.get("NARRATOR_VOICE", "clone").strip().lower() == "clone":
+        raise VoiceError(f"line(s) {missing[:10]} could not be spoken in the owner's voice")
     if missing:
         for k, words in zip(missing, speak_all([jobs[k] for k in missing])):
             results[k] = words

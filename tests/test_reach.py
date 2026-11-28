@@ -148,3 +148,30 @@ def test_a_lesson_with_too_few_facts_stops_instead_of_making_a_thin_video(monkey
     p._run = lambda *a, **k: {"verified_facts": 5, "dir": "x"}
     with pytest.raises(pipeline.PipelineError, match="only 5 verified facts"):
         p.run("caching", source="topic", video=True, style="education")
+
+
+def test_one_make_a_video_run_is_one_video_whatever_was_pasted():
+    from blogwriter import videoqueue as q
+    pasted = ("Statistics:  Covariance and correlation (Pearson, Spearman), Correlation vs causation, and Simpson's paradox\n"
+              "[ ] 14. Correlation vs causation, and Simpson's paradox")
+    assert q.one_topic(pasted) == ["Statistics: Covariance and correlation (Pearson, Spearman), Correlation vs causation, "
+                                   "and Simpson's paradox"]
+    assert q.one_topic("Linear regression; The Titanic") == ["Linear regression, The Titanic"]
+    assert q.one_topic(" \n ") == []
+    assert q.split_topics("- [x] 3. Mean\n4) Median") == ["Mean", "Median"]          # the queue still takes a list
+
+
+def test_a_line_the_owner_s_voice_could_not_say_is_tried_again_then_the_video_stops(monkeypatch, tmp_path):
+    import pytest
+
+    from blogwriter import voicefarm
+    from blogwriter.config import Settings
+    monkeypatch.setattr(voicefarm, "available", lambda s: True)
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": False, "words": [], "out": ""}])
+    monkeypatch.setenv("VOICE_PYTHON", __import__("sys").executable)
+    asked = []
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: asked.append(which) or {})
+    monkeypatch.setattr(video, "speak_all", lambda jobs: pytest.fail("the standard voice must never speak"))
+    with pytest.raises(video.VoiceError):
+        video.speak_cloned([("one", "v", str(tmp_path / "1.mp3"))], Settings(), str(tmp_path), lambda m: None)
+    assert asked == [[0]]                                       # spoken again with more takes before giving up

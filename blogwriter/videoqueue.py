@@ -13,6 +13,7 @@ CLI (used by the workflows):
 import argparse
 import hashlib
 import json
+import re
 import os
 import sys
 import time
@@ -41,11 +42,26 @@ def write(items: List[dict], path: str = QUEUE) -> None:
         f.writelines(json.dumps(i, ensure_ascii=False) + "\n" for i in items)
 
 
+MARKER = re.compile(r"^\s*(?:[-*•]\s*)?(?:\[[ xX]?\]\s*)?(?:\d{1,3}[.)]\s+)?")    # "- [ ] 14. " of a pasted checklist
+
+
+def one_topic(text: str) -> List[str]:
+    """Everything typed into "Make a video" as ONE topic (the owner pasted a topic plus a checklist line from the queue and
+    got two videos): list markers are dropped, a line that only repeats another is left out, the rest is joined."""
+    lines = [" ".join(MARKER.sub("", t).split()) for t in str(text or "").replace(";", "\n").splitlines()]
+    lines = [t for t in lines if t]
+    key = lambda t: re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()          # noqa: E731
+    keep = [t for i, t in enumerate(lines)
+            if not any(key(t) in key(u) and (key(t) != key(u) or j < i) for j, u in enumerate(lines) if j != i)]
+    topic = ", ".join(keep)[:300]
+    return [topic] if topic else []
+
+
 def split_topics(text: str) -> List[str]:
     """'a; b' or one topic per line -> clean topics (at most 200 characters each, no duplicates)."""
     seen, out = set(), []
     for t in str(text or "").replace("\n", ";").split(";"):
-        t = " ".join(t.split())[:200]
+        t = " ".join(MARKER.sub("", t).split())[:200]
         if t and t.lower() not in seen:
             seen.add(t.lower())
             out.append(t)
@@ -116,7 +132,7 @@ def main(argv: List[str]) -> int:
     a = ap.parse_args(argv)
     if a.cmd in ("add", "now"):
         opts = dict(style=a.style, level=a.level, mode=a.mode, publish=a.publish)
-        topics = split_topics(a.topics)
+        topics = split_topics(a.topics) if a.cmd == "add" else one_topic(a.topics)
         if not topics:
             print("no topic given", file=sys.stderr)
             return 2

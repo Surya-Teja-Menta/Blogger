@@ -49,6 +49,7 @@ jobs:
     if: needs.plan.outputs.jobs != '[]'
     strategy:
       fail-fast: false     # one failed topic never stops the others
+      max-parallel: 1      # one video at a time: two at once ran out of voice machines and one got the standard voice
       matrix:
         job: ${{ fromJSON(needs.plan.outputs.jobs) }}
     uses: ./.github/workflows/make.yml

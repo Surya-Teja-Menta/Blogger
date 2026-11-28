@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       topic:
-        description: "What the video is about. Several? Separate with ;  e.g. Linear regression; The sinking of the Titanic"
+        description: "What the video is about: ONE video per run, everything typed here is one topic, e.g. Covariance, Pearson and Spearman correlation"
         required: true
       style:
         description: "auto = let the AI choose | education = lesson with the maths | story = narrative | concept = big idea explained | news = today's news on it"

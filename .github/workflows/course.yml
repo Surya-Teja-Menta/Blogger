@@ -139,7 +139,7 @@ jobs:
     if: always() && needs.wave.outputs.jobs != '' && needs.wave.outputs.jobs != '[]'
     strategy:
       fail-fast: false
-      max-parallel: 2          # two lessons at once (each renders on several machines; GitHub runs 20 jobs at a time)
+      max-parallel: 1          # one lesson at a time: each uses 12 voice machines + up to 7 render machines, and GitHub runs 20 jobs at once
       matrix:
         job: ${{ fromJSON(needs.wave.outputs.jobs) }}
     uses: ./.github/workflows/make.yml

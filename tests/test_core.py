@@ -2074,8 +2074,9 @@ def test_captions_keep_the_script_words_timed_by_the_cloned_voice(monkeypatch, t
     monkeypatch.setattr(video, "speak_all", lambda jobs: [[(0.0, 1.0, "x")] for _ in jobs])
     logs = []
     monkeypatch.delenv("VOICE_PYTHON", raising=False)
-    out = video.speak_cloned([("Hi there.", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), logs.append)
-    assert out == [[(0.0, 1.0, "x")]] and any("not installed" in m for m in logs)   # no clone: the standard voice
+    import pytest
+    with pytest.raises(video.VoiceError, match="not installed"):       # no clone: the video stops, never another voice
+        video.speak_cloned([("Hi there.", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), logs.append)
     monkeypatch.setenv("NARRATOR_VOICE", "standard")
     logs.clear()
     assert video.speak_cloned([("Hi.", "v", str(tmp_path / "b.mp3"))], Settings(), str(tmp_path), logs.append) and not logs
@@ -2094,7 +2095,7 @@ def test_a_cloned_take_that_garbles_its_script_is_caught():
     assert cv.sentences("One. Two? Three!") == ["One.", "Two?", "Three!"]
 
 
-def test_cloning_that_would_take_too_long_is_stopped_and_the_standard_voice_speaks(monkeypatch, tmp_path):
+def test_cloning_that_would_take_too_long_is_stopped(monkeypatch, tmp_path):
     import sys
     from blogwriter import video
     tool = tmp_path / "slow_tool.py"
@@ -2105,7 +2106,7 @@ def test_cloning_that_would_take_too_long_is_stopped_and_the_standard_voice_spea
     logs = []
     monkeypatch.setenv("CLONE_BUDGET_MINUTES", "0.001")             # far less than the projected time
     assert video.clone_with_budget(sys.executable, "spec", "ref", ["a line of narration"] * 10, logs.append) is True
-    assert any("standard voice speaks this video" in m for m in logs)
+    assert any("): stopped" in m for m in logs)
     monkeypatch.setenv("CLONE_BUDGET_MINUTES", "60")
     logs.clear()
     assert video.clone_with_budget(sys.executable, "spec", "ref", ["a line"] * 10, logs.append) is False
@@ -2510,7 +2511,7 @@ def test_a_voice_farm_machine_waits_for_its_lines_clones_them_and_reports_failur
     assert voice_worker.main(sleep=sleep) == 2                        # the inputs are checked
 
 
-def test_lines_the_farm_did_not_deliver_are_cloned_here_and_all_else_is_standard(monkeypatch, tmp_path):
+def test_lines_the_farm_did_not_deliver_are_cloned_here_or_the_video_stops(monkeypatch, tmp_path):
     from blogwriter import video, voicefarm
     from blogwriter.config import Settings
     monkeypatch.setattr(voicefarm, "available", lambda s: True)
@@ -2525,8 +2526,10 @@ def test_lines_the_farm_did_not_deliver_are_cloned_here_and_all_else_is_standard
     asked = []
     monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: asked.append(which) or None)
     jobs = [("one", "v", str(tmp_path / "1.mp3")), ("two", "v", str(tmp_path / "2.mp3"))]
-    out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
-    assert asked == [[1]] and out == [[(0.0, 2.0, "std")], [(0.0, 2.0, "std")]]   # budget stopped it: one voice, standard
+    import pytest
+    with pytest.raises(video.VoiceError, match="time budget"):       # budget stopped it: no video in another voice
+        video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
+    assert asked == [[1]]
     wav.write_bytes(b"x")
     second = tmp_path / "g.wav"
     second.write_bytes(b"x")
@@ -3315,6 +3318,7 @@ def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_p
     assert any("1 hissy" in m for m in logs) and any("still hissy" in m for m in logs)
     # a clean re-take wins, even with one unsure word: hiss is heard by every viewer
     c.write_bytes(b"x")
+    b.write_bytes(b"x")                            # the first call used up line 2's audio
     monkeypatch.setattr(video, "clone_here", again({"ok": True, "words": [[0, 1, "clean"]], "out": str(c),
                                                        "checks": {"bad": 1, "hiss": -42.0}}))
     out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)

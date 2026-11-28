@@ -11,7 +11,7 @@ run itself are never held. The make job stays the one process that holds the vid
 nothing has to be resumed: it puts each chunk's lines in the private storage bucket, waits for the audio to appear
 there, and takes it from there. The lines and the audio travel through the private bucket (the repository is public)
 and are deleted afterwards. Anything that goes wrong (no machine came, one died, one is too slow) returns the chunk
-as missing and the caller clones it on its own machine, or speaks it with the standard voice: a video is never lost.
+as missing and the caller clones it on its own machine; a video is never narrated by another voice (it stops instead).
 """
 import hashlib
 import json
@@ -25,7 +25,8 @@ from .config import Settings
 CHUNKS = 12                  # machines per video: the size of the "voice" job's matrix in make.yml (keep equal)
 WAIT_MINUTES = 150           # how long the make job waits for the audio before cloning what is missing itself (every sentence is
                              # chosen from several checked takes: slow on purpose)
-HELLO_MINUTES = 6            # a machine that has not said it is there this long after its lines were put out is not coming
+HELLO_MINUTES = 45           # a machine that has not said it is there this long is not coming (6 was too short: with two videos
+                             # at once, half the machines waited in GitHub's queue and the video got the standard voice)
 POLL_SECONDS = 20
 
 
