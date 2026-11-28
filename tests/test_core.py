@@ -2510,14 +2510,14 @@ def test_lines_the_farm_did_not_deliver_are_cloned_here_or_the_video_stops(monke
     monkeypatch.setattr(voicefarm, "available", lambda s: True)
     wav = tmp_path / "f.wav"
     wav.write_bytes(b"x")
-    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log, **k: [
         {"ok": True, "words": [[0, 1, "a"]], "out": str(wav)}, {"missing": True}])
     monkeypatch.setattr(video, "ffmpeg", lambda args, **k: None)
     monkeypatch.setattr(video, "align_words", lambda text, words: [(0.0, 1.0, "a")])
     monkeypatch.setattr(video, "speak_all", lambda jobs: [[(0.0, 2.0, "std")] for _ in jobs])
     monkeypatch.setenv("VOICE_PYTHON", __import__("sys").executable)
     asked = []
-    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: asked.append(which) or None)
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log, *a: asked.append(which) or None)
     jobs = [("one", "v", str(tmp_path / "1.mp3")), ("two", "v", str(tmp_path / "2.mp3"))]
     import pytest
     with pytest.raises(video.VoiceError, match="time budget"):       # budget stopped it: no video in another voice
@@ -2526,7 +2526,7 @@ def test_lines_the_farm_did_not_deliver_are_cloned_here_or_the_video_stops(monke
     wav.write_bytes(b"x")
     second = tmp_path / "g.wav"
     second.write_bytes(b"x")
-    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: {1: {"ok": True, "words": [[0, 1, "b"]], "out": str(second)}})
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log, *a: {1: {"ok": True, "words": [[0, 1, "b"]], "out": str(second)}})
     out = video.speak_cloned(jobs, Settings(), str(tmp_path), lambda m: None)
     assert out == [[(0.0, 1.0, "a")], [(0.0, 1.0, "a")]]               # both lines in the owner's voice
 
@@ -2656,7 +2656,7 @@ def test_the_narration_is_slower_a_part_change_waits_half_a_second_and_the_short
     monkeypatch.setattr(video, "voice_sample", lambda *a: None)
     from blogwriter import voicefarm
     monkeypatch.setattr(voicefarm, "available", lambda s: True)
-    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": True, "words": [[0.0, 1.0, "Hi"], [1.0, 2.0, "there"]], "out": str(wav)}])
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log, **k: [{"ok": True, "words": [[0.0, 1.0, "Hi"], [1.0, 2.0, "there"]], "out": str(wav)}])
     monkeypatch.setattr(video, "ffmpeg", lambda args, **k: seen.append(args))
     out = video.speak_cloned([("Hi there", "v", str(tmp_path / "a.mp3"))], Settings(), str(tmp_path), lambda m: None)
     assert "rubberband=tempo=0.9100:pitch=1.0" in seen[0] and seen[0][-2:] == ["pcm_s16le", str(tmp_path / "a.mp3")]
@@ -3289,7 +3289,7 @@ def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_p
     for f in (a, b, c):
         f.write_bytes(b"x")
     monkeypatch.setattr(voicefarm, "available", lambda s: True)
-    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log, **k: [
         {"ok": True, "words": [[0, 1, "hissy"]], "out": str(a), "checks": {"bad": 0, "hiss": -29.3}},
         {"ok": True, "words": [[0, 1, "fine"]], "out": str(b), "checks": {"bad": 0, "hiss": -44.0}}])
     monkeypatch.setattr(video, "ffmpeg", lambda args, **k: None)
@@ -3299,7 +3299,7 @@ def test_a_hissy_line_is_spoken_again_and_never_swapped_for_a_hissier_take(tmp_p
     asked, logs = [], []
 
     def again(take):
-        def clone_here(py, jobs_, which, s, job, log):
+        def clone_here(py, jobs_, which, s, job, log, *a):
             asked.append((which, os.environ.get("CLONE_TAKES")))
             return {0: take}
         return clone_here

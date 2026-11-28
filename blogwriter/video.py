@@ -64,6 +64,18 @@ HOOK_FORMS = ("a question the viewer has asked themselves (not starting with Why
               "a myth the video breaks")
 SHORT_ENDS = ("The full lesson is on {channel}.", "The whole story is on {channel}.", "Watch the full lesson on {channel}.",
               "There's a longer version on {channel}.", "See it all worked out on {channel}.")
+TONES = ("calm", "deadpan", "bright", "serious")
+REACTIONS = ("sideeye", "eyebrow", "facepalm", "shrug", "mindblown", "sweat", "eyeroll", "slowclap")
+EXPRESS = """These are the narration lines of an explainer video, read aloud by a dry, sarcastic narrator, one per shot.
+For each line say how it should SOUND and whether it earns an on-screen reaction:
+- "tone": "deadpan" for a sarcastic or ironic line, a joke or an understatement (read flat and slow, so the joke lands);
+  "bright" for a surprise, a reveal or a fun fact; "serious" for a warning, a cost or a real-world harm; "calm" for
+  everything else (most lines).
+- "react": "" for most lines. Only for a line whose punchline is a real joke, at most one line in eight and never two
+  in a row, one of: sideeye (doubt), eyebrow (mock surprise), facepalm (an obvious mistake), shrug (it is what it is),
+  mindblown (a real surprise), sweat (something scary), eyeroll (jargon or a cliche), slowclap (mock praise).
+Lines (JSON): {lines}
+Reply with JSON: {{"tones": [exactly {n} strings], "reacts": [exactly {n} strings]}}"""
 LESSON_MINUTES = 8          # a lesson or concept video is never planned shorter (the owner: 8 to 12 minutes)
 LONG_MINUTES = 6          # from this length a script is written part by part (one request comes back too short)
 SHOTS_PER_REQUEST = 14    # the most shots one request is asked to write (asked for 70 at once, a model returns ~18)
@@ -585,7 +597,7 @@ def clone_with_budget(python: str, spec: str, ref: str, texts: List[str], log: C
 
 
 def clone_here(python: str, jobs: List[tuple], which: List[int], settings: Settings, job: str,
-               log: Callable[[str], None]) -> Optional[Dict[int, dict]]:
+               log: Callable[[str], None], tones: Optional[List[str]] = None) -> Optional[Dict[int, dict]]:
     """The lines `which` cloned on this machine (within the time budget). {line: result}; None when the sample is
     missing or the budget stopped it."""
     ref = voice_sample(settings, job, log)
@@ -594,7 +606,8 @@ def clone_here(python: str, jobs: List[tuple], which: List[int], settings: Setti
     spec = os.path.join(job, "clone_jobs.json")
     try:
         with open(spec, "w", encoding="utf-8") as f:
-            json.dump([{"text": jobs[k][0], "out": jobs[k][2][:-4] + ".clone.wav"} for k in which], f, ensure_ascii=False)
+            json.dump([{"text": jobs[k][0], "tone": (tones or [""] * len(jobs))[k], "out": jobs[k][2][:-4] + ".clone.wav"}
+                       for k in which], f, ensure_ascii=False)
         if clone_with_budget(python, spec, ref, [jobs[k][0] for k in which], log):
             return None
         with open(spec, encoding="utf-8") as f:
@@ -628,7 +641,8 @@ class VoiceError(RuntimeError):
     """The owner's voice could not be made for the whole narration: the video stops rather than use another voice."""
 
 
-def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None]) -> List[Optional[list]]:
+def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[[str], None],
+                 tones: Optional[List[str]] = None) -> List[Optional[list]]:
     """jobs: (text, voice, path). Every line in the owner's cloned voice when NARRATOR_VOICE=clone (the default): on
     the voice farm's parallel machines (voicefarm.py) when that is available, else, or for any chunk the farm did
     not deliver, on this machine (VOICE_PYTHON, within the time budget). A line that fails is spoken again with more takes;
@@ -639,7 +653,7 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
     if os.environ.get("NARRATOR_VOICE", "clone").strip().lower() == "clone" and jobs:
         t0 = time.time()
         items: Dict[int, dict] = {}
-        farmed = voicefarm.clone([t for t, _, _ in jobs], settings, job, log) if voicefarm.available(settings) else None
+        farmed = voicefarm.clone([t for t, _, _ in jobs], settings, job, log, tones=tones) if voicefarm.available(settings) else None
         if farmed:
             items = {k: it for k, it in enumerate(farmed) if not it.get("missing")}
         left = [k for k in range(len(jobs)) if k not in items]
@@ -647,7 +661,7 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             if not python or not os.path.exists(python):
                 raise VoiceError("the cloning environment is not installed (VOICE_PYTHON), so the owner's voice cannot "
                                  f"speak {len(left)} line(s)")
-            made = clone_here(python, jobs, left, settings, job, log)
+            made = clone_here(python, jobs, left, settings, job, log, tones)
             if made is None:
                 raise VoiceError(f"{len(left)} line(s) were not delivered by the voice machines and cloning them here "
                                  "would take longer than the time budget")
@@ -673,7 +687,7 @@ def speak_cloned(jobs: List[tuple], settings: Settings, job: str, log: Callable[
             before = os.environ.get("CLONE_TAKES")
             os.environ["CLONE_TAKES"] = "16"
             try:
-                again = clone_here(python, jobs, weak, settings, job, log) or {}
+                again = clone_here(python, jobs, weak, settings, job, log, tones) or {}
             finally:
                 if before is None:
                     os.environ.pop("CLONE_TAKES", None)
@@ -1266,6 +1280,35 @@ def crop_to_content(path: str, bg: str, margin: float = 0.05) -> Optional[float]
     except (OSError, ValueError, ImportError):
         pass
     return None
+
+
+def punchline_frame(narration: str, words: List[tuple], frames: int) -> Optional[int]:
+    """The frame (from the shot's start) where the line's last sentence begins, the punchline of a joke told the
+    comedy pass's way; None for a one-sentence line or one too near the shot's edges."""
+    said = [x for x in re.split(r"(?<=[.!?…])\s+", narration.strip()) if x]
+    if len(said) < 2 or not words:
+        return None
+    k = len(words) - len(said[-1].split())
+    at = LEAD + round(words[max(0, k)][0] * FPS) if 0 < k < len(words) else None
+    return at if at is not None and 24 <= at <= frames - 30 else None
+
+
+def punchlines(long_scenes: List[dict], scenes: List[dict], spoken: dict, starts: List[int]) -> List[dict]:
+    """A deadpan line or one with a reaction gets its beat: the camera holds still, then punches in as the punchline
+    starts (s["beat"], also a sound in sfx.py); a reaction sticker pops up there. -> the reactions, in video frames."""
+    out = []
+    for i, ls in enumerate(long_scenes):
+        sc = scenes[i]
+        if sc.get("tone") != "deadpan" and not sc.get("react"):
+            continue
+        at = punchline_frame(sc.get("narration", ""), spoken.get(("en", "long", i), []), ls["frames"])
+        if at is None:
+            continue
+        ls["beat"] = at
+        ls["cam"] = {**(ls.get("cam") or {}), "move": "drift", "punch": at, "amount": 0.4}
+        if sc.get("react"):
+            out.append({"at": starts[i] + at, "kind": sc["react"]})
+    return out
 
 
 def subscribe_at(starts: List[int], kinds: List[str], total: int) -> Optional[int]:
@@ -2101,6 +2144,7 @@ class VideoMaker:
         if style == "education":                            # the lesson voice: sarcasm a viewer actually hears
             plan = self.punch_up(plan, brief)
         plan = self.plain_pass(plan, title)                 # ... in words a normal person says
+        plan = self.express(plan)                           # ... and how each line sounds
         scenes, act, acts = [], "", 0
         for sc in plan.get("scenes", [])[:MAX_SCENES]:
             if not isinstance(sc, dict):
@@ -2122,6 +2166,7 @@ class VideoMaker:
             src = ""
             if used and str(facts[used[0] - 1].get("source", "")).isdigit():
                 src = domain(sources[int(facts[used[0] - 1]["source"]) - 1]["url"])
+            scene.update(tone=sc.get("tone") or "calm", react=sc.get("react") or "")
             scene.update(narration=narration, source="" if scene["kind"] == "chapter" else src,
                          subjects=[str(x) for x in sc.get("subjects", [])][:3],
                          footage=str(sc.get("footage") or "")[:40] if scene["kind"] in ("hook", "photo", "stat", "list")
@@ -2316,7 +2361,7 @@ class VideoMaker:
                 done = self.translate_lines(english, lang)
                 if done:
                     texts[lang] = done
-        jobs, keys = [], []
+        jobs, keys, tones = [], [], []
         for lang, lines in texts.items():
             for i, line in enumerate(lines[:n_long + n_short]):
                 if not line.strip():
@@ -2325,14 +2370,17 @@ class VideoMaker:
                 path = os.path.join(job, f"{lang}_{kind}{idx}.wav")
                 # the quiz question is the LAST "?" (a rhetorical question before it must not start the answer early)
                 ask = line.rfind("?") + 1 if kind == "long" and scenes[idx]["kind"] == "check" else 0
+                tone = scenes[idx].get("tone", "") if kind == "long" else ""
                 if 0 < ask < len(line.rstrip()):   # a check: question and answer spoken apart, a pause between
                     jobs += [(line[:ask].strip(), VOICES[lang], path[:-4] + "_q.wav"),
                              (line[ask:].strip(), VOICES[lang], path[:-4] + "_a.wav")]
                     keys += [(lang, kind, idx, "q"), (lang, kind, idx, "a")]
+                    tones += [tone, tone]
                     continue
                 jobs.append((line, VOICES[lang], path))
                 keys.append((lang, kind, idx))
-        spoken = {k: v for k, v in zip(keys, speak_cloned(jobs, self.s, job, self.log)) if v is not None}
+                tones.append(tone)
+        spoken = {k: v for k, v in zip(keys, speak_cloned(jobs, self.s, job, self.log, tones)) if v is not None}
         with ThreadPoolExecutor(max_workers=6) as pool:
             trimmed = list(pool.map(lambda kv: tighten(jobs[keys.index(kv[0])][2], kv[1]), spoken.items()))
         spoken = dict(zip(spoken, trimmed))
@@ -2415,6 +2463,7 @@ class VideoMaker:
                 long_captions.append({"from": starts[i] + LEAD + round(ca * FPS),
                                       "to": starts[i] + LEAD + round(cz * FPS), "text": line})
         self.log(f"[camera] {camera.plan(long_scenes, plan['title'])}")      # a move for every shot (camera.py)
+        reactions = punchlines(long_scenes, scenes, spoken, starts)          # the comedian's beat on the jokes
         # every shot is measured as drawn, captions included: nothing may run into anything else
         self.audit_layout(scenes, long_scenes, spoken, theme, job, long_captions, starts)
         self.log(variety.report(long_scenes))        # how samey is the finished plan? (it changes nothing)
@@ -2424,7 +2473,8 @@ class VideoMaker:
             sub = subscribe_at(starts, [s["kind"] for s in scenes], total)
             json.dump({"scenes": long_scenes, "captions": long_captions, "channel": self.s.channel_name, "theme": theme,
                        "thumbText": plan["thumb_text"], "thumbHighlight": plan["thumb_highlight"],
-                       "subscribe": {"at": sub, "name": self.s.channel_name} if sub is not None else None},
+                       "subscribe": {"at": sub, "name": self.s.channel_name} if sub is not None else None,
+                       "reactions": [r for r in reactions if sub is None or not sub - 60 <= r["at"] <= sub + 210]},
                       f, ensure_ascii=False)
         files = {}
         for lang in texts:
@@ -2675,6 +2725,34 @@ class VideoMaker:
         left = sum(len(plainwords.hard_words(str(sc.get("narration", "")), keep)) for sc in rows)
         self.log(f"[video] plain pass: {changed} lines rewritten; reading level grade {before} -> {after}; "
                  f"{left} hard words left in {len(rows)} lines")
+        return plan
+
+    def express(self, plan: dict) -> dict:
+        """A tone for every line (the cloned voice reads a joke flat and slow, a surprise brighter) and a reaction sticker
+        on a few real punchlines. Checked here: a known tone or "calm", a known reaction, at most one in eight lines,
+        never two in a row, never on the opening line. Any failure leaves every line calm."""
+        rows = [sc for sc in plan.get("scenes") or [] if isinstance(sc, dict)]
+        tones, reacts = [], []
+        for start in range(0, len(rows), 40):
+            part = rows[start:start + 40]
+            try:
+                reply = self.design_json(EXPRESS.format(n=len(part), lines=json.dumps(
+                    [str(sc.get("narration", "")) for sc in part], ensure_ascii=False)))
+            except LLMError:
+                reply = {}
+            t = reply.get("tones") if isinstance(reply, dict) else None
+            r = reply.get("reacts") if isinstance(reply, dict) else None
+            tones += [str(x) if str(x) in TONES else "calm" for x in t] if isinstance(t, list) and len(t) == len(part) else ["calm"] * len(part)
+            reacts += [str(x) if str(x) in REACTIONS else "" for x in r] if isinstance(r, list) and len(r) == len(part) else [""] * len(part)
+        last = -99
+        for k, (sc, tone, react) in enumerate(zip(rows, tones, reacts)):
+            if react and (k == 0 or k - last < 8):
+                react = ""
+            if react:
+                last, tone = k, "deadpan" if tone == "calm" else tone
+            sc["tone"], sc["react"] = tone, react
+        self.log(f"[voice] expressions: {sum(t == 'deadpan' for t in tones)} deadpan, {sum(t == 'bright' for t in tones)} bright, "
+                 f"{sum(t == 'serious' for t in tones)} serious lines; {sum(1 for sc in rows if sc.get('react'))} reaction(s)")
         return plan
 
     def introduce(self, plan: dict, brief: dict, title: str, facts: list) -> dict:

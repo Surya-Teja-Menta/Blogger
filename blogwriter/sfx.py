@@ -42,6 +42,16 @@ def swell(root_hz: float) -> np.ndarray:
     return y / (np.abs(y).max() + 1e-9)
 
 
+def plink(root_hz: float) -> np.ndarray:
+    """The punchline's beat: two soft notes falling a fourth ("ba-dum", deadpan), 0.45 s, pure tones."""
+    out = []
+    for hz, length in ((root_hz * 3, 0.14), (root_hz * 2.25, 0.3)):
+        t = np.arange(int(length * sound.SR)) / sound.SR
+        out.append(np.sin(2 * np.pi * hz * t) * np.exp(-t * 14) * np.minimum(1, t / 0.004))
+    y = np.concatenate(out)
+    return y / (np.abs(y).max() + 1e-9)
+
+
 def cues(scenes: List[dict], starts: List[int], fps: int = 30) -> Dict[str, list]:
     """When the sounds fall, in seconds: {"pops": five lists (one per note of SCALE), "ticks": [...], "hits": [...],
     "swells": [...]}. From each shot's timed diagram elements and motion graphic: the frame (`at`, counted from the
@@ -75,7 +85,8 @@ def cues(scenes: List[dict], starts: List[int], fps: int = 30) -> Dict[str, list
                 note += 1
             else:
                 (ticks if kind == "tick" else hits).append(when)
-    return {"pops": pops, "ticks": ticks, "hits": hits, "swells": swells}
+    beats = [(st + s["beat"]) / fps for s, st in zip(scenes, starts) if s.get("beat") is not None]
+    return {"pops": pops, "ticks": ticks, "hits": hits, "swells": swells, "beats": beats}
 
 
 def render(path: str, seconds: float, found: Dict[str, list], root_hz: float) -> int:
@@ -99,6 +110,9 @@ def render(path: str, seconds: float, found: Dict[str, list], root_hz: float) ->
     wave = tick()
     for j, when in enumerate(found["ticks"]):
         put(wave, when, 0.5 if j % 2 else -0.5)
+    ba = plink(root_hz * 2)
+    for when in found.get("beats", []):
+        put(ba * 0.8, when, 0.0)
     rise = swell(root_hz * 2)
     for when in found.get("swells", []):
         put(rise * 0.7, when - 1.4, 0.0)                  # it ends on the act's first frame

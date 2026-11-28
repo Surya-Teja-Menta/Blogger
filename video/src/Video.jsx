@@ -21,6 +21,7 @@ import {LayoutAudit} from "./audit";
 import {captionStyle} from "./captions";
 import {Hud, kickerPolicy, layoutOf} from "./skeleton";
 import {CamContext} from "./camera";
+import {Reactions} from "./react";
 
 const STING = 26;     // frames the act sting covers before the shot's own animation starts
 
@@ -88,7 +89,7 @@ const Letterbox = ({spans, vertical}) => {
   );
 };
 
-export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null, audit = false}) => {
+export const Video = ({scenes, captions = [], channel = "", theme = null, clean = false, subscribe = null, audit = false, reactions = []}) => {
   useTheme(theme);
   C.clean = clean;              // a frame for the thumbnail: the visual alone
   const frame = useCurrentFrame();
@@ -149,6 +150,7 @@ export const Video = ({scenes, captions = [], channel = "", theme = null, clean 
       {/* while the subscribe card is up, the captions step aside so the two never overlap */}
       <Caption captions={captions} vertical={vertical} aside={subscribe && !clean && !vertical
         ? 560 * clamp(Math.min((frame - subscribe.at) / 12, (subscribe.at + SUBSCRIBE_FRAMES - frame) / 12)) : 0}/>
+      {!audit && <Reactions items={reactions} vertical={vertical}/>}
       {subscribe && <Subscribe at={subscribe.at} name={subscribe.name || channel} vertical={vertical}/>}
       {audit && <LayoutAudit key={frame}/>}
       <div style={{position: "absolute", left: 0, ...(layoutOf().progress === "bottom" ? {bottom: 0} : {top: 0}), height: clean ? 0 : 5,

@@ -60,7 +60,7 @@ def main(argv=None, sleep=time.sleep) -> int:
                     raise RuntimeError("no voice sample")
                 spec = os.path.join(work, "jobs.json")
                 with open(spec, "w", encoding="utf-8") as f:
-                    json.dump([{"text": it["text"], "out": os.path.join(work, f"{j}.wav")} for j, it in enumerate(lines)],
+                    json.dump([{"text": it["text"], "tone": it.get("tone", ""), "out": os.path.join(work, f"{j}.wav")} for j, it in enumerate(lines)],
                               f, ensure_ascii=False)
                 if video.clone_with_budget(python, spec, ref, [it["text"] for it in lines], print):
                     raise RuntimeError("cloning would take too long on this machine")

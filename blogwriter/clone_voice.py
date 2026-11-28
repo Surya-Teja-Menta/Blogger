@@ -252,8 +252,11 @@ def main() -> int:
     else:
         tts.prepare_conditionals(reference, exaggeration=exaggeration)
     temperature = float(os.environ.get("CLONE_TEMPERATURE", "0.7"))     # cooler than the default 0.8: fewer wild takes
+    # a line's tone (video.py expressions): how much feeling, and how deliberate the pace (a lower cfg weight is slower)
+    tones = {"deadpan": (0.35, 0.3), "calm": (0.5, 0.4), "bright": (0.8, 0.45), "serious": (0.45, 0.5)}
+    now = [exaggeration, cfg]
     speak = ((lambda s: tts.generate(s)) if turbo else
-             (lambda s: tts.generate(s, exaggeration=exaggeration, cfg_weight=cfg, temperature=temperature, min_p=0.08)))
+             (lambda s: tts.generate(s, exaggeration=now[0], cfg_weight=now[1], temperature=temperature, min_p=0.08)))
     print(f"[clone] models ready in {time.time() - t0:.0f}s", flush=True)
     gap = torch.zeros(1, int(tts.sr * 0.18))           # a breath between sentences
     # how closely a line must say its script: a clean take scores ~1.0, one misheard word ~0.95, a garbled take
@@ -358,6 +361,7 @@ def main() -> int:
 
     for k, job in enumerate(jobs):
         job["ok"] = False
+        now[:] = tones.get(job.get("tone") or "", (exaggeration, cfg))
         try:
             best = None                 # a take that garbles or adds words is spoken again; the closest is kept
             for attempt in range(max(1, tries)):

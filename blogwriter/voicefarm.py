@@ -67,7 +67,7 @@ def _keys(s3, bucket: str, prefix: str) -> List[str]:
 
 
 def clone(texts: List[str], settings: Settings, job: str, log: Callable[[str], None],
-          sleep: Callable[[float], None] = time.sleep) -> Optional[List[dict]]:
+          sleep: Callable[[float], None] = time.sleep, tones: Optional[List[str]] = None) -> Optional[List[dict]]:
     """Every line cloned on the farm. One entry per line: {"ok", "out" (a WAV), "words", "match"} when its machine
     delivered, {"missing": True} when its whole chunk did not. None when the farm could not be used at all."""
     from .storage import _client, prune_prefix
@@ -82,7 +82,8 @@ def clone(texts: List[str], settings: Settings, job: str, log: Callable[[str], N
         s3 = _client(settings)
         for k in range(CHUNKS):                           # every machine gets its lines (or an empty chunk)
             lines = chunks[k] if k < len(chunks) else range(0)
-            body = json.dumps([{"text": texts[i]} for i in lines], ensure_ascii=False).encode("utf-8")
+            body = json.dumps([{"text": texts[i], "tone": (tones or [""] * len(texts))[i]} for i in lines],
+                              ensure_ascii=False).encode("utf-8")
             s3.put_object(Bucket=bucket, Key=f"{prefix}/spec-{k}.json", Body=body)
         log(f"[voice] farm: {len(texts)} lines in {len(chunks)} chunks put out for the voice machines")
         ready, failed, pending, last = set(), set(), set(range(len(chunks))), t0

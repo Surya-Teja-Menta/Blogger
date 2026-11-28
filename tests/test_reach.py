@@ -167,10 +167,10 @@ def test_a_line_the_owner_s_voice_could_not_say_is_tried_again_then_the_video_st
     from blogwriter import voicefarm
     from blogwriter.config import Settings
     monkeypatch.setattr(voicefarm, "available", lambda s: True)
-    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log: [{"ok": False, "words": [], "out": ""}])
+    monkeypatch.setattr(voicefarm, "clone", lambda texts, s, job, log, **k: [{"ok": False, "words": [], "out": ""}])
     monkeypatch.setenv("VOICE_PYTHON", __import__("sys").executable)
     asked = []
-    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log: asked.append(which) or {})
+    monkeypatch.setattr(video, "clone_here", lambda py, jobs, which, s, job, log, *a: asked.append(which) or {})
     monkeypatch.setattr(video, "speak_all", lambda jobs: pytest.fail("the standard voice must never speak"))
     with pytest.raises(video.VoiceError):
         video.speak_cloned([("one", "v", str(tmp_path / "1.mp3"))], Settings(), str(tmp_path), lambda m: None)
@@ -224,3 +224,26 @@ def test_the_script_rules_against_stock_lines():
     said = "Can steps predict each other? Welcome to Adyora. Today we look at it. Covariance is a number."
     assert " ".join(video.WELCOMED.sub(" ", said).split()) == "Can steps predict each other? Covariance is a number."
     assert len(set(video.SHORT_ENDS)) >= 4 and len(set(video.HOOK_FORMS)) >= 4
+
+
+def test_jokes_get_a_flat_voice_a_beat_and_a_few_reactions(monkeypatch):
+    maker = video.VideoMaker.__new__(video.VideoMaker)
+    maker.log = lambda m: None
+    lines = [f"Line {k}. Punch {k}." for k in range(20)]
+    reply = {"tones": ["deadpan"] * 3 + ["loud"] + ["calm"] * 16,
+             "reacts": ["facepalm", "shrug", "", "", "eyeroll"] + ["slowclap"] * 15}
+    monkeypatch.setattr(maker, "design_json", lambda prompt: reply, raising=False)
+    plan = maker.express({"scenes": [{"narration": t} for t in lines]})
+    sc = plan["scenes"]
+    assert [s["tone"] for s in sc[:4]] == ["deadpan", "deadpan", "deadpan", "calm"]           # an unknown tone is calm
+    assert [k for k, s in enumerate(sc) if s["react"]] == [1, 9, 17]                  # never the opening, 1 in 8 at most
+    assert sc[9]["tone"] == "deadpan"                                                  # a reaction is read flat
+    words = [(0.0, 0.3, "It"), (0.3, 0.6, "works."), (1.0, 1.3, "Mostly."), (1.4, 1.6, "Sadly.")]
+    assert video.punchline_frame("It works. Mostly. Sadly.", words, 200) == video.LEAD + round(1.4 * video.FPS)
+    assert video.punchline_frame("One sentence only.", words, 200) is None
+    long_scenes = [{"frames": 200}]
+    out = video.punchlines(long_scenes, [{"narration": "It works. Mostly. Sadly.", "tone": "deadpan", "react": "shrug"}],
+                           {("en", "long", 0): words}, [100])
+    assert long_scenes[0]["beat"] == long_scenes[0]["cam"]["punch"] and out == [{"at": 100 + long_scenes[0]["beat"], "kind": "shrug"}]
+    from blogwriter import sfx
+    assert sfx.cues(long_scenes, [100])["beats"] == [(100 + long_scenes[0]["beat"]) / 30]
